@@ -1,6 +1,6 @@
 # Arctic Linux
 
-glibc, LLVM, a BSD-style userland, busybox init, zsh, doas, and its own
+glibc,(experimental musl) LLVM, a BSD-style userland, busybox init, zsh, doas, and its own
 package manager (alpm). No systemd, no bash.
 
 Full docs: **[arctic-linux.apiwow.net](https://arctic-linux.apiwow.net)**
