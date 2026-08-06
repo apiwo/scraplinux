@@ -1,7 +1,7 @@
 # Arctic Linux
 
 glibc,(experimental musl) LLVM, a BSD-style userland, busybox init, zsh, doas, and its own
-package manager (alpm). No systemd, no bash.
+package manager (alpm).
 
 Full docs: **[arctic-linux.apiwow.net](https://arctic-linux.apiwow.net)**
 
