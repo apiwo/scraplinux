@@ -161,8 +161,15 @@ printf '/bin/sh\n/bin/zsh\n/usr/bin/zsh\n' >"$S/etc/shells"
 
 cat >"$S/etc/doas.conf" <<'EOF'
 # Arctic Linux - doas rules
-permit persist :wheel
-permit nopass :wheel cmd alpm args fetch all
+# nopass here specifically: the live session already logs straight in as
+# root with an empty password (see the passwd/shadow block above) - doas's
+# own auth check does not treat that shadow entry as "no password needed"
+# the way login does, so a password-required rule just fails every time
+# with "Authentication failed" for a password that, by design, does not
+# exist yet to enter. Nothing on a live, read-only image is protected by
+# asking anyway. arctic-install writes its own doas.conf for the installed
+# system, unaffected by this - that one keeps password-required.
+permit nopass :wheel
 EOF
 chmod 400 "$S/etc/doas.conf"
 

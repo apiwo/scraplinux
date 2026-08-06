@@ -65,6 +65,10 @@ else
 fi
 good
 
+begin "applying sysctl defaults"
+[ -f /etc/sysctl.conf ] && sysctl -p /etc/sysctl.conf >/dev/null 2>&1
+good
+
 begin "loading kernel modules"
 for f in /etc/modules-load.d/*.conf; do
 	[ -f "$f" ] || continue
