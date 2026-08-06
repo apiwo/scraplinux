@@ -1,0 +1,14 @@
+root:x:0:
+wheel:x:10:root
+tty:x:5:
+disk:x:6:
+audio:x:63:
+video:x:39:
+input:x:97:
+render:x:28:
+kvm:x:78:
+storage:x:95:
+network:x:90:
+netdev:x:91:
+messagebus:x:81:
+nobody:x:65534:

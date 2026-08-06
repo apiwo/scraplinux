@@ -7,7 +7,7 @@
 #                                             partition with no filesystem is
 #                                             exactly why "mount /dev/sdb1 /mnt"
 #                                             failed)
-#   - no iwctl and no firmware at all        (so wireless could never work)
+#   - no wpa_supplicant and no firmware at all (so wireless could never work)
 #
 # This builds the missing pieces. Everything installs into the same rootfs the
 # ISO is made from.
@@ -19,6 +19,7 @@ if [ "${ARCTIC_SANDBOX:-0}" != "1" ]; then
 fi
 
 B=/home/apiwo/arctic-build
+TREE=/home/apiwo/arctic
 SRC=$B/src
 W=$B/work
 R=$B/stage/rootfs
@@ -37,7 +38,7 @@ export CXXFLAGS="$CFLAGS"
 
 # ------------------------------------------------------------------ util-linux
 # cfdisk, sfdisk, wipefs, lsblk, blkid, mount, umount, findmnt, and the real
-# libblkid/libmount that e2fsprogs and iwd expect.
+# libblkid/libmount that e2fsprogs expects.
 step "building util-linux 2.42.2 (cfdisk, sfdisk, wipefs, lsblk, blkid)"
 if [ ! -x "$R/usr/bin/cfdisk" ]; then
 	unpack util-linux-2.42.2 util-linux-2.42.2.tar.xz
@@ -194,12 +195,9 @@ else
 fi
 
 # ---------------------------------------------------------------------- dbus
-# iwd/iwctl link against ell, not libdbus - ell has its own client-side D-Bus
-# wire protocol implementation - but that client still has to connect to an
-# actual bus, and nothing was ever installed to be one. Plain `iwd &` with no
-# bus running is exactly the "failed to initialize dbus" error iwd gives, and
-# nothing on the live medium could provide one before this.
-step "building dbus 1.16.2 (iwd needs a running system bus, not just a library)"
+# NetworkManager (like iwd before it) needs a running system bus, not just a
+# library - nothing on the live medium could provide one before this.
+step "building dbus 1.16.2 (NetworkManager needs a running system bus)"
 if [ ! -x "$R/usr/bin/dbus-daemon" ]; then
 	unpack dbus-1.16.2 dbus-1.16.2.tar.xz
 	( cd "$W/dbus-1.16.2" && \
@@ -215,63 +213,94 @@ else
 	ok "dbus already built"
 fi
 
-# ------------------------------------------------------------------- ell + iwd
-step "building ell 0.83"
-if [ ! -f "$DEPS/usr/lib/libell.so" ]; then
-	unpack ell-0.83 ell-0.83.tar.xz
-	( cd "$W/ell-0.83" && \
+# ------------------------------------------------------- libnl + wpa_supplicant
+# The live/installer image's wireless story is deliberately not the full
+# NetworkManager+nmtui stack the installed system gets (see ports/main/
+# networkmanager) - that pulls in glib/meson and a much bigger dependency
+# tree than is worth hand-building this early, before any package repo
+# exists to lean on instead. wpa_supplicant alone gets a wireless link up,
+# which is all an installer needs; NetworkManager takes over once installed.
+step "building libnl 3.12.0 (wpa_supplicant needs it for nl80211)"
+if [ ! -f "$DEPS/usr/lib/libnl-3.so" ]; then
+	unpack libnl-3.12.0 libnl-3.12.0.tar.gz
+	( cd "$W/libnl-3.12.0" && \
 	  ./configure --prefix=/usr --libdir=/usr/lib --disable-static \
 	  && make -j"$J" \
-	  && make DESTDIR="$DEPS" install && make DESTDIR="$R" install \
-	) >"$L/ell.log" 2>&1 && ok "ell" || bad "ell (see logs/ell.log)"
+	  && make DESTDIR="$DEPS" install \
+	) >"$L/libnl.log" 2>&1 && ok "libnl (built)" || bad "libnl (see logs/libnl.log)"
 else
-	ok "ell already built"
+	ok "libnl already built"
+fi
+# A second `make install` with a different DESTDIR re-triggers libtool's
+# relink-before-install step, which failed here trying to search Arctic's
+# own target libc.so.6 with the build host's own linker/format ("file in
+# wrong format") - a libtool quirk of installing to two different prefixes
+# from the same build tree, not a real problem with the library itself.
+# $DEPS already has a complete, working copy (used above precisely so
+# every *other* recipe here can find it as a normal dependency); just copy
+# that straight into $R instead of asking libtool to redo the linking work
+# a second time.
+if [ -f "$DEPS/usr/lib/libnl-3.so" ] && [ ! -f "$R/usr/lib/libnl-genl-3.so" ]; then
+	mkdir -p "$R/usr/lib"
+	cp -a "$DEPS"/usr/lib/libnl-3.so* "$DEPS"/usr/lib/libnl-genl-3.so* "$R/usr/lib/" 2>/dev/null || :
 fi
 
-step "building libedit (so iwctl links against it instead of GNU readline)"
-if [ ! -f "$DEPS/usr/lib/libedit.so" ]; then
-	unpack libedit-20260512-3.1 libedit-20260512-3.1.tar.gz
-	( cd "$W/libedit-20260512-3.1" && \
+# CONFIG_CTRL_IFACE=y is the plain Unix-socket control interface
+# wpa_cli/wifi-connect talk to - nothing here needs the D-Bus one
+# NetworkManager itself uses later on the installed system. No CONFIG_TLS
+# line: wpa_supplicant's own Makefile pulls in a TLS backend regardless
+# (needed even for WPA2-Personal, not only 802.1X/EAP) and finds whatever
+# the build host has - which turned out to be real OpenSSL, matching the
+# "openssl" port (real OpenSSL, not libressl - libressl's libcrypto has a
+# different SONAME) that wpa_supplicant's own recipe depends on for exactly
+# this reason. Copied into $R below rather than rebuilding this against a
+# specific one, since the host's copy already happens to be ABI-compatible.
+step "building wpa_supplicant 2.11 (wpa_supplicant/wpa_cli - this is what wireless needs)"
+if [ ! -x "$R/usr/bin/wpa_supplicant" ]; then
+	unpack wpa_supplicant-2.11 wpa_supplicant-2.11.tar.gz
+	( cd "$W/wpa_supplicant-2.11/wpa_supplicant" && \
+	  { \
+	    printf 'CONFIG_BACKEND=file\n'; \
+	    printf 'CONFIG_DRIVER_NL80211=y\n'; \
+	    printf 'CONFIG_LIBNL32=y\n'; \
+	    printf 'CONFIG_CTRL_IFACE=y\n'; \
+	  } >.config && \
 	  PKG_CONFIG_PATH="$DEPS/usr/lib/pkgconfig" \
 	  CFLAGS="$CFLAGS -I$DEPS/usr/include" \
 	  LDFLAGS="-L$DEPS/usr/lib" \
-	  ./configure --prefix=/usr --libdir=/usr/lib --disable-static \
-	  && make -j"$J" \
-	  && make DESTDIR="$DEPS" install && make DESTDIR="$R" install \
-	) >"$L/libedit.log" 2>&1 && ok "libedit" || bad "libedit (see logs/libedit.log)"
+	  make -j"$J" wpa_supplicant wpa_cli wpa_passphrase \
+	  && install -Dm755 wpa_supplicant "$R/usr/bin/wpa_supplicant" \
+	  && install -Dm755 wpa_cli "$R/usr/bin/wpa_cli" \
+	  && install -Dm755 wpa_passphrase "$R/usr/bin/wpa_passphrase" \
+	) >"$L/wpa_supplicant.log" 2>&1 && ok "wpa_supplicant + wpa_cli" \
+	  || bad "wpa_supplicant (see logs/wpa_supplicant.log)"
 else
-	ok "libedit already built"
+	ok "wpa_supplicant already built"
 fi
 
-# iwctl's configure.ac picks GNU readline unless --enable-libedit is passed, and
-# whichever one it picks becomes a hard NEEDED entry in the binary - readline
-# has no fallback and Arctic does not ship it (BSD userland: libedit is the
-# readline replacement everywhere else too). Left at the default, iwctl links
-# against the build host's readline and then fails to start on the target with
-# "error while loading shared libraries: libreadline.so.8: cannot open shared
-# object file" - the "missing linker error" this fixes.
-step "building iwd 3.12 (iwctl - this is what wireless needs)"
-if [ ! -x "$R/usr/bin/iwctl" ]; then
-	unpack iwd-3.12 iwd-3.12.tar.xz
-	( cd "$W/iwd-3.12" && \
-	  PKG_CONFIG_PATH="$DEPS/usr/lib/pkgconfig" \
-	  CFLAGS="$CFLAGS -I$DEPS/usr/include" \
-	  LDFLAGS="-L$DEPS/usr/lib" \
-	  ./configure --prefix=/usr --libexecdir=/usr/lib \
-		--sysconfdir=/etc --localstatedir=/var \
-		--disable-systemd-service --enable-external-ell \
-		--enable-libedit \
-	  && make -j"$J" \
-	  && make DESTDIR="$R" install \
-	) >"$L/iwd.log" 2>&1 && {
-		# iwd is a daemon and lands in libexec; put it on PATH so the installer
-		# and "service start iwd" can just call it.
-		[ -f "$R/usr/lib/iwd" ] && ln -sf ../lib/iwd "$R/usr/bin/iwd"
-		ok "iwd + iwctl"
-	} || bad "iwd (see logs/iwd.log)"
+# wpa_supplicant links against whatever OpenSSL the build host has (see
+# above) - stage Arctic's own already-built openssl package's libs into $R
+# so the live image actually has a matching libcrypto/libssl to run against,
+# same idea as the libnl copy above.
+if [ ! -f "$R/usr/lib/libcrypto.so.3" ]; then
+	opensslpkg=$(ls -t "$B"/repo/main/x86_64/openssl-*.alpmz 2>/dev/null | head -1)
+	if [ -n "$opensslpkg" ]; then
+		mkdir -p "$W/openssl-extract"
+		tar -xf "$opensslpkg" -C "$W/openssl-extract" usr/lib 2>/dev/null || :
+		mkdir -p "$R/usr/lib"
+		cp -a "$W/openssl-extract"/usr/lib/libcrypto.so* "$W/openssl-extract"/usr/lib/libssl.so* \
+			"$R/usr/lib/" 2>/dev/null && ok "openssl libs staged into the live image" \
+			|| bad "openssl libs (see above)"
+	else
+		bad "openssl not built yet - run: arctic-sandbox build/build-batch.sh openssl"
+	fi
 else
-	ok "iwd already built"
+	ok "openssl libs already staged"
 fi
+
+step "installing wifi-connect (the live image's iwctl replacement)"
+install -Dm755 "$TREE/skel/usr/bin/wifi-connect" "$R/usr/bin/wifi-connect" \
+	&& ok "wifi-connect" || bad "wifi-connect"
 
 # -------------------------------------------------------------------- firmware
 # The full linux-firmware tree is well over a gigabyte. An installer only needs
@@ -333,7 +362,7 @@ fi
 
 printf '\n\033[1;36m=== USABILITY SUMMARY ===\033[0m\n'
 for f in usr/bin/cfdisk usr/bin/sfdisk usr/bin/wipefs usr/bin/mkfs.ext4 \
-         usr/bin/mkfs.vfat usr/bin/iwctl usr/bin/iwd usr/bin/lsblk; do
+         usr/bin/mkfs.vfat usr/bin/wpa_supplicant usr/bin/wifi-connect usr/bin/lsblk; do
 	[ -e "$R/$f" ] && printf '  present  %s\n' "$f" || printf '  MISSING  %s\n' "$f"
 done
 printf '  firmware %s files\n' "$(find "$R/usr/lib/firmware" -type f 2>/dev/null | wc -l)"

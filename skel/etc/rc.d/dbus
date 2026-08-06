@@ -1,15 +1,17 @@
 #!/bin/sh
-# The system message bus. iwd (and so iwctl) cannot start without it - iwd
-# registers itself on this bus, and connecting to a bus that was never
-# started is exactly the "failed to initialize dbus" error iwd gives.
+# The system message bus. NetworkManager (and so nmtui/nmcli) cannot start
+# without it - it registers itself on this bus, and connecting to a bus that
+# was never started is exactly the "failed to initialize dbus" error this
+# used to give back when iwd was the one registering.
 #
 # dbus-daemon --system refuses to start at all without a machine ID at
 # /etc/machine-id (or /var/lib/dbus/machine-id) - nothing on Arctic ever
 # generated one, so dbus-daemon was exiting immediately on every boot, and
 # rc.boot's service loop swallows stderr, so it looked like nothing was
-# wrong until iwd tried to connect and failed. Generated once, on first
-# start, and kept forever after (both on the live image, fresh each boot,
-# and on an installed system, where it should never change).
+# wrong until whatever needed the bus tried to connect and failed. Generated
+# once, on first start, and kept forever after (both on the live image,
+# fresh each boot, and on an installed system, where it should never
+# change).
 NAME=dbus
 CMD=/usr/bin/dbus-daemon
 ARGS="--system --fork"

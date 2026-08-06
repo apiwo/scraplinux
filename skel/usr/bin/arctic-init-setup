@@ -45,7 +45,7 @@ each_service() {
 
 is_enabled() { [ -e "$SVCDIR/$1" ]; }
 
-# network, nftables, fstrim and pipewire's bring-up have no CMD - they
+# nftables, fstrim, zram and pipewire's bring-up have no CMD - they
 # define start()/stop() in the rc.d script itself, and become a one-shot
 # that calls it directly instead of a supervised process.
 is_scripted() { [ -z "$(svc_field "$RCD/$1" CMD)" ]; }
@@ -85,8 +85,8 @@ setup_openrc() {
 			fi
 			printf '\ndepend() {\n'
 			case "$s" in
-			iwd|sshd|ntpd|nftables) printf '\tneed net\n' ;;
-			pipewire|bluetoothd)    printf '\tneed dbus\n' ;;
+			sshd|ntpd|nftables)              printf '\tneed net\n' ;;
+			pipewire|bluetoothd|NetworkManager) printf '\tneed dbus\n' ;;
 			esac
 			printf '\tafter bootmisc\n}\n'
 		} >"$ROOT/etc/init.d/$s"
@@ -146,7 +146,7 @@ setup_runit() {
 			# told to stay in the foreground instead.
 			case "$s" in
 			dbus)     printf 'exec %s --system --nofork --nopidfile\n' "$cmd" ;;
-			iwd)      printf 'exec %s\n' "$cmd" ;;
+			NetworkManager) printf 'exec %s --no-daemon\n' "$cmd" ;;
 			sshd)     printf 'exec %s -D\n' "$cmd" ;;
 			crond)    printf 'exec %s -f\n' "$cmd" ;;
 			syslogd)  printf 'exec %s -n\n' "$cmd" ;;
@@ -161,7 +161,7 @@ setup_runit() {
 	done
 
 	# Stage 1: the one-time setup runit does before supervision starts.
-	# network, nftables and the rest live here rather than under /etc/sv,
+	# nftables and the rest live here rather than under /etc/sv,
 	# because a one-shot that exits immediately would just be respawned.
 	mkdir -p "$ROOT/etc/runit"
 	{
@@ -222,6 +222,7 @@ setup_dinit() {
 				printf 'type = process\n'
 				case "$s" in
 				dbus)    printf 'command = %s --system --nofork --nopidfile\n' "$cmd" ;;
+				NetworkManager) printf 'command = %s --no-daemon\n' "$cmd" ;;
 				sshd)    printf 'command = %s -D\n' "$cmd" ;;
 				crond)   printf 'command = %s -f\n' "$cmd" ;;
 				syslogd) printf 'command = %s -n\n' "$cmd" ;;
@@ -231,7 +232,7 @@ setup_dinit() {
 				printf 'smooth-recovery = true\n'
 			fi
 			case "$s" in
-			pipewire|bluetoothd) printf 'depends-on = dbus\n' ;;
+			pipewire|bluetoothd|NetworkManager) printf 'depends-on = dbus\n' ;;
 			esac
 			printf 'logfile = /var/log/dinit-%s.log\n' "$s"
 		} >"$ROOT/etc/dinit.d/$s"
@@ -262,6 +263,7 @@ setup_s6() {
 			printf 'fdmove -c 2 1\n'
 			case "$s" in
 			dbus)    printf '%s --system --nofork --nopidfile\n' "$cmd" ;;
+			NetworkManager) printf '%s --no-daemon\n' "$cmd" ;;
 			sshd)    printf '%s -D\n' "$cmd" ;;
 			crond)   printf '%s -f\n' "$cmd" ;;
 			syslogd) printf '%s -n\n' "$cmd" ;;
@@ -271,7 +273,7 @@ setup_s6() {
 		} >"$ROOT/etc/s6/sv/$s/run"
 		chmod 755 "$ROOT/etc/s6/sv/$s/run"
 		case "$s" in
-		pipewire|bluetoothd) printf 'dbus\n' >"$ROOT/etc/s6/sv/$s/dependencies" ;;
+		pipewire|bluetoothd|NetworkManager) printf 'dbus\n' >"$ROOT/etc/s6/sv/$s/dependencies" ;;
 		esac
 
 		# The 66 frontend description for the same service.
@@ -311,8 +313,8 @@ setup_systemd() {
 			printf '[Unit]\n'
 			printf 'Description=%s\n' "$s"
 			case "$s" in
-			pipewire|bluetoothd) printf 'After=dbus.service\nRequires=dbus.service\n' ;;
-			iwd|sshd|ntpd)       printf 'After=network.target\n' ;;
+			pipewire|bluetoothd|NetworkManager) printf 'After=dbus.service\nRequires=dbus.service\n' ;;
+			sshd|ntpd)                          printf 'After=network.target\n' ;;
 			esac
 			printf '\n[Service]\n'
 			if [ "$bg" = no ]; then
@@ -323,6 +325,7 @@ setup_systemd() {
 				printf 'Type=simple\n'
 				case "$s" in
 				dbus)    printf 'ExecStart=%s --system --nofork --nopidfile\n' "$cmd" ;;
+				NetworkManager) printf 'ExecStart=%s --no-daemon\n' "$cmd" ;;
 				sshd)    printf 'ExecStart=%s -D\n' "$cmd" ;;
 				crond)   printf 'ExecStart=%s -f\n' "$cmd" ;;
 				syslogd) printf 'ExecStart=%s -n\n' "$cmd" ;;

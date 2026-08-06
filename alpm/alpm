@@ -302,6 +302,7 @@ install_one() {
 	else
 		( cd "$tmp" && tar -cf - . ) | ( cd "$ALPM_ROOT" && tar -xpf - )
 	fi
+	fix_usrmerge "$ALPM_ROOT"
 
 	# Record it.
 	db="$ALPM_DB/local/$name"
@@ -753,7 +754,7 @@ cmd_fetch() {
 				"$A_GREY" "$tot"
 			printf '  of date. Anything already on this medium can still be installed.%s\n' "$C_R"
 		fi
-		printf '  %scheck the network:  ip addr   ping 1.1.1.1   iwctl%s\n' "$A_GREY" "$C_R"
+		printf '  %scheck the network:  ip addr   ping 1.1.1.1   nmtui%s\n' "$A_GREY" "$C_R"
 		alpm_log "fetch failed: no repository reachable"
 		return 1
 	fi

@@ -88,11 +88,11 @@ fi
 # /var/run -> ../run and /var/lock -> ../run/lock.
 #
 # These are not cosmetic. dbus listens on /run/dbus/system_bus_socket, but
-# ell - the library iwd is built on - looks for the system bus under
-# /var/run/dbus. With /var/run missing, iwd cannot reach a bus that is
-# running perfectly well and reports "Failed to initialize D-Bus", which
-# reads like a dbus fault and is not one. Anything else still using the
-# older path finds it too.
+# ell - the library bluez is built on - looks for the system bus under
+# /var/run/dbus. With /var/run missing, anything built on ell cannot reach a
+# bus that is running perfectly well and reports "Failed to initialize
+# D-Bus", which reads like a dbus fault and is not one. Anything else still
+# using the older path finds it too.
 rm -rf "$R/var/run" "$R/var/lock" 2>/dev/null || :
 ln -sfn "../run" "$R/var/run"
 ln -sfn "../run/lock" "$R/var/lock"

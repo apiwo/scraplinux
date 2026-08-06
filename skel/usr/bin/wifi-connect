@@ -1,0 +1,60 @@
+#!/bin/sh
+# wifi-connect - bring up WPA2-Personal wireless on the live/installer image.
+# This is the live medium's iwctl replacement: NetworkManager+nmtui is the
+# installed system's real wireless story (see ports/main/networkmanager),
+# but that's a much bigger dependency tree than the live bootstrap stage
+# builds - wpa_supplicant alone is enough to get an install-time link up.
+#
+#   wifi-connect <ssid> <psk> [iface]
+#
+# Enterprise/802.1X networks aren't supported here - wpa_supplicant was
+# built WPA2-Personal only on the live image, no TLS backend. Use a wired
+# connection or a phone hotspot for those, then set up 802.1X properly
+# after install through NetworkManager.
+set -u
+
+ssid=${1:-}
+psk=${2:-}
+iface=${3:-}
+
+if [ -z "$ssid" ] || [ -z "$psk" ]; then
+	echo "usage: wifi-connect <ssid> <psk> [iface]" >&2
+	exit 1
+fi
+
+if [ -z "$iface" ]; then
+	for i in /sys/class/net/*; do
+		n=$(basename "$i")
+		[ -d "$i/wireless" ] && { iface=$n; break; }
+	done
+fi
+if [ -z "$iface" ]; then
+	echo "wifi-connect: no wireless interface found - is the driver loaded? (iwlwifi, ath9k, ...)" >&2
+	exit 1
+fi
+
+command -v wpa_supplicant >/dev/null 2>&1 || { echo "wifi-connect: wpa_supplicant not found" >&2; exit 1; }
+
+conf="/etc/wpa_supplicant-$iface.conf"
+wpa_passphrase "$ssid" "$psk" >"$conf" 2>/dev/null
+chmod 600 "$conf"
+
+# Replace any previous run for this interface rather than stacking a
+# second wpa_supplicant instance fighting the first one over the same nl80211
+# interface.
+pkill -f "wpa_supplicant .*-i$iface" 2>/dev/null
+sleep 1
+
+ip link set "$iface" up 2>/dev/null
+if ! wpa_supplicant -B -i "$iface" -c "$conf" >/dev/null 2>&1; then
+	echo "wifi-connect: wpa_supplicant failed to associate with $ssid on $iface" >&2
+	exit 1
+fi
+
+echo "wifi-connect: associated with $ssid on $iface, requesting an address..."
+if udhcpc -i "$iface" -n -q >/dev/null 2>&1; then
+	echo "wifi-connect: connected. Run 'arctic-install' when you're ready."
+else
+	echo "wifi-connect: associated, but DHCP failed - check 'ip addr' and the network." >&2
+	exit 1
+fi

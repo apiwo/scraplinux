@@ -234,6 +234,10 @@ emit "$pd" limine 12.5.2 main "The Arctic bootloader, BIOS and UEFI" \
 
 # --------------------------------------------------------------- arctic's own
 step "packaging alpm"
+# Shipping the shell implementation for now. alpm-rs/ (a Rust rewrite of
+# alpm/alpm-build/alpm-repo) exists in the tree and builds cleanly, but stays
+# on the shelf until it's had more real-world use - not wired into what
+# actually gets packaged here.
 pd=$PKGDIRS/alpm; rm -rf "$pd"
 mkdir -p "$pd/usr/bin" "$pd/usr/lib/alpm" "$pd/etc/alpm/repos.d"
 install -Dm755 "$SRCTREE/alpm/alpm"       "$pd/usr/bin/alpm"
@@ -309,23 +313,21 @@ if [ "$n" -gt 2 ]; then
 		"GPL-3.0-or-later" "https://github.com/dosfstools/dosfstools" "glibc"
 else bad "dosfstools (only $n tools)"; fi
 
-step "packaging ell and iwd"
-pd=$PKGDIRS/ell; rm -rf "$pd"; mkdir -p "$pd/usr/lib"
-cp -a "$R/usr/lib/libell.so"* "$pd/usr/lib/" 2>/dev/null || :
-if ls "$pd"/usr/lib/libell.so* >/dev/null 2>&1; then
-	emit "$pd" ell 0.83 main "Embedded Linux library, used by iwd" \
-		"LGPL-2.1-or-later" "https://git.kernel.org/pub/scm/libs/ell/ell.git" "glibc"
-else bad ell; fi
-
-pd=$PKGDIRS/iwd; rm -rf "$pd"; mkdir -p "$pd/usr/bin" "$pd/usr/lib" "$pd/var/lib/iwd"
-[ -f "$R/usr/lib/iwd" ] && cp -a "$R/usr/lib/iwd" "$pd/usr/lib/iwd"
-[ -f "$R/usr/bin/iwctl" ] && cp -a "$R/usr/bin/iwctl" "$pd/usr/bin/iwctl"
-[ -f "$R/usr/bin/iwmon" ] && cp -a "$R/usr/bin/iwmon" "$pd/usr/bin/iwmon"
-ln -sf ../lib/iwd "$pd/usr/bin/iwd"
-if [ -f "$pd/usr/bin/iwctl" ]; then
-	emit "$pd" iwd 3.12 main "iNet wireless daemon - this is what provides iwctl" \
-		"LGPL-2.1-or-later" "https://iwd.wiki.kernel.org/" "glibc ell dbus"
-else bad iwd; fi
+# libnl and wpa_supplicant are NOT packaged from $R here, on purpose: they
+# are real ports now (ports/main/libnl, ports/main/wpa_supplicant), built
+# through the ordinary alpm-build/build-batch.sh pipeline like everything
+# else in main/extra/base. That build is the full-featured one
+# (wpa_supplicant with D-Bus control interface + EAP/802.1X, which
+# NetworkManager actually needs) - packaging $R's copy here instead would
+# silently overwrite it in the shared repo with the deliberately stripped
+# WPA2-Personal-only, no-D-Bus build build-usable.sh made for the live
+# image specifically, breaking NetworkManager's own wifi backend on every
+# real install. $R still gets its own copies staged directly (see
+# build-usable.sh) for the live/installer image's own squashfs - they just
+# don't also get published as the "main" repo's package of the same name.
+# ell is no longer hand-built into $R at all - iwd was its only consumer on
+# the live image, and bluez (its other consumer) builds ell through the
+# ordinary ports/main/ell recipe instead when it needs it.
 
 step "packaging linux-firmware (wireless)"
 pd=$PKGDIRS/linux-firmware; rm -rf "$pd"; mkdir -p "$pd/usr/lib"

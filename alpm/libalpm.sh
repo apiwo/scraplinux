@@ -189,11 +189,56 @@ dlq() {
 }
 
 # .alpmz is a plain tar.xz, so bsdtar or busybox tar both work.
+#
+# Deliberately does not call fix_usrmerge itself: this also extracts a
+# package into a bare staging directory before the file-conflict check and
+# FILES list get computed from what is actually there (see alpm's own
+# install path), and a package's real archive usually does not contain
+# bin/sbin/lib/lib64 at all - it relies on the merged-/usr symlinks already
+# existing on the real target from glibc/the base package. Fixing it up here
+# would inject symlinks into the staging dir that were never part of this
+# package's own content, get counted as this package's files, and collide
+# with whichever package legitimately already owns them. fix_usrmerge only
+# ever runs against the real $ALPM_ROOT, after everything has merged.
 untar() {
 	archive=$1 dest=$2
 	mkdir -p "$dest"
 	if have bsdtar; then bsdtar -xpf "$archive" -C "$dest"
 	else tar -xpf "$archive" -C "$dest"; fi
+}
+
+# A package archive that contains a bare directory entry for bin/, sbin/,
+# lib/, lib64/ or usr/sbin/ makes tar (GNU or bsdtar - neither extraction path
+# above is immune) replace Arctic's merged-/usr symlink with a real directory
+# instead of extracting into whatever it pointed at. GNU tar has
+# --keep-directory-symlink for this; bsdtar has no equivalent flag at all
+# (confirmed: it errors out if you pass that GNU-only flag to it, and its own
+# default behaviour has the exact same bug). So this repairs it after the
+# fact instead of trying to prevent it during extraction - same fixup
+# build-rootfs.sh already does once for usr/sbin when it first lays out the
+# rootfs, generalised to every merged path and run after every single
+# package, since any one of them can retrigger it.
+fix_usrmerge() {
+	root=$1
+	_um_fix() {
+		p=$1 real=$2 tgt=$3
+		if [ -d "$p" ] && [ ! -L "$p" ]; then
+			for f in "$p"/* "$p"/.[!.]*; do
+				[ -e "$f" ] || [ -L "$f" ] || continue
+				mv -f "$f" "$real/" 2>/dev/null || :
+			done
+			rmdir "$p" 2>/dev/null || :
+		fi
+		[ -e "$p" ] || ln -sfn "$tgt" "$p"
+	}
+	[ -d "$root/usr/bin" ] || return 0
+	[ -d "$root/usr/lib" ] && \
+		_um_fix "$root/lib"     "$root/usr/lib" "usr/lib"
+	[ -d "$root/usr/lib" ] && \
+		_um_fix "$root/lib64"   "$root/usr/lib" "usr/lib"
+	_um_fix "$root/bin"     "$root/usr/bin" "usr/bin"
+	_um_fix "$root/sbin"    "$root/usr/bin" "usr/bin"
+	_um_fix "$root/usr/sbin" "$root/usr/bin" "bin"
 }
 
 tarlist() {

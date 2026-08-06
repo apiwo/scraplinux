@@ -18,6 +18,23 @@ log, not a tutorial.
 - alpm: fetch, dependency resolution, ins/reins/del/del+deps with orphan
   cleanup, ins -nomod + commit for staged installs, verify, rollback
   (btrfs-snapshot and file-replace based), doctor, why, owns, search, stats.
+  Still the POSIX sh implementation (`alpm/`). A full Rust rewrite exists in
+  `alpm-rs/` (zero external crates, same on-disk formats/CLI) and builds
+  clean, but isn't wired into what actually gets packaged yet - staying on
+  the shelf until it's had more real-world use.
+- **Networking**: NetworkManager + nmtui, replacing iwd/iwctl entirely
+  (`ports/main/networkmanager`, built without systemd/selinux/polkit -
+  `doas nmtui` is how you reconfigure it as a regular user). wpa_supplicant
+  is its wifi backend, not a competing option any more. `arctic-install`
+  writes connection profiles straight into
+  `/etc/NetworkManager/system-connections/*.nmconnection` for A_NET=wifi/
+  static; A_NET=dhcp/offline leaves NetworkManager to auto-configure a wired
+  link itself, same as the old rc.d/network default did. The live/installer
+  image does **not** carry NetworkManager - too big a dependency tree to
+  hand-build this early - it ships wpa_supplicant + a `wifi-connect <ssid>
+  <psk>` wrapper instead, just enough to get an install-time link up.
+  rc.d/network still exists but is live-image-only now (wired DHCP, no
+  wifi/static branches); installed systems never enable it.
 
 ## Installer
 
@@ -49,6 +66,18 @@ Declarative system management on top of that, once installed:
 
 ## Known-fixed bugs worth remembering
 
+- **A fresh install could never `alpm fetch` main/kernels/source/profile
+  again.** mkiso bundles those four repos on the medium itself so
+  `arctic-install` works with no network at all, pointing them at
+  `file:///run/arctic/medium/...` and disabling the matching network repo
+  to avoid a name collision - with a comment saying arctic-install would
+  re-enable the network one and drop the medium-only entry once installed.
+  That step never actually existed. Every install, offline or not, left the
+  new system with those four repos either disabled or pointing at a mount
+  that stops existing the moment the disc/USB comes out - `alpm fetch`
+  silently came up short for them forever after, until someone noticed and
+  fixed repos.d by hand. Fixed by doing exactly what the comment already
+  promised, once at the very end of the install.
 - **`ALPM_DB`/`ALPM_CACHE`/`ALPM_LOG` were never derived from `ALPM_ROOT`.**
   Every `--root`-style install (target_alpm during a real install, any
   scratch-root tooling) recorded its package database into the *caller's*
@@ -65,11 +94,13 @@ Declarative system management on top of that, once installed:
   vim` (flag before the subcommand — completely ordinary to type) was parsed
   as an unknown command and fell through to the help screen. Fixed to scan
   all arguments for global flags regardless of position.
-- **`iwctl`/`iwd` failed with "failed to initialize dbus."** Nothing on the
-  image ever started (or shipped) a D-Bus system bus; iwd registers itself
-  on it at startup. Added dbus to the live rootfs build, a `messagebus`
-  system account (dbus drops root once it binds the socket), and an
-  `rc.d/dbus` service enabled by default alongside `iwd`.
+- **`iwctl`/`iwd` failed with "failed to initialize dbus."** (Historical -
+  iwd/iwctl were later replaced outright by NetworkManager+nmtui, see
+  "Networking" below; the dbus/machine-id lesson carried straight over.)
+  Nothing on the image ever started (or shipped) a D-Bus system bus; iwd
+  registered itself on it at startup. Fixed by adding dbus to the live
+  rootfs build, a `messagebus` system account (dbus drops root once it
+  binds the socket), and an `rc.d/dbus` service enabled by default.
 - **cryptsetup couldn't run at all.** Missing `libpopt.so.0` — nothing in the
   manifest ever built popt. Added it as its own port.
 - **Rust packages failed to build almost universally.** The cargo recipe

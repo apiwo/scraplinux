@@ -172,7 +172,7 @@ if [[ -o interactive ]] && [[ -z $ARCTIC_GREETED ]] && [[ -z $ARCTIC_CHROOT ]]; 
 	if [[ -x /usr/bin/arcticfetch ]] && [[ $SHLVL -eq 1 ]]; then
 		arcticfetch
 		if ! grep -q '^INSTALLED=' /etc/arctic-release 2>/dev/null; then
-			print -P "%F{245}Connect with %F{44}iwctl%F{245} or plug in Ethernet, edit %F{44}/etc/arctic/install.conf%F{245}, then run %F{44}arctic-install%F{245} to install.%f"
+			print -P "%F{245}Connect with %F{44}wifi-connect <ssid> <psk>%F{245} or plug in Ethernet, edit %F{44}/etc/arctic/install.conf%F{245}, then run %F{44}arctic-install%F{245} to install.%f"
 		fi
 	fi
 fi

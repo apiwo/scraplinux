@@ -213,8 +213,12 @@ fi
 #
 #   nano, vim   editing install.conf is the whole installation procedure now,
 #               so an editor beyond busybox vi is not optional
-#   dhcpcd      wired networking during the install
-LIVE_EXTRAS="nano vim dhcpcd ttf-jetbrains-mono ttf-nerd-fonts-symbols"
+#
+# Wired networking during the install is rc.d/network + busybox udhcpc
+# (built into the rootfs already); wireless is wpa_supplicant + wifi-connect,
+# both staged straight into the rootfs by build-usable.sh - neither needs
+# installing here as a separate live-only package the way dhcpcd used to.
+LIVE_EXTRAS="nano vim ttf-jetbrains-mono ttf-nerd-fonts-symbols"
 step "installing live tools"
 for p in $LIVE_EXTRAS; do
 	pkg=$(ls -t "$B"/repo/*/x86_64/"$p"-*.alpmz 2>/dev/null | head -1)
@@ -268,25 +272,16 @@ sysfs	/sys	sysfs	rw,nosuid,nodev,noexec	0 0
 devpts	/dev/pts	devpts	rw,nosuid,noexec,gid=5,mode=620	0 0
 EOF
 
-# Services that should be up on the installer image. dbus before iwd - iwd
-# registers itself on the system bus at startup, so it needs one already
-# running or it fails immediately ("failed to initialize dbus"). Enabled by
-# default so a bare `iwctl` from the login shell just works, with nothing
-# more to start by hand.
+# Services that should be up on the installer image. Wired DHCP comes up on
+# its own; wireless is manual (`wifi-connect <ssid> <psk>`) since
+# wpa_supplicant needs credentials it has no way to already have. Neither
+# dbus nor NetworkManager ship on the live image at all - NetworkManager is
+# the installed system's wireless story (see ports/main/networkmanager),
+# too big a dependency tree to justify building into this early bootstrap
+# stage just for an installer.
 mkdir -p "$S/etc/arctic/services"
 : >"$S/etc/arctic/services/network"
 : >"$S/etc/arctic/services/syslogd"
-: >"$S/etc/arctic/services/dbus"
-: >"$S/etc/arctic/services/iwd"
-printf 'NET_MODE=dhcp\n' >"$S/etc/arctic/network.conf"
-
-# dbus-daemon --system will not start without a machine ID, and rc.boot
-# throws service stderr away, so a missing one looked like dbus simply not
-# running - which is what made iwctl report "failed to initialize dbus" on
-# the last image. The live session generates its own on first boot (see
-# /etc/rc.d/dbus); shipping one in the image would give every machine that
-# boots this ISO an identical ID, which is worse.
-rm -f "$S/etc/machine-id"
 
 # Log in on tty1 without asking, and greet the operator.
 sed -i 's|^tty1::respawn:/sbin/getty 38400 tty1 linux|tty1::respawn:/sbin/getty -n -l /usr/bin/arctic-welcome 38400 tty1 linux|' \

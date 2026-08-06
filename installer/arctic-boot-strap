@@ -279,12 +279,23 @@ for extra in "$ROOTDIR"/boot/initramfs-* "$ROOTDIR"/boot/*-ucode.img; do
 	[ -f "$extra" ] && cp -f "$extra" "$BOOTDIR/" || :
 done
 
+# Normally just reads straight back out of the fstab arctic-install's own
+# genfstab already wrote (PARTUUID=, the kernel resolves it immediately at
+# boot with no filesystem probing needed - see genfstab's own comment for why
+# that matters and plain UUID= does not work here). This fallback only fires
+# when there is no fstab to read at all, e.g. arctic-boot-strap run by hand
+# against a root that predates it - same PARTUUID-first, UUID-second order.
 step "Finding the root device" "fstab"
 rootspec=$(awk '$2=="/"{print $1; exit}' "$ROOTDIR/etc/fstab" 2>/dev/null)
 [ -n "$rootspec" ] || {
 	rd=$(awk -v t="$ROOTDIR" '$2==t{print $1}' /proc/mounts | tail -1)
-	u=$(blkid -s UUID -o value "$rd" 2>/dev/null)
-	rootspec=${u:+UUID=$u}; rootspec=${rootspec:-$rd}
+	p=$(blkid -s PARTUUID -o value "$rd" 2>/dev/null)
+	if [ -n "$p" ]; then
+		rootspec="PARTUUID=$p"
+	else
+		u=$(blkid -s UUID -o value "$rd" 2>/dev/null)
+		rootspec=${u:+UUID=$u}; rootspec=${rootspec:-$rd}
+	fi
 }
 initrd=$(ls "$BOOTDIR"/initramfs-* 2>/dev/null | head -1)
 ucode=$(ls "$BOOTDIR"/*-ucode.img 2>/dev/null | head -1)

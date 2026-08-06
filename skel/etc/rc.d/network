@@ -1,19 +1,22 @@
 #!/bin/sh
-# Arctic Linux - bring the network up according to /etc/arctic/network.conf
+# Arctic Linux - bring up wired DHCP on whatever interface comes up.
+#
+# Live/installer image only. The installed system's networking (DHCP,
+# static, wifi) is NetworkManager's job now (see ports/main/networkmanager
+# and arctic-install's configure_network()) - arctic-install never enables
+# this service, only iso/mkiso does, for the live session itself. This
+# stays deliberately dumb: no wifi branch (that's `wifi-connect` on the live
+# image), no static branch (the live session has no config to read one
+# from) - just "find a wired interface, DHCP it", enough to have working
+# network out of the box before you've even looked at install.conf.
 NAME=network
-. /etc/arctic/network.conf 2>/dev/null || NET_MODE=dhcp
 
 pick_iface() {
-	[ -n "${NET_IFACE:-}" ] && { echo "$NET_IFACE"; return; }
 	for i in /sys/class/net/*; do
 		n=$(basename "$i")
 		[ "$n" = lo ] && continue
 		[ -d "$i/wireless" ] && continue
 		echo "$n"; return
-	done
-	# No wired link, fall back to whatever is there.
-	for i in /sys/class/net/*; do
-		n=$(basename "$i"); [ "$n" = lo ] || { echo "$n"; return; }
 	done
 }
 
@@ -22,21 +25,8 @@ start() {
 	iface=$(pick_iface)
 	[ -n "$iface" ] || return 0
 	ip link set "$iface" up 2>/dev/null
-	case "${NET_MODE:-dhcp}" in
-	static)
-		ip addr add "$NET_ADDR" dev "$iface" 2>/dev/null
-		ip route add default via "$NET_GATEWAY" 2>/dev/null
-		: >/etc/resolv.conf
-		for d in $NET_DNS; do printf 'nameserver %s\n' "$d" >>/etc/resolv.conf; done ;;
-	wifi)
-		# iwd owns the link; it only needs an address once associated.
-		udhcpc -b -i "$iface" -p "/run/udhcpc.$iface.pid" \
-			-s /usr/share/udhcpc/default.script >/dev/null 2>&1 ;;
-	*)
-		udhcpc -b -i "$iface" -p "/run/udhcpc.$iface.pid" \
-			-s /usr/share/udhcpc/default.script >/dev/null 2>&1 \
-			|| dhcpcd "$iface" >/dev/null 2>&1 ;;
-	esac
+	udhcpc -b -i "$iface" -p "/run/udhcpc.$iface.pid" \
+		-s /usr/share/udhcpc/default.script >/dev/null 2>&1
 }
 
 stop() {

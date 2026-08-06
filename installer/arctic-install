@@ -49,21 +49,26 @@ LOGF=/tmp/arctic-install.log
 # lines.
 TARGET=""
 A_DISK=""
+A_EASY_DISK="n"
+A_EASY_DISK_FS="ext4"
+A_EASY_DISK_IGNORE=""
 A_ROOT_PART=""
 A_BOOT_PART=""
 A_HOME_PART=""
-A_FORMAT="no"
+A_FORMAT="n"
 A_ROOTDEV=""
 A_ESP=""
+A_BIOS_BOOTPART=""
 A_BOOT_FW=""
 A_BOOTLOADER="limine"
 A_BOOT_MOUNT="/boot/efi"
+A_BIOS_BOOT_MOUNT="/boot/limine"
 A_BOOT_FS="vfat"
 A_BOOT_TIMEOUT="3"
 A_KERNEL_ARGS=""
 A_GENERATIONS="5"
 A_INIT="busybox"
-A_PKGIT="no"
+A_PKGIT="n"
 A_KERNEL="Arctic-base-kernel"
 A_MICROCODE="auto"
 A_DESKTOP="none"
@@ -74,13 +79,13 @@ A_USERPASS=""
 A_ROOTPASS=""
 A_SHELL="/bin/zsh"
 A_USER_GROUPS="wheel users audio video input"
-A_DOAS_NOPASS="no"
+A_DOAS_NOPASS="n"
 A_LOCALE="en_US.UTF-8"
 A_LANG="en_US.UTF-8"
 A_KEYMAP="us"
 A_CONSOLE_FONT=""
 A_TZ="UTC"
-A_NTP="yes"
+A_NTP="y"
 A_NET="offline"
 A_WIFI_SSID=""
 A_WIFI_PSK=""
@@ -92,36 +97,36 @@ A_ROOT_FS="ext4"
 A_BTRFS_SUBVOLS="@ @home @snapshots @log"
 A_SNAPSHOT="none"
 A_BTRFS_OPTS=""
-A_ENCRYPT="no"
+A_ENCRYPT="n"
 A_ENCRYPT_PASS=""
 A_SWAP="none"
 A_SWAPSIZE="4G"
 A_SWAPDEV=""
 A_GPU="auto"
-A_AUDIO="no"
-A_BLUETOOTH="no"
-A_SSH="no"
-A_FIREWALL="yes"
+A_AUDIO="n"
+A_BLUETOOTH="n"
+A_SSH="n"
+A_FIREWALL="y"
 A_TRIM="auto"
 A_EXTRA=""
 A_FONTS=""
 A_PKGS=""
 A_SERVICES=""
 A_SETS=""
-A_LOCK_ROOT="no"
-A_SSH_PASSWORD_AUTH="yes"
+A_LOCK_ROOT="n"
+A_SSH_PASSWORD_AUTH="y"
 A_SSH_KEYS=""
-A_HARDEN_TMP="no"
-A_MAC_RANDOMIZE="no"
+A_HARDEN_TMP="n"
+A_MAC_RANDOMIZE="n"
 A_MOUNTS=""
-A_BTRFS_NO_SNAPSHOT_CACHE="no"
+A_BTRFS_NO_SNAPSHOT_CACHE="n"
 A_DISK_RESERVE=""
-A_ZRAM="no"
+A_ZRAM="n"
 A_ZRAM_SIZE="50%"
 A_ZRAM_ALGO="zstd"
 A_POST=""
-A_CHROOT_SHELL="no"
-A_REBOOT="no"
+A_CHROOT_SHELL="n"
+A_REBOOT="n"
 
 # A_FS was the old name for A_ROOT_FS. Keep reading it so configs written
 # against the previous release still install instead of silently falling
@@ -247,6 +252,33 @@ check_config() {
 	fi
 
 	# --- disk -------------------------------------------------------
+	cfg_enum A_EASY_DISK "$A_EASY_DISK" "y n"
+	if [ "$A_EASY_DISK" = y ]; then
+		[ -n "$A_DISK" ] || \
+			cfg_err "A_EASY_DISK=y needs A_DISK=/dev/sdX set too - it still needs to know which disk"
+		[ -n "$A_ROOT_PART" ] && \
+			cfg_err "A_EASY_DISK=y and A_ROOT_PART are both set - easy-disk mode is whole-disk only"
+		# Everything below this is what "easy" means: one filesystem choice,
+		# every other knob in FILESYSTEMS/ENCRYPTION reset to a plain default
+		# rather than left at whatever the file happened to also set.
+		A_ROOT_FS=$A_EASY_DISK_FS
+		A_ENCRYPT=n
+		A_DISK_RESERVE=""
+		A_BTRFS_SUBVOLS="@ @home @snapshots @log"
+		A_BTRFS_OPTS=""
+		A_BTRFS_NO_SNAPSHOT_CACHE=n
+		# A safety check, not a partial-preserve feature: refuse the whole
+		# disk rather than attempt to partition around a partition someone
+		# meant to keep. "Easy" should never be the risky option.
+		for _ig in $A_EASY_DISK_IGNORE; do
+			case "$_ig" in
+			/dev/*) ;;
+			*) cfg_err "A_EASY_DISK_IGNORE entries must be device paths (got '$_ig')"; continue ;;
+			esac
+			[ -b "$_ig" ] && cfg_err "A_EASY_DISK_IGNORE lists $_ig, and it exists - refusing to touch $A_DISK at all rather than partition around it"
+		done
+	fi
+
 	if [ -n "$A_DISK" ] && [ -n "$A_ROOT_PART" ]; then
 		cfg_err "A_DISK and A_ROOT_PART are both set - pick one (whole disk, or existing partitions)"
 	elif [ -z "$A_DISK" ] && [ -z "$A_ROOT_PART" ]; then
@@ -265,36 +297,36 @@ check_config() {
 		cfg_err "A_ROOT_PART and A_BOOT_PART are the same partition ($A_ROOT_PART)"
 	fi
 
-	cfg_enum A_FORMAT "$A_FORMAT" "yes no"
+	cfg_enum A_FORMAT "$A_FORMAT" "y n"
 	cfg_enum A_ROOT_FS "$A_ROOT_FS" "ext4 ext3 ext2 btrfs xfs f2fs zfs"
 	cfg_enum A_BOOT_FS "$A_BOOT_FS" "vfat ext4 ext3 ext2"
 	cfg_enum A_SNAPSHOT "$A_SNAPSHOT" "none btrfs"
-	cfg_enum A_ENCRYPT "$A_ENCRYPT" "yes no"
+	cfg_enum A_ENCRYPT "$A_ENCRYPT" "y n"
 	cfg_enum A_SWAP "$A_SWAP" "none file partition"
 	cfg_enum A_BOOT_FW "$A_BOOT_FW" "efi bios"
 	cfg_enum A_BOOTLOADER "$A_BOOTLOADER" "limine grub"
 	cfg_enum A_MICROCODE "$A_MICROCODE" "auto intel amd none"
 	cfg_enum A_INIT "$A_INIT" "busybox openrc sysvinit runit dinit systemd-libre"
-	cfg_enum A_PKGIT "$A_PKGIT" "yes no"
+	cfg_enum A_PKGIT "$A_PKGIT" "y n"
 	cfg_enum A_NET "$A_NET" "offline dhcp wifi static"
 	cfg_enum A_DESKTOP "$A_DESKTOP" "none xfce kde niri dwm"
 	cfg_enum A_DM "$A_DM" "none lightdm sddm greetd"
 	cfg_enum A_GPU "$A_GPU" "auto nvidia nouveau amd intel generic"
-	cfg_enum A_AUDIO "$A_AUDIO" "yes no"
-	cfg_enum A_BLUETOOTH "$A_BLUETOOTH" "yes no"
-	cfg_enum A_SSH "$A_SSH" "yes no"
-	cfg_enum A_FIREWALL "$A_FIREWALL" "yes no"
-	cfg_enum A_NTP "$A_NTP" "yes no"
-	cfg_enum A_TRIM "$A_TRIM" "auto yes no"
-	cfg_enum A_DOAS_NOPASS "$A_DOAS_NOPASS" "yes no"
-	cfg_enum A_LOCK_ROOT "$A_LOCK_ROOT" "yes no"
-	cfg_enum A_SSH_PASSWORD_AUTH "$A_SSH_PASSWORD_AUTH" "yes no"
-	cfg_enum A_HARDEN_TMP "$A_HARDEN_TMP" "yes no"
-	cfg_enum A_MAC_RANDOMIZE "$A_MAC_RANDOMIZE" "yes no"
-	cfg_enum A_BTRFS_NO_SNAPSHOT_CACHE "$A_BTRFS_NO_SNAPSHOT_CACHE" "yes no"
-	cfg_enum A_ZRAM "$A_ZRAM" "yes no"
-	cfg_enum A_CHROOT_SHELL "$A_CHROOT_SHELL" "yes no"
-	cfg_enum A_REBOOT "$A_REBOOT" "yes no"
+	cfg_enum A_AUDIO "$A_AUDIO" "y n"
+	cfg_enum A_BLUETOOTH "$A_BLUETOOTH" "y n"
+	cfg_enum A_SSH "$A_SSH" "y n"
+	cfg_enum A_FIREWALL "$A_FIREWALL" "y n"
+	cfg_enum A_NTP "$A_NTP" "y n"
+	cfg_enum A_TRIM "$A_TRIM" "auto y n"
+	cfg_enum A_DOAS_NOPASS "$A_DOAS_NOPASS" "y n"
+	cfg_enum A_LOCK_ROOT "$A_LOCK_ROOT" "y n"
+	cfg_enum A_SSH_PASSWORD_AUTH "$A_SSH_PASSWORD_AUTH" "y n"
+	cfg_enum A_HARDEN_TMP "$A_HARDEN_TMP" "y n"
+	cfg_enum A_MAC_RANDOMIZE "$A_MAC_RANDOMIZE" "y n"
+	cfg_enum A_BTRFS_NO_SNAPSHOT_CACHE "$A_BTRFS_NO_SNAPSHOT_CACHE" "y n"
+	cfg_enum A_ZRAM "$A_ZRAM" "y n"
+	cfg_enum A_CHROOT_SHELL "$A_CHROOT_SHELL" "y n"
+	cfg_enum A_REBOOT "$A_REBOOT" "y n"
 	for _s in $A_SETS; do
 		case " devel net media office virt gaming cli " in
 		*" $_s "*) ;;
@@ -305,10 +337,10 @@ check_config() {
 	# --- things that only make sense together -----------------------
 	[ "$A_SNAPSHOT" = btrfs ] && [ "$A_ROOT_FS" != btrfs ] && \
 		cfg_err "A_SNAPSHOT=btrfs needs A_ROOT_FS=btrfs (this config has $A_ROOT_FS)"
-	[ "$A_ENCRYPT" = yes ] && [ -z "$A_ENCRYPT_PASS" ] && \
-		cfg_err "A_ENCRYPT=yes but A_ENCRYPT_PASS is empty"
-	[ "$A_ENCRYPT" = yes ] && [ "$A_ROOT_FS" = zfs ] && \
-		cfg_err "A_ENCRYPT=yes cannot be combined with A_ROOT_FS=zfs (zfs encrypts itself)"
+	[ "$A_ENCRYPT" = y ] && [ -z "$A_ENCRYPT_PASS" ] && \
+		cfg_err "A_ENCRYPT=y but A_ENCRYPT_PASS is empty"
+	[ "$A_ENCRYPT" = y ] && [ "$A_ROOT_FS" = zfs ] && \
+		cfg_err "A_ENCRYPT=y cannot be combined with A_ROOT_FS=zfs (zfs encrypts itself)"
 	[ "$A_NET" = wifi ] && [ -z "$A_WIFI_SSID" ] && \
 		cfg_err "A_NET=wifi but A_WIFI_SSID is empty"
 	[ "$A_NET" = static ] && [ -z "$A_IP" ] && \
@@ -317,14 +349,14 @@ check_config() {
 		cfg_err "A_SWAP=partition but A_SWAPDEV is empty"
 	[ -n "$A_USERPASS" ] && [ -z "$A_USER" ] && \
 		cfg_warn "A_USERPASS is set but A_USER is empty - no account will be created"
-	[ -n "$A_ROOT_PART" ] && [ "$A_FORMAT" = no ] && \
+	[ -n "$A_ROOT_PART" ] && [ "$A_FORMAT" = n ] && \
 		cfg_warn "installing onto $A_ROOT_PART without formatting - whatever is already there stays"
-	[ "$A_LOCK_ROOT" = yes ] && [ -z "$A_USER" ] && \
-		cfg_warn "A_LOCK_ROOT=yes but A_USER is empty - ignored, that would leave no way in at all"
-	[ "$A_SSH_PASSWORD_AUTH" = no ] && [ "$A_SSH" != yes ] && \
-		cfg_warn "A_SSH_PASSWORD_AUTH=no has nothing to do - A_SSH is not yes"
-	[ -n "$A_SSH_KEYS" ] && [ "$A_SSH" != yes ] && \
-		cfg_warn "A_SSH_KEYS is set but A_SSH is not yes - the keys are still written, sshd just is not running to use them"
+	[ "$A_LOCK_ROOT" = y ] && [ -z "$A_USER" ] && \
+		cfg_warn "A_LOCK_ROOT=y but A_USER is empty - ignored, that would leave no way in at all"
+	[ "$A_SSH_PASSWORD_AUTH" = n ] && [ "$A_SSH" != y ] && \
+		cfg_warn "A_SSH_PASSWORD_AUTH=n has nothing to do - A_SSH is not y"
+	[ -n "$A_SSH_KEYS" ] && [ "$A_SSH" != y ] && \
+		cfg_warn "A_SSH_KEYS is set but A_SSH is not y - the keys are still written, sshd just is not running to use them"
 
 	# Wiping a disk that is currently mounted is never what anyone means.
 	if [ -n "$A_DISK" ]; then
@@ -346,17 +378,22 @@ check_config() {
 	printf '%sConfig file accepted%s\n' "${c_teal:-}" "${t_reset:-}"
 	printf '  %s\n' "$CFFILE"
 	if [ -n "$A_DISK" ]; then
-		printf '  %-14s %s (whole disk - everything on it is destroyed)\n' "disk" "$A_DISK"
+		if [ "$A_EASY_DISK" = y ]; then
+			printf '  %-14s %s (easy disk - whole disk, %s, no encryption)\n' \
+				"disk" "$A_DISK" "$A_ROOT_FS"
+		else
+			printf '  %-14s %s (whole disk - everything on it is destroyed)\n' "disk" "$A_DISK"
+		fi
 	else
 		printf '  %-14s %s%s\n' "root" "$A_ROOT_PART" \
-			"$([ "$A_FORMAT" = yes ] && printf ' (reformatted as %s)' "$A_ROOT_FS")"
+			"$([ "$A_FORMAT" = y ] && printf ' (reformatted as %s)' "$A_ROOT_FS")"
 		[ -n "$A_BOOT_PART" ] && printf '  %-14s %s\n' "boot" "$A_BOOT_PART"
 	fi
 	printf '  %-14s %s\n' "filesystem" "$A_ROOT_FS"
 	printf '  %-14s %s\n' "kernel" "$A_KERNEL"
 	printf '  %-14s %s\n' "hostname" "$A_HOSTNAME"
 	[ "$A_DESKTOP" != none ] && printf '  %-14s %s\n' "desktop" "$A_DESKTOP"
-	[ "$A_ENCRYPT" = yes ]   && printf '  %-14s %s\n' "encryption" "LUKS2"
+	[ "$A_ENCRYPT" = y ]   && printf '  %-14s %s\n' "encryption" "LUKS2"
 	[ -n "$CFG_WARNINGS" ] && printf '\n  warnings:%s\n' "$CFG_WARNINGS"
 	printf '\n'
 }
@@ -398,7 +435,7 @@ make_root_fs() {
 		# adds @cache for /var/cache when the config asks for it, so cache
 		# churn does not bloat every root snapshot taken afterward.
 		subvols=${A_BTRFS_SUBVOLS:-"@ @home @snapshots @log"}
-		[ "$A_BTRFS_NO_SNAPSHOT_CACHE" = yes ] && \
+		[ "$A_BTRFS_NO_SNAPSHOT_CACHE" = y ] && \
 			case " $subvols " in *" @cache "*) ;; *) subvols="$subvols @cache" ;; esac
 
 		mount "$dev" "$TARGET" >>"$LOGF" 2>&1 || return 1
@@ -444,15 +481,29 @@ make_root_fs() {
 		zfs create -o mountpoint=legacy arctic-root/root >>"$LOGF" 2>&1 || return 1
 		mount -t zfs arctic-root/root "$TARGET" >>"$LOGF" 2>&1 || return 1
 		;;
-	*)    mkfs.ext4 -q -F -L arctic-root "$dev" >>"$LOGF" 2>&1 || return 1
+	# ^metadata_csum,^metadata_csum_seed,^64bit,^orphan_file: current
+	# e2fsprogs turns these on by default, but Limine's BIOS-mode ext4
+	# reader cannot parse any of them - it just reports "Stage 3 file not
+	# found" and refuses to boot even though limine-bios.sys is sitting
+	# right there in the root directory. This partition is exactly what
+	# a BIOS install has to read before the kernel's own (fully capable)
+	# ext4 driver ever gets involved, so the on-disk format has to stay
+	# inside what that reader understands.
+	*)    mkfs.ext4 -O ^metadata_csum,^metadata_csum_seed,^64bit,^orphan_file \
+	          -q -F -L arctic-root "$dev" >>"$LOGF" 2>&1 || return 1
 	      mount "$dev" "$TARGET" >>"$LOGF" 2>&1 || return 1 ;;
 	esac
 	return 0
 }
 
 # Lay down a GPT and format it: one EFI partition when the machine booted
-# through UEFI, one root filesystem taking the rest. Sets A_ESP/A_ROOTDEV/
-# A_BOOT_FW for do_install's own bootloader step at the end.
+# through UEFI, one root filesystem taking the rest; on BIOS, a raw 1M
+# partition for Limine's stage2 plus a small FAT32 /boot/limine, since
+# upstream Limine's BIOS build no longer has an ext2/3/4 driver (see
+# ports/main/limine's recipe) - stage3, the kernel and the initramfs need
+# a filesystem it can still read, same trick UEFI already uses for the ESP.
+# Sets A_ESP/A_BIOS_BOOTPART/A_ROOTDEV/A_BOOT_FW for do_install's own
+# bootloader step at the end.
 partition_disk() {
 	disk=$A_DISK
 	[ -b "$disk" ] || bail "A_DISK=$disk is not a block device"
@@ -472,7 +523,7 @@ partition_disk() {
 		reserve_b=$(size_to_bytes "$A_DISK_RESERVE")
 		disk_b=$(blockdev --getsize64 "$disk" 2>/dev/null)
 		ss=$(blockdev --getss "$disk" 2>/dev/null); ss=${ss:-512}
-		fw_b=$([ "$fw" = efi ] && echo $((512*1024*1024)) || echo $((1*1024*1024)))
+		fw_b=$([ "$fw" = efi ] && echo $((512*1024*1024)) || echo $(((1+512)*1024*1024)))
 		if [ -n "$disk_b" ] && [ -n "$reserve_b" ]; then
 			rootsize=$(( (disk_b - fw_b - reserve_b) / ss ))
 			[ "$rootsize" -gt 0 ] || bail "A_DISK_RESERVE=$A_DISK_RESERVE leaves no room for root on $disk"
@@ -487,20 +538,23 @@ partition_disk() {
 		# interactive fdisk keystrokes.
 		printf 'label: gpt\n,512M,U\n,%s,L\n' "$rootsize" | sfdisk --quiet "$disk" >>"$LOGF" 2>&1 \
 			|| bail "partitioning $disk failed - see $LOGF"
-		p1=$(part_name "$disk" 1); p2=$(part_name "$disk" 2)
+		p1=$(part_name "$disk" 1); pb=""; p2=$(part_name "$disk" 2)
 		step "Formatting $p1" "EFI (FAT32)"
 		mkfs.vfat -F32 -n ARCTIC_EFI "$p1" >>"$LOGF" 2>&1 \
 			|| bail "mkfs.vfat failed on $p1 - see $LOGF"
 	else
-		step "Partitioning $disk" "GPT: BIOS boot + root"
-		printf 'label: gpt\n,1M,21686148-6449-6E6F-744E-656564454649\n,%s,L\n' "$rootsize" \
+		step "Partitioning $disk" "GPT: BIOS boot + /boot/limine + root"
+		printf 'label: gpt\n,1M,21686148-6449-6E6F-744E-656564454649\n,512M,U\n,%s,L\n' "$rootsize" \
 			| sfdisk --quiet "$disk" >>"$LOGF" 2>&1 \
 			|| bail "partitioning $disk failed - see $LOGF"
-		p1=""; p2=$(part_name "$disk" 2)
+		p1=""; pb=$(part_name "$disk" 2); p2=$(part_name "$disk" 3)
+		step "Formatting $pb" "boot (FAT32)"
+		mkfs.vfat -F32 -n ARCTIC_BOOT "$pb" >>"$LOGF" 2>&1 \
+			|| bail "mkfs.vfat failed on $pb - see $LOGF"
 	fi
 
 	rootsrc=$p2
-	if [ "$A_ENCRYPT" = yes ]; then
+	if [ "$A_ENCRYPT" = y ]; then
 		step "Encrypting $p2" "LUKS"
 		ensure_pkg cryptsetup cryptsetup || bail "cryptsetup could not be installed from the medium"
 		# --key-file - reads the whole of stdin as the key verbatim, so this
@@ -525,20 +579,25 @@ partition_disk() {
 		mkdir -p "$TARGET$A_BOOT_MOUNT"
 		mount "$p1" "$TARGET$A_BOOT_MOUNT" >>"$LOGF" 2>&1 || :
 		A_ESP=$p1
+	elif [ -n "$pb" ]; then
+		step "Mounting $pb" "$A_BIOS_BOOT_MOUNT"
+		mkdir -p "$TARGET$A_BIOS_BOOT_MOUNT"
+		mount "$pb" "$TARGET$A_BIOS_BOOT_MOUNT" >>"$LOGF" 2>&1 || :
+		A_BIOS_BOOTPART=$pb
 	fi
 	A_ROOTDEV=$p2
 	logit "disk $disk ready and mounted on $TARGET"
 }
 
 # The other path: partitions the operator made themselves. Nothing is
-# repartitioned and, unless A_FORMAT=yes, nothing is reformatted either -
+# repartitioned and, unless A_FORMAT=y, nothing is reformatted either -
 # whatever is on them stays and Arctic installs alongside it.
 mount_existing() {
 	fw=${A_BOOT_FW:-$(detect_firmware)}
 	A_BOOT_FW=$fw
 
 	rootsrc=$A_ROOT_PART
-	if [ "$A_ENCRYPT" = yes ]; then
+	if [ "$A_ENCRYPT" = y ]; then
 		step "Encrypting $A_ROOT_PART" "LUKS"
 		ensure_pkg cryptsetup cryptsetup || bail "cryptsetup could not be installed from the medium"
 		printf '%s' "$A_ENCRYPT_PASS" | \
@@ -551,7 +610,7 @@ mount_existing() {
 	fi
 
 	mkdir -p "$TARGET"
-	if [ "$A_FORMAT" = yes ]; then
+	if [ "$A_FORMAT" = y ]; then
 		step "Formatting $rootsrc" "$A_ROOT_FS"
 		make_root_fs "$rootsrc" \
 			|| bail "could not create the $A_ROOT_FS filesystem on $rootsrc - see $LOGF"
@@ -565,7 +624,7 @@ mount_existing() {
 			A_BTRFS_OPTS=${A_BTRFS_OPTS:-rw,noatime,compress=zstd:3,space_cache=v2}
 			if mount -o "$A_BTRFS_OPTS,subvol=@" "$rootsrc" "$TARGET" >>"$LOGF" 2>&1; then
 				dirs="home .snapshots var/log"
-				[ "$A_BTRFS_NO_SNAPSHOT_CACHE" = yes ] && dirs="$dirs var/cache"
+				[ "$A_BTRFS_NO_SNAPSHOT_CACHE" = y ] && dirs="$dirs var/cache"
 				for sv in $dirs; do
 					case "$sv" in
 					home)       s=@home ;;
@@ -590,11 +649,15 @@ mount_existing() {
 
 	if [ -n "$A_BOOT_PART" ]; then
 		if [ "$fw" = efi ]; then bm=$A_BOOT_MOUNT; else bm=/boot; fi
-		if [ "$A_FORMAT" = yes ] && [ "$fw" = efi ]; then
+		if [ "$A_FORMAT" = y ] && [ "$fw" = efi ]; then
 			step "Formatting $A_BOOT_PART" "$A_BOOT_FS"
 			case "$A_BOOT_FS" in
 			vfat) mkfs.vfat -F32 -n ARCTIC_EFI "$A_BOOT_PART" >>"$LOGF" 2>&1 || : ;;
-			ext4) mkfs.ext4 -q -F -L arctic-boot "$A_BOOT_PART" >>"$LOGF" 2>&1 || : ;;
+			# Same reasoning as make_root_fs's ext4 case: keep this
+			# readable by a bootloader that predates modern e2fsprogs
+			# defaults.
+			ext4) mkfs.ext4 -O ^metadata_csum,^metadata_csum_seed,^64bit,^orphan_file \
+			          -q -F -L arctic-boot "$A_BOOT_PART" >>"$LOGF" 2>&1 || : ;;
 			ext3) mkfs.ext3 -q -F -L arctic-boot "$A_BOOT_PART" >>"$LOGF" 2>&1 || : ;;
 			ext2) mkfs.ext2 -q -F -L arctic-boot "$A_BOOT_PART" >>"$LOGF" 2>&1 || : ;;
 			esac
@@ -603,11 +666,21 @@ mount_existing() {
 		mkdir -p "$TARGET$bm"
 		mount "$A_BOOT_PART" "$TARGET$bm" >>"$LOGF" 2>&1 \
 			|| warn_soft "could not mount $A_BOOT_PART on $bm"
-		[ "$fw" = efi ] && A_ESP=$A_BOOT_PART
+		if [ "$fw" = efi ]; then
+			A_ESP=$A_BOOT_PART
+		else
+			# Same reasoning as partition_disk: a separate mount here only
+			# helps Limine on BIOS if A_BOOT_FS actually stayed something it
+			# can read (vfat, the default) - ext2/3/4 hits the same dropped
+			# driver either way. A_BIOS_BOOT_MOUNT is "/boot/limine" for
+			# partition_disk's own layout; this one is plain "/boot" since
+			# that is where $bm just mounted it.
+			A_BIOS_BOOTPART=$A_BOOT_PART; A_BIOS_BOOT_MOUNT=$bm
+		fi
 	fi
 
 	if [ -n "$A_HOME_PART" ]; then
-		if [ "$A_FORMAT" = yes ]; then
+		if [ "$A_FORMAT" = y ]; then
 			step "Formatting $A_HOME_PART" "$A_ROOT_FS"
 			case "$A_ROOT_FS" in
 			btrfs) mkfs.btrfs -f -L arctic-home "$A_HOME_PART" >>"$LOGF" 2>&1 || : ;;
@@ -708,7 +781,7 @@ install_pkgit() {
 # Package sets, per repo. main is what every Arctic system needs.
 PKGS_MAIN="glibc busybox toybox zsh doas libarchive mandoc onetrueawk bmake byacc \
 alpm arctic-base arctic-init iana-etc tzdata ca-certificates"
-PKGS_NET="iwd dhcpcd openssl curl dbus"
+PKGS_NET="networkmanager wpa_supplicant openssl curl dbus"
 PKGS_EXTRA_BASE="foot vim less htop fastfetch pciutils usbutils"
 
 step() {
@@ -765,9 +838,9 @@ do_install() {
 	[ -e "$TARGET/lib64" ] || ln -s usr/lib "$TARGET/lib64" 2>/dev/null || :
 
 	# /var/run -> ../run and /var/lock -> ../run/lock. dbus listens on
-	# /run/dbus/system_bus_socket, but ell - the library iwd is built on -
-	# looks under /var/run/dbus. Without these, iwd cannot reach a perfectly
-	# healthy bus and reports "Failed to initialize D-Bus".
+	# /run/dbus/system_bus_socket, but ell - the library bluez is built on -
+	# looks under /var/run/dbus. Without these, anything built on ell cannot
+	# reach a perfectly healthy bus and reports "Failed to initialize D-Bus".
 	rm -rf "$TARGET/var/run" "$TARGET/var/lock" 2>/dev/null || :
 	ln -sfn ../run "$TARGET/var/run" 2>/dev/null || :
 	ln -sfn ../run/lock "$TARGET/var/lock" 2>/dev/null || :
@@ -807,7 +880,7 @@ do_install() {
 	target_alpm ins $PKGS_EXTRA_BASE || :
 
 	install_init
-	[ "$A_PKGIT" = yes ] && install_pkgit || :
+	[ "$A_PKGIT" = y ] && install_pkgit || :
 
 	step "Installing graphics drivers" "$A_GPU"
 	g=$A_GPU
@@ -878,12 +951,12 @@ do_install() {
 	# arctic-sound is the whole working stack: pipewire, wireplumber, the
 	# pulse shim so anything expecting PulseAudio still plays, and alsamixer
 	# for when levels need setting directly.
-	[ "$A_AUDIO" = yes ] && { target_alpm ins arctic-sound || \
+	[ "$A_AUDIO" = y ] && { target_alpm ins arctic-sound || \
 		target_alpm ins pipewire wireplumber pipewire-pulse alsa-utils || :; }
-	[ "$A_BLUETOOTH" = yes ] && target_alpm ins bluez bluez-utils || :
-	if [ "$A_SSH" = yes ]; then
+	[ "$A_BLUETOOTH" = y ] && target_alpm ins bluez bluez-utils || :
+	if [ "$A_SSH" = y ]; then
 		target_alpm ins openssh || :
-		if [ "$A_SSH_PASSWORD_AUTH" = no ] && [ -f "$TARGET/etc/ssh/sshd_config" ]; then
+		if [ "$A_SSH_PASSWORD_AUTH" = n ] && [ -f "$TARGET/etc/ssh/sshd_config" ]; then
 			if grep -q '^#\?PasswordAuthentication' "$TARGET/etc/ssh/sshd_config"; then
 				sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' \
 					"$TARGET/etc/ssh/sshd_config"
@@ -892,7 +965,7 @@ do_install() {
 			fi
 		fi
 	fi
-	[ "$A_FIREWALL" = yes ] && target_alpm ins nftables || :
+	[ "$A_FIREWALL" = y ] && target_alpm ins nftables || :
 
 	step "Installing filesystem tools" "$A_ROOT_FS"
 	case "$A_ROOT_FS" in
@@ -902,7 +975,7 @@ do_install() {
 	zfs)   logit "zfs userspace tools are not packaged for Arctic yet" ;;
 	*)     target_alpm ins e2fsprogs || : ;;  # ext4, ext3, ext2
 	esac
-	if [ "$A_ENCRYPT" = yes ]; then
+	if [ "$A_ENCRYPT" = y ]; then
 		step "Installing cryptsetup" "LUKS"
 		target_alpm ins cryptsetup || warn_soft "cryptsetup did not install"
 	fi
@@ -919,7 +992,7 @@ do_install() {
 	step "Setting up swap" "$A_SWAP"
 	setup_swap
 
-	if [ "$A_ZRAM" = yes ]; then
+	if [ "$A_ZRAM" = y ]; then
 		step "Setting up zram" "$A_ZRAM_SIZE compressed with $A_ZRAM_ALGO"
 		mkdir -p "$TARGET/etc/arctic" "$TARGET/etc/modules-load.d"
 		printf 'ZRAM_SIZE=%s\nZRAM_ALGO=%s\n' "$A_ZRAM_SIZE" "$A_ZRAM_ALGO" \
@@ -995,6 +1068,22 @@ EOF
 		fi
 	fi
 
+	# mkiso's 00-medium-*.repo files point at file:///run/arctic/medium/... -
+	# real on the live session this install ran from, gone the moment this
+	# system boots on its own without that disc/USB in it. mkiso disabled
+	# the matching network repo rather than deleting it specifically so this
+	# step could put it back; skipping it left every fresh install with
+	# main/kernels/source/profile silently unreachable afterward, until
+	# someone noticed 'alpm fetch' coming up empty and fixed repos.d by
+	# hand. Done last, once every package this install needs has already
+	# come from wherever it was actually going to come from.
+	step "Restoring network repositories" "medium repos were only for install time"
+	rm -f "$TARGET"/etc/alpm/repos.d/00-medium-*.repo
+	for r in main kernels source profile; do
+		f="$TARGET/etc/alpm/repos.d/$r.repo"
+		[ -f "$f" ] && sed -i 's/^enabled = no$/enabled = yes/' "$f"
+	done
+
 	step "Finishing up" "cleaning the cache"
 	rm -rf "$TARGET/var/cache/alpm/build"/* 2>/dev/null || :
 	# The first boot of a finished install shows the Arctic greeting.
@@ -1028,9 +1117,16 @@ run_install() {
 		[ -x "$bootstrap" ] || bootstrap=arctic-boot-strap
 		if [ -n "$A_ESP" ]; then
 			bootdir="$TARGET$A_BOOT_MOUNT"; bootflag="--efi"
+		elif [ -n "$A_BIOS_BOOTPART" ]; then
+			bootdir="$TARGET$A_BIOS_BOOT_MOUNT"; bootflag="--bios"
 		else
-			# No ESP to speak of on BIOS - there is no separate /boot mount
-			# for a BIOS layout, so hand it the root itself.
+			# Manually-partitioned installs (A_ROOT_PART, no A_BOOT_PART) get
+			# no A_BIOS_BOOTPART from partition_disk - there really is no
+			# separate /boot mount in that layout, so hand it the root
+			# itself, same as before. Whoever partitioned by hand and picked
+			# ext4 as A_ROOT_FS will hit the same "Limine can't read this on
+			# BIOS" problem partition_disk's own layout now avoids; nothing
+			# short of them adding a real /boot fixes that case.
 			bootdir="$TARGET"; bootflag="--bios"
 		fi
 		step "Installing the bootloader" "$A_BOOT_FW"
@@ -1047,7 +1143,11 @@ run_install() {
 	fi
 }
 
-warn_soft() { logit "warning: $*"; }
+# tui_log_line exists precisely so a non-fatal problem does not vanish into
+# $LOGF unseen while the gauge keeps climbing to 100% - a warning here still
+# means "still installed, but go check this" and the operator should not have
+# to know to look at a log file to find out something needs their attention.
+warn_soft() { logit "warning: $*"; tui_log_line "warning: $*"; }
 
 # Snapshots only mean anything on btrfs, so everything here is conditional on it.
 setup_snapshots() {
@@ -1097,8 +1197,17 @@ chroot_run() {
 # single-partition ext4 install all produce a correct fstab without this
 # needing to know which of them happened.
 #
-# Devices are written as UUID= so nothing breaks when the kernel enumerates
-# disks in a different order on the next boot.
+# Devices are written as PARTUUID= (falling back to filesystem UUID= for
+# anything that is not an actual partition, like a LUKS/device-mapper root)
+# so nothing breaks when the kernel enumerates disks in a different order on
+# the next boot. PARTUUID specifically, not filesystem UUID: arctic-boot-strap
+# reads the root line straight back out of this fstab for the kernel's own
+# root= parameter, and testing found the kernel's built-in root=UUID=
+# resolution does not reliably find a match that early in boot (no initramfs
+# tooling has run yet to help it) - it panics with "VFS: Unable to mount root
+# fs on unknown-block(0,0)" even though the partition is right there. PARTUUID
+# comes straight from the partition table itself, no filesystem probing
+# needed, so the kernel resolves it immediately.
 genfstab() {
 	_t=${1:-$TARGET}
 	printf '# Arctic Linux - /etc/fstab\n'
@@ -1118,8 +1227,13 @@ genfstab() {
 		esac
 		case "$dev" in /dev/*) ;; *) continue ;; esac
 
-		uuid=$(blkid -s UUID -o value "$dev" 2>/dev/null)
-		spec=${uuid:+UUID=$uuid}; spec=${spec:-$dev}
+		partuuid=$(blkid -s PARTUUID -o value "$dev" 2>/dev/null)
+		if [ -n "$partuuid" ]; then
+			spec="PARTUUID=$partuuid"
+		else
+			uuid=$(blkid -s UUID -o value "$dev" 2>/dev/null)
+			spec=${uuid:+UUID=$uuid}; spec=${spec:-$dev}
+		fi
 
 		# Keep only the mount options worth persisting. The kernel reports
 		# plenty that are either defaults or meaningless in fstab.
@@ -1230,7 +1344,7 @@ write_fstab() {
 
 	# genfstab always gives /tmp a plain tmpfs line; A_HARDEN_TMP just adds
 	# noexec to it rather than writing a second, conflicting entry.
-	if [ "$A_HARDEN_TMP" = yes ]; then
+	if [ "$A_HARDEN_TMP" = y ]; then
 		sed -i \
 			's#^tmpfs\t/tmp\ttmpfs\trw,nosuid,nodev,#tmpfs\t/tmp\ttmpfs\trw,nosuid,nodev,noexec,#' \
 			"$TARGET/etc/fstab"
@@ -1255,7 +1369,7 @@ write_fstab() {
 # got formatted and mounted), so its LUKS UUID is what both this and the
 # boot loader's kernel command line need.
 write_crypttab() {
-	[ "$A_ENCRYPT" = yes ] || return 0
+	[ "$A_ENCRYPT" = y ] || return 0
 	[ -n "$A_ROOTDEV" ] || { warn_soft "encryption chosen but no root device recorded"; return 0; }
 	uuid=$(blkid -s UUID -o value "$A_ROOTDEV" 2>/dev/null)
 	[ -n "$uuid" ] || { warn_soft "could not read the LUKS UUID of $A_ROOTDEV"; return 0; }
@@ -1291,19 +1405,26 @@ setup_swap() {
 create_users() {
 	# Groups first. Arctic uses wheel for administrative access.
 	#
-	# netdev is not decoration: iwd ships a D-Bus policy granting that group
-	# access to net.connman.iwd, and dbus-daemon rejects a policy naming a
-	# group that does not exist. The whole file is then ignored, iwd cannot
-	# claim its bus name, and it fails with "Failed to initialize D-Bus" -
-	# with a running dbus sitting right there, which is what made it look
-	# like a dbus problem rather than a missing group.
+	# netdev is not decoration: NetworkManager (like iwd before it) ships a
+	# D-Bus policy referencing that group, and dbus-daemon rejects a policy
+	# naming a group that does not exist. The whole file is then ignored
+	# and NetworkManager fails to claim its bus name - with a running dbus
+	# sitting right there, which is what made this look like a dbus problem
+	# rather than a missing group the one time it happened with iwd.
+	#
+	# Without polkit (not built here - see the networkmanager recipe),
+	# actually changing a connection over nmcli/nmtui still needs root:
+	# NetworkManager's own D-Bus policy falls back to uid=0-only for the
+	# settings-modification methods when polkit isn't present to ask
+	# instead. `doas nmtui` is the expected way to run it as A_USER.
 	for g in wheel audio video input storage network netdev render kvm; do
 		chroot_run "grep -q '^$g:' /etc/group || addgroup -S $g" || :
 	done
 	# dbus-daemon --system drops root to this user once it has bound the bus
 	# socket - see /usr/share/dbus-1/system.conf. Without the account it
 	# cannot start at all, which is why plain iwd (needs the system bus to
-	# register itself) used to fail with "failed to initialize dbus".
+	# register itself) used to fail with "failed to initialize dbus" - and
+	# NetworkManager needs it for the exact same reason now.
 	chroot_run "grep -q '^messagebus:' /etc/group || addgroup -S messagebus" || :
 	chroot_run "grep -q '^messagebus:' /etc/passwd || \
 		adduser -S -H -D -G messagebus -s /sbin/nologin messagebus" || :
@@ -1335,9 +1456,9 @@ create_users() {
 		logit "wrote authorized_keys to $kd"
 	fi
 	[ -n "$A_USER" ] && { chroot_run "chown -R $A_USER:$A_USER /home/$A_USER" || :; }
-	if [ "$A_LOCK_ROOT" = yes ] && [ -n "$A_USER" ]; then
+	if [ "$A_LOCK_ROOT" = y ] && [ -n "$A_USER" ]; then
 		chroot_run "passwd -l root" || :
-		logit "root account locked (A_LOCK_ROOT=yes)"
+		logit "root account locked (A_LOCK_ROOT=y)"
 	elif [ "$A_ROOTPASS" = "!locked" ]; then
 		chroot_run "passwd -l root" || :
 		logit "root account locked"
@@ -1347,49 +1468,72 @@ create_users() {
 	fi
 }
 
+# NetworkManager keyfile connections need a real UUID or they fail to load
+# at all; /proc/sys/kernel/random/uuid is always there, no uuidgen needed.
+gen_uuid() { cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "00000000-0000-0000-0000-000000000000"; }
+
 configure_network() {
-	mkdir -p "$TARGET/etc/arctic"
+	mkdir -p "$TARGET/etc/NetworkManager/system-connections"
 	case "$A_NET" in
 	wifi)
-		# iwd keeps one file per network; write it so the link comes back up.
+		# NetworkManager's keyfile plugin: one file per connection, mode 600
+		# (it refuses to load a world-readable one - the PSK is right there
+		# in plain text).
 		if [ -n "$A_WIFI_SSID" ]; then
-			mkdir -p "$TARGET/var/lib/iwd"
-			printf '[Security]\nPassphrase=%s\n' "$A_WIFI_PSK" \
-				>"$TARGET/var/lib/iwd/$A_WIFI_SSID.psk"
-			chmod 600 "$TARGET/var/lib/iwd/$A_WIFI_SSID.psk"
+			f="$TARGET/etc/NetworkManager/system-connections/arctic-wifi.nmconnection"
+			{
+				printf '[connection]\n'
+				printf 'id=%s\n' "$A_WIFI_SSID"
+				printf 'uuid=%s\n' "$(gen_uuid)"
+				printf 'type=wifi\n'
+				printf 'autoconnect=true\n'
+				[ -n "$A_WIFI_IFACE" ] && printf 'interface-name=%s\n' "$A_WIFI_IFACE"
+				printf '\n[wifi]\n'
+				printf 'mode=infrastructure\n'
+				printf 'ssid=%s\n' "$A_WIFI_SSID"
+				printf '\n[wifi-security]\n'
+				printf 'key-mgmt=wpa-psk\n'
+				printf 'psk=%s\n' "$A_WIFI_PSK"
+				printf '\n[ipv4]\nmethod=auto\n\n[ipv6]\nmethod=auto\n'
+			} >"$f"
+			chmod 600 "$f"
 		fi
-		{
-			printf 'NET_MODE=wifi\nNET_SSID=%s\n' "$A_WIFI_SSID"
-			# rc.d/network's pick_iface() only trusts NET_IFACE when it is
-			# set; without it, a machine with more than one interface can
-			# come up on the wrong one after a wifi-only install.
-			[ -n "$A_WIFI_IFACE" ] && printf 'NET_IFACE=%s\n' "$A_WIFI_IFACE"
-		} >"$TARGET/etc/arctic/network.conf"
 		;;
 	static)
-		cat >"$TARGET/etc/arctic/network.conf" <<EOF
-NET_MODE=static
-NET_ADDR=$A_IP
-NET_GATEWAY=$A_GATEWAY
-NET_DNS=$A_DNS
-EOF
-		: >"$TARGET/etc/resolv.conf"
-		for d in $A_DNS; do printf 'nameserver %s\n' "$d" >>"$TARGET/etc/resolv.conf"; done
+		f="$TARGET/etc/NetworkManager/system-connections/arctic-wired.nmconnection"
+		{
+			printf '[connection]\n'
+			printf 'id=arctic-wired\n'
+			printf 'uuid=%s\n' "$(gen_uuid)"
+			printf 'type=ethernet\n'
+			printf 'autoconnect=true\n'
+			printf '\n[ipv4]\n'
+			printf 'method=manual\n'
+			printf 'address1=%s,%s\n' "$A_IP" "$A_GATEWAY"
+			dns=$(printf '%s' "$A_DNS" | tr ' ' ';')
+			printf 'dns=%s;\n' "$dns"
+			printf '\n[ipv6]\nmethod=auto\n'
+		} >"$f"
+		chmod 600 "$f"
 		;;
 	*)
-		printf 'NET_MODE=dhcp\n' >"$TARGET/etc/arctic/network.conf"
-		[ -f "$TARGET/etc/resolv.conf" ] || \
-			printf 'nameserver 1.1.1.1\nnameserver 9.9.9.9\n' >"$TARGET/etc/resolv.conf"
+		# dhcp, and offline too - matching the previous behaviour, where
+		# "offline" never actually meant no networking, it meant "no
+		# explicit config", and rc.d/network's own default case ran DHCP
+		# regardless. No profile is written here; NetworkManager brings up
+		# a wired interface with its own auto-default DHCP connection the
+		# same way, so the observable result doesn't change.
+		:
 		;;
 	esac
 
-	# Randomise the MAC iwd presents per network rather than broadcasting the
-	# adapter's real, permanent one - see iwd.config(5) for what "network"
-	# means here (a MAC derived from the SSID, stable per-network, not
-	# traceable back to the hardware).
-	if [ "$A_MAC_RANDOMIZE" = yes ]; then
-		mkdir -p "$TARGET/etc/iwd"
-		printf '[General]\nAddressRandomization=network\n' >"$TARGET/etc/iwd/main.conf"
+	# Randomise the MAC NetworkManager presents per network rather than
+	# broadcasting the adapter's real, permanent one - a global default
+	# applied to every connection, not just the one written above.
+	if [ "$A_MAC_RANDOMIZE" = y ]; then
+		mkdir -p "$TARGET/etc/NetworkManager/conf.d"
+		printf '[connection]\nwifi.cloned-mac-address=stable\n' \
+			>"$TARGET/etc/NetworkManager/conf.d/mac-randomization.conf"
 	fi
 }
 
@@ -1400,19 +1544,19 @@ enable_services() {
 		logit "enabled service $1"
 	}
 	svc udev
-	svc network
 	svc dbus
-	# iwd is what wireless goes through, but it is also what makes iwctl
-	# work at all - so enable it whenever the machine has wireless
-	# configured, not only when it is the chosen mode.
-	{ [ "$A_NET" = wifi ] || [ -n "$A_WIFI_SSID" ]; } && svc iwd
-	[ "$A_NTP" = yes ] && svc ntpd
-	[ "$A_SSH" = yes ] && svc sshd
-	[ "$A_FIREWALL" = yes ] && svc nftables
-	[ "$A_BLUETOOTH" = yes ] && svc bluetoothd
-	[ "$A_AUDIO" = yes ] && svc pipewire
-	[ "$A_TRIM" = yes ] && [ "$(detect_rotational)" = ssd ] && svc fstrim
-	[ "$A_ZRAM" = yes ] && svc zram
+	# NetworkManager replaces the old rc.d/network + iwd pairing outright -
+	# it drives DHCP, static config and wifi (via wpa_supplicant) all
+	# itself, so it is enabled unconditionally the same way rc.d/network
+	# used to be, not only when A_NET=wifi.
+	svc NetworkManager
+	[ "$A_NTP" = y ] && svc ntpd
+	[ "$A_SSH" = y ] && svc sshd
+	[ "$A_FIREWALL" = y ] && svc nftables
+	[ "$A_BLUETOOTH" = y ] && svc bluetoothd
+	[ "$A_AUDIO" = y ] && svc pipewire
+	[ "$A_TRIM" = y ] && [ "$(detect_rotational)" = ssd ] && svc fstrim
+	[ "$A_ZRAM" = y ] && svc zram
 	case "${A_DM:-none}" in
 	sddm)    svc sddm ;;
 	lightdm) svc lightdm ;;
@@ -1545,8 +1689,8 @@ tui_init
 run_install
 tui_done
 
-if [ "$A_CHROOT_SHELL" = yes ]; then
-	printf '\nA_CHROOT_SHELL=yes - dropping into %s. Type "exit" when done.\n\n' "$TARGET"
+if [ "$A_CHROOT_SHELL" = y ]; then
+	printf '\nA_CHROOT_SHELL=y - dropping into %s. Type "exit" when done.\n\n' "$TARGET"
 	mount --bind /dev "$TARGET/dev" 2>/dev/null || :
 	mount --bind /proc "$TARGET/proc" 2>/dev/null || :
 	mount --bind /sys "$TARGET/sys" 2>/dev/null || :
@@ -1556,8 +1700,8 @@ fi
 
 finished_banner
 
-if [ "$A_REBOOT" = yes ]; then
-	printf '\nA_REBOOT=yes - rebooting.\n'
+if [ "$A_REBOOT" = y ]; then
+	printf '\nA_REBOOT=y - rebooting.\n'
 	sleep 2
 	reboot
 fi
