@@ -148,36 +148,6 @@ if [ -n "${FONT:-}" ]; then
 	done
 fi
 
-# Repaint the 16 console colours in Arctic's palette. The default VGA set is
-# the one every distribution has looked like since 1991; this is the same
-# ice/blue scheme the bootloader and the website use, so a bare TTY looks
-# like part of the system rather than a generic Linux console.
-#
-# ESC]P<index><rrggbb> is the console's own palette escape - it needs no
-# tools and works on every VT before anything is installed.
-set_palette() {
-	printf '\033]P0%s' "1a1b26"   # black
-	printf '\033]P1%s' "f38ba8"   # red
-	printf '\033]P2%s' "a6e3a1"   # green
-	printf '\033]P3%s' "f9e2af"   # yellow
-	printf '\033]P4%s' "89b4fa"   # blue
-	printf '\033]P5%s' "cba6f7"   # magenta
-	printf '\033]P6%s' "94e2d5"   # cyan
-	printf '\033]P7%s' "bac2de"   # white
-	printf '\033]P8%s' "45475a"   # bright black
-	printf '\033]P9%s' "f38ba8"
-	printf '\033]PA%s' "a6e3a1"
-	printf '\033]PB%s' "f9e2af"
-	printf '\033]PC%s' "89b4fa"
-	printf '\033]PD%s' "cba6f7"
-	printf '\033]PE%s' "94e2d5"
-	printf '\033]PF%s' "cdd6f4"   # bright white
-	printf '\033[H\033[2J'        # repaint with the new palette in effect
-}
-for _t in /dev/tty1 /dev/tty2 /dev/tty3 /dev/tty4; do
-	[ -w "$_t" ] && set_palette >"$_t" 2>/dev/null
-done
-
 # Stop the console blanking after 10 minutes mid-install, and turn off the
 # power-management blank that some laptops otherwise apply on top of it.
 for _t in /dev/tty1 /dev/tty2 /dev/tty3 /dev/tty4; do
