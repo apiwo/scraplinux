@@ -184,11 +184,16 @@ info_libc() {
 	printf 'glibc'
 }
 
+# What is installed, not what Arctic is built with. Falling back to "llvm"
+# named a toolchain the machine did not have: the live image ships no
+# compiler at all, and the line still claimed one.
 info_cc() {
 	if command -v clang >/dev/null 2>&1; then
 		printf 'clang %s' "$(clang --version 2>/dev/null | sed -n '1s/.*version \([0-9.]*\).*/\1/p')"
+	elif command -v cc >/dev/null 2>&1; then
+		printf '%s' "$(cc --version 2>/dev/null | head -1 | cut -c1-38)"
 	else
-		printf 'llvm'
+		printf 'none installed'
 	fi
 }
 

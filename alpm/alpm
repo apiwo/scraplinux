@@ -461,9 +461,20 @@ install_one() {
 				printf '%s\t%s\n' "$o" "$f" >>"$tmp.takeover"
 				continue
 			fi
+			# An incoming package that says it replaces the current owner is
+			# allowed to take the path. This is what a multi-call binary needs:
+			# toybox and busybox ship fallback applets - bunzip2, xxd, chrt -
+			# and the dedicated package carrying the real implementation is
+			# meant to win. Without it every such package stopped its
+			# transaction dead, and an install finished reporting that some
+			# base utilities could not be installed.
+			if metaall "$tmp/.PKGINFO" replaces 2>/dev/null | grep -qx "$o"; then
+				printf '%s\t%s\n' "$o" "$f" >>"$tmp.takeover"
+				continue
+			fi
 			die "file conflict: $f is owned by $o
-  both would install a different $f - remove $o first, or report it if
-  they are meant to coexist"
+  both would install a different $f - remove $o first, or add
+  replaces=\"$o\" to $name's recipe if it is meant to take it over"
 		fi
 	done <"$tmp.files"
 
@@ -1345,13 +1356,16 @@ fix_applied() {
 # The manifest sits beside the index of the fix repository, so it is fetched
 # from wherever that repository is served rather than from a second place that
 # could disagree with it.
+# Returns 2 when there is no such repository and 1 when there is one but its
+# manifest could not be fetched. Collapsing those into one failure reported a
+# mirror that could not be reached as a repository that was not configured,
+# which sends you to edit repos.d over a network problem.
 fix_manifest() {
-	_url=$(alpm_repos | while IFS='	' read -r n u; do
-		[ "$n" = "$FIX_REPO" ] && printf '%s' "$u"
-	done)
-	[ -n "$_url" ] || return 1
+	_url=$(alpm_repo_url "$FIX_REPO")
+	[ -n "$_url" ] || return 2
 	_out="$ALPM_DB/sync/$FIX_REPO.fixes"
-	dlq "$_url/$ARCH/FIXES" "$_out" 2>/dev/null || return 1
+	mkdir -p "$ALPM_DB/sync" 2>/dev/null || :
+	dlq "$_url/$ARCH/FIXES" "$_out" || return 1
 	printf '%s' "$_out"
 }
 
@@ -1373,13 +1387,19 @@ cmd_system_fix() {
 	need_root; alpm_init_db
 	FIX_SEL=${1:-}
 
-	_mf=$(fix_manifest) || {
-		# A machine with no fix repository configured is not broken, it just
-		# has nowhere to take corrections from - say which, rather than
-		# reporting "no changes" and leaving it looking up to date.
+	# A machine with no fix repository configured is not broken, it just has
+	# nowhere to take corrections from - say which, rather than reporting
+	# "no changes" and leaving it looking up to date.
+	_mf=$(fix_manifest); _mf_rc=$?
+	if [ "$_mf_rc" = "2" ]; then
 		warn "no '$FIX_REPO' repository configured - nothing to check"
 		return 0
-	}
+	elif [ "$_mf_rc" != "0" ] || [ -z "$_mf" ]; then
+		err "could not fetch the '$FIX_REPO' manifest"
+		[ -n "${DL_ERR:-}" ] && printf '  %s%s%s\n' "$A_GREY" \
+			"$(printf '%s' "$DL_ERR" | head -2 | tr '\n' ' ')" "$C_R"
+		return 1
+	fi
 
 	# A selector that names nothing the repository has ever heard of is a
 	# typo, and answering it with "No changes." would report a healthy system
