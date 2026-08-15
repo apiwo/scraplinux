@@ -81,6 +81,28 @@ for f in /etc/modules-load.d/*.conf; do
 		modprobe "$m" 2>/dev/null || :
 	done <"$f"
 done
+
+# Coldplug: load a driver for every device already present.
+#
+# udev does this on other systems; mdev does not, and Arctic runs mdev. The
+# hotplug handler only fires for devices that appear *after* boot, so
+# anything already plugged in when the machine started - which is every PCI
+# device, including the network card - never had its module loaded at all.
+# A live session came up with nothing but "lo" and "Network is unreachable",
+# on real hardware as much as in a VM, while the driver sat in
+# /usr/lib/modules unused.
+#
+# Every modalias under /sys is a device asking for its driver by name;
+# modprobe resolves it through modules.alias. Failures are ordinary here -
+# plenty of devices have no module in this kernel - so they stay quiet.
+if [ -d /sys/devices ]; then
+	find /sys/devices -name modalias -type f 2>/dev/null | \
+	while read -r a; do
+		read -r alias <"$a" 2>/dev/null || continue
+		[ -n "$alias" ] || continue
+		modprobe -q "$alias" 2>/dev/null || :
+	done
+fi
 good
 
 # --------------------------------------------------------------------- filesystems

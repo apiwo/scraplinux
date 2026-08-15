@@ -240,8 +240,46 @@ fi
 # both staged straight into the rootfs by build-usable.sh - neither needs
 # installing here as a separate live-only package the way dhcpcd used to.
 LIVE_EXTRAS="curl ca-certificates nano vim ttf-jetbrains-mono ttf-nerd-fonts-symbols"
+
+# Dependencies are resolved, not assumed. Unpacking only the named packages
+# put curl on the image without libnghttp2 or brotli, so it died at startup
+# with "libnghttp2.so.14: cannot open shared object file" - and since curl is
+# what every https repository is fetched with, every network repository was
+# unreachable on the live session with no useful message about why.
+#
+# Walks the same INDEX files alpm reads. Anything the rootfs already provides
+# is unpacked again harmlessly; anything with no package at all is reported
+# rather than silently skipped.
+live_deps() {
+	_ld_seen=""
+	_ld_todo="$*"
+	while [ -n "$_ld_todo" ]; do
+		_ld_next=""
+		for _ld_p in $_ld_todo; do
+			case " $_ld_seen " in *" $_ld_p "*) continue ;; esac
+			_ld_seen="$_ld_seen $_ld_p"
+			for _ld_i in "$B"/repo/*/x86_64/INDEX; do
+				[ -f "$_ld_i" ] || continue
+				_ld_d=$(awk -F'\t' -v n="$_ld_p" '$1==n{print $8; exit}' "$_ld_i")
+				[ -n "$_ld_d" ] && break
+			done
+			for _ld_x in $_ld_d; do
+				[ "$_ld_x" = "-" ] && continue
+				case " $_ld_seen $_ld_next " in *" $_ld_x "*) continue ;; esac
+				_ld_next="$_ld_next $_ld_x"
+			done
+		done
+		_ld_todo=$_ld_next
+	done
+	printf '%s\n' $_ld_seen
+}
+
 step "installing live tools"
-for p in $LIVE_EXTRAS; do
+LIVE_SET=$(live_deps $LIVE_EXTRAS)
+printf '   %s requested, %s with dependencies\n' \
+	"$(printf '%s\n' $LIVE_EXTRAS | wc -l | tr -d ' ')" \
+	"$(printf '%s\n' $LIVE_SET | wc -l | tr -d ' ')"
+for p in $LIVE_SET; do
 	pkg=$(ls -t "$B"/repo/*/x86_64/"$p"-*.alpmz 2>/dev/null | head -1)
 	if [ -z "$pkg" ]; then
 		printf '   %s not built - skipping\n' "$p" >&2
