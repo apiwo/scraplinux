@@ -147,22 +147,14 @@ A_REBOOT="n"
 # back to ext4.
 A_FS=""
 
+# No mascot on a failure. An install that just died is the worst moment to
+# be cute at someone, and the penguin pushed the actual error off the top of
+# the message. It appears in exactly one place: the reboot prompt after a
+# finished install.
 bail() {
 	tui_done 2>/dev/null
-	{
-		printf 'error: %s\n' "$*"
-		cat <<'EOF'
-   \
-    \
-        .--.
-       |o_o |
-       |:_/ |
-      //   \ \
-     (|     | )
-    /'\_   _/`\
-    \___)=(___/
-EOF
-	} >&2
+	printf '\n%serror:%s %s\n' "$c_red$t_bold" "$t_reset" "$*" >&2
+	printf '  %sthe full log is at %s%s\n\n' "$c_grey" "$LOGF" "$t_reset" >&2
 	exit 1
 }
 logit() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*" >>"$LOGF"; }
@@ -183,7 +175,7 @@ detect_gpu() {
 
 detect_microcode() {
 	case "$(grep -m1 '^vendor_id' /proc/cpuinfo 2>/dev/null)" in
-	*GenuineIntel*) echo intel-ucode ;;
+	*GenuineIntel*) echo intel-ucode ;;   # only installed if the repo has it
 	*AuthenticAMD*) echo amd-ucode ;;
 	*) echo none ;;
 	esac
@@ -797,13 +789,24 @@ install_pkgit() {
 # Package sets, per repo. main is what every Arctic system needs.
 PKGS_MAIN="glibc busybox toybox zsh doas libarchive mandoc onetrueawk bmake byacc \
 alpm arctic-base arctic-init iana-etc tzdata ca-certificates"
-PKGS_NET="networkmanager wpa_supplicant openssl curl dbus"
-PKGS_EXTRA_BASE="foot vim less htop fastfetch pciutils usbutils"
+PKGS_NET="networkmanager wpa_supplicant curl dbus"
+# Nothing beyond what a console system needs to run and be repaired. A
+# terminal emulator, a fetch tool and a system monitor are not part of a base
+# install - they were installed on every machine whether or not it would ever
+# have a display, and half of them failed to resolve, which turned a working
+# install into a screen of errors. Anything else is A_EXTRA.
+PKGS_EXTRA_BASE="vim less"
 
+# A plain line per step, not a drawn progress screen.
+#
+# The gauge positioned itself with absolute cursor addressing while alpm was
+# writing package output to the same terminal, so the two interleaved into an
+# unreadable mess - a progress bar and a package list overwriting each other
+# a few columns apart. An install is a log, and a log scrolls.
 step() {
-	TUI_GAUGE_NOTE="$2"
-	tui_gauge "$1"
-	logit "$1"
+	printf '\n%s==>%s %s%s%s\n' "$c_teal$t_bold" "$t_reset" "$t_bold" "$1" "$t_reset"
+	[ -n "${2:-}" ] && printf '    %s%s%s\n' "$c_grey" "$2" "$t_reset"
+	logit "$1${2:+ - $2}"
 }
 
 run() {
@@ -880,8 +883,18 @@ do_install() {
 	step "Installing the kernel" "$A_KERNEL"
 	# -nomod keeps the kernel out of the bootloader until 'arctic-boot-strap' runs.
 	target_alpm ins -nomod "$A_KERNEL" || bail "could not install $A_KERNEL"
+	# Microcode is only installed if a repository actually has it. Asking for
+	# intel-ucode when nothing packages it printed "package not found" in the
+	# middle of the install, which reads like a failure and is not one - the
+	# machine boots perfectly well without a microcode update.
 	uc=$(detect_microcode)
-	[ "$uc" != none ] && target_alpm ins "$uc" || :
+	if [ "$uc" != none ]; then
+		if target_alpm info "$uc" >/dev/null 2>&1; then
+			target_alpm ins "$uc" || warn_soft "$uc could not be installed"
+		else
+			logit "no $uc package available; skipping microcode"
+		fi
+	fi
 
 	step "Installing firmware" "linux-firmware"
 	case "$A_KERNEL" in
@@ -889,11 +902,17 @@ do_install() {
 	*) target_alpm ins linux-firmware || warn_soft "firmware not installed" ;;
 	esac
 
+	# Optional from here down: the system already boots. A package that
+	# cannot be resolved is reported as a warning and the install carries on,
+	# rather than printing "unresolved dependencies - nothing was installed"
+	# in the middle of an otherwise fine install and looking like a failure.
 	step "Installing network tools" "$PKGS_NET"
-	target_alpm ins $PKGS_NET || :
+	target_alpm ins $PKGS_NET || \
+		warn_soft "some network packages could not be installed - see $LOGF"
 
 	step "Installing base utilities" "$PKGS_EXTRA_BASE"
-	target_alpm ins $PKGS_EXTRA_BASE || :
+	target_alpm ins $PKGS_EXTRA_BASE || \
+		warn_soft "some base utilities could not be installed - see $LOGF"
 
 	install_init
 	[ "$A_PKGIT" = y ] && install_pkgit || :
@@ -907,6 +926,12 @@ do_install() {
 		# libstdc++.so.6 and libnvidia-rtcore needs libgcc_s.so.1, and glvnd is
 		# what lets the NVIDIA GL live alongside mesa. gmake goes in too, so the
 		# kernel module can be rebuilt when the kernel changes.
+		# The only GNU components Arctic ever installs, and only here: the
+		# NVIDIA blob is built by NVIDIA with gcc, so it needs libstdc++ and
+		# libgcc_s to load at all, and its kernel module build wants GNU
+		# make. Choosing the proprietary driver is what pulls them in;
+		# nothing else on the system does.
+		logit "nvidia: installing gcc-libs and gmake - required by the proprietary driver"
 		target_alpm ins gcc-libs libglvnd gmake || :
 		target_alpm ins nvidia-drivers nvidia-utils || : ;;
 	nouveau) target_alpm ins mesa nouveau-drivers || : ;;
@@ -955,7 +980,7 @@ do_install() {
 	step "Installing package sets" "${A_SETS:-none}"
 	for _set in $A_SETS; do
 		case "$_set" in
-		devel)  target_alpm ins cmake llvm meson ninja pkgconf gmake gdb || : ;;
+		devel)  target_alpm ins cmake llvm meson ninja pkgconf bmake lldb || : ;;
 		net)    target_alpm ins curl wget rsync openssh nmap || : ;;
 		media)  target_alpm ins ffmpeg mpv || : ;;
 		office) target_alpm ins libreoffice || : ;;
@@ -1128,7 +1153,6 @@ EOF
 		mkdir -p "$TARGET/var/lib/arctic"; : >"$TARGET/var/lib/arctic/firstboot"; }
 	sync
 
-	tui_gauge "Done" 100
 	sleep 1
 }
 
@@ -1136,7 +1160,6 @@ EOF
 # wire up the bootloader - one command, nothing to pre-mount by hand.
 run_install() {
 	: >"$LOGF"
-	tui_gauge_init 41
 
 	if [ -n "$A_DISK" ]; then
 		partition_disk

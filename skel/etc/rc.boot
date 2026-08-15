@@ -63,7 +63,12 @@ if [ -x /sbin/udevd ] && [ -f /etc/arctic/services/udev ]; then
 	udevadm settle --timeout=30 2>/dev/null
 else
 	begin "Starting mdev"
-	printf '/sbin/mdev\n' >/proc/sys/kernel/hotplug
+	# Only if the kernel actually exposes it. Writing the hotplug helper
+	# unconditionally printed "can't create /proc/sys/kernel/hotplug:
+	# nonexistent directory" across the boot on any kernel without
+	# CONFIG_UEVENT_HELPER - the coldplug pass below is what populates /dev
+	# either way, so this is an optimisation, not a requirement.
+	[ -d /proc/sys/kernel ] && printf '/sbin/mdev\n' >/proc/sys/kernel/hotplug 2>/dev/null
 	mdev -s
 	[ -x /sbin/mdev ] && mdev -df & 2>/dev/null
 fi
@@ -162,7 +167,13 @@ good
 
 begin "Setting up console"
 [ -f /etc/vconsole.conf ] && . /etc/vconsole.conf
-[ -n "${KEYMAP:-}" ] && loadkmap </usr/share/keymaps/"$KEYMAP".bmap 2>/dev/null || :
+# Braces around the redirect: a failed input redirection is the shell's own
+# error, so "2>/dev/null" on loadkmap alone still printed "can't open
+# /usr/share/keymaps/us.bmap: no such file" over the boot on every image that
+# ships no keymaps at all.
+if [ -n "${KEYMAP:-}" ] && [ -f "/usr/share/keymaps/$KEYMAP.bmap" ]; then
+	{ loadkmap </usr/share/keymaps/"$KEYMAP".bmap; } 2>/dev/null || :
+fi
 
 # Console fonts ship in several shapes (.psf, .psfu, and either gzipped)
 # depending on where they came from, and setfont only takes the file it is
@@ -288,6 +299,15 @@ if [ -f /var/lib/arctic/firstboot ]; then
 fi
 
 rc_done
+
+# Leave a clean screen for the login prompt. The boot log is worth watching
+# while it happens and worth keeping afterwards - it is in /var/log/boot.log
+# and /run/arctic/boot.log either way - but landing on a fresh tty is what
+# you want once the machine is up. A verbose boot keeps it on screen.
+case " $(cat /proc/cmdline 2>/dev/null) " in
+*" verbose "*|*" debug "*) ;;
+*) [ "${QUIET:-0}" = "1" ] || { command -v clear >/dev/null 2>&1 && clear; } ;;
+esac
 
 # /run is a tmpfs, so keep a copy somewhere that survives the boot. This is
 # the first thing to look at when something did not come up.

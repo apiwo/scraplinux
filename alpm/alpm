@@ -807,10 +807,22 @@ cmd_ins() {
 	run_hooks
 	tx_end ok
 	printf '\n'
+	# One closing line for the transaction, not one per requested package.
+	# Installing the base system asks for twenty-odd packages at once, and a
+	# line each - every one of them claiming the same dependency count -
+	# filled the screen with "Package 'x' installed with 7 dependencies"
+	# twenty times over.
+	_done_n=0; _done_first=""
 	for p in $requested; do
 		is_installed "$p" || continue
-		ui_done "$p" "$ndeps" "$TX"
+		_done_n=$((_done_n+1))
+		[ -n "$_done_first" ] || _done_first=$p
 	done
+	if [ "$_done_n" -gt 1 ]; then
+		ui_done "$_done_n packages" "$ndeps" "$TX"
+	elif [ "$_done_n" = 1 ]; then
+		ui_done "$_done_first" "$ndeps" "$TX"
+	fi
 	[ "$ALPM_STYLE" = arctic ] && \
 		printf '  %stransaction %s - undo it with: alpm rollback%s\n' "$A_GREY" "$TX" "$C_R"
 	:

@@ -78,6 +78,12 @@ compdef _gnu_generic service 2>/dev/null
 
 # ----------------------------------------------------------------------- keys
 bindkey -e                                  # emacs keys; set -o vi if you prefer
+# Backspace, explicitly, both ways round. A terminal sends ^? or ^H depending
+# on how it was configured, and without a terminfo entry to consult the line
+# editor guesses - which is how backspace ended up moving the cursor forward
+# inside a chroot on a system whose terminfo database was not installed yet.
+bindkey '^?' backward-delete-char
+bindkey '^H' backward-delete-char
 bindkey '^[[A' history-beginning-search-backward
 bindkey '^[[B' history-beginning-search-forward
 bindkey '^[[H' beginning-of-line
@@ -194,7 +200,13 @@ for f in /etc/zsh/zshrc.d/*.zsh(N); do source $f; done
 # install reminder only shows up on the live ISO - INSTALLED= is only ever
 # written into /etc/arctic-release by arctic-install itself, so its absence
 # is what tells the live image apart from a real install.
-if [[ -o interactive ]] && [[ -z $ARCTIC_GREETED ]] && [[ -z $ARCTIC_CHROOT ]]; then
+# INSTALLED= is only ever written into /etc/arctic-release by arctic-install,
+# so its absence is what tells the live image apart from a real install. The
+# fetch runs on the live session only: on an installed system it printed a
+# full system summary on every single login, which is noise once you know
+# what machine you are sitting at.
+if [[ -o interactive ]] && [[ -z $ARCTIC_GREETED ]] && [[ -z $ARCTIC_CHROOT ]] \
+   && ! grep -q '^INSTALLED=' /etc/arctic-release 2>/dev/null; then
 	export ARCTIC_GREETED=1
 	if [[ -x /usr/bin/arcticfetch ]] && [[ $SHLVL -eq 1 ]]; then
 		arcticfetch
