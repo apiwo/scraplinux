@@ -61,6 +61,13 @@ emit() {
 	ok "$(basename "$out") ($(du -h "$out" | cut -f1), $(wc -l <"$pd/.FILES") files)"
 }
 
+# The version alpm reports about itself has to be the version of the package
+# that contains it. They were separate strings and drifted: an image built
+# straight from the source tree said 1.1.0 while the package said 1.2.0, so
+# "the ISO has an old alpm" was true and false at the same time depending on
+# which one you asked.
+sed -i "s/^ALPM_VERSION=\".*\"$/ALPM_VERSION=\"$VERSION\"/" "$SRCTREE/alpm/libalpm.sh"
+
 step "packaging alpm $VERSION"
 pd=$PKGDIRS/alpm; rm -rf "$pd"
 mkdir -p "$pd/usr/bin" "$pd/usr/lib/alpm" "$pd/etc/alpm/repos.d"

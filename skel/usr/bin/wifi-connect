@@ -5,7 +5,9 @@
 # but that's a much bigger dependency tree than the live bootstrap stage
 # builds - wpa_supplicant alone is enough to get an install-time link up.
 #
-#   wifi-connect <ssid> <psk> [iface]
+#   wifi-connect <ssid> <psk> [iface]   connect
+#   wifi-connect scan [iface]           scan and show what is in range
+#   wifi-connect list-networks [iface]  the same list, names only
 #
 # Enterprise/802.1X networks aren't supported here - wpa_supplicant was
 # built WPA2-Personal only on the live image, no TLS backend. Use a wired
@@ -13,12 +15,22 @@
 # after install through NetworkManager.
 set -u
 
-ssid=${1:-}
-psk=${2:-}
-iface=${3:-}
+# Scanning comes first: connecting to a network requires knowing its name,
+# and there was no way to find one out from here at all - the only tool that
+# could list them was the iwctl this replaced.
+mode=connect
+case "${1:-}" in
+scan)          mode=scan;  iface=${2:-} ;;
+list-networks) mode=list;  iface=${2:-} ;;
+*)             ssid=${1:-}; psk=${2:-}; iface=${3:-} ;;
+esac
 
-if [ -z "$ssid" ] || [ -z "$psk" ]; then
-	echo "usage: wifi-connect <ssid> <psk> [iface]" >&2
+if [ "$mode" = connect ] && { [ -z "${ssid:-}" ] || [ -z "${psk:-}" ]; }; then
+	cat >&2 <<'USAGE'
+usage: wifi-connect <ssid> <psk> [iface]
+       wifi-connect scan [iface]
+       wifi-connect list-networks [iface]
+USAGE
 	exit 1
 fi
 
@@ -38,6 +50,31 @@ fi
 # require it to actually be a real interface.
 case "$iface" in */*) echo "wifi-connect: bad interface name: $iface" >&2; exit 1 ;; esac
 [ -d "/sys/class/net/$iface" ] || { echo "wifi-connect: no such interface: $iface" >&2; exit 1; }
+
+# Scanning needs the interface up and nothing else. iw is the tool for it
+# when it is installed; the kernel's own scan results through wpa_supplicant
+# work otherwise, and both beat having no way to see what is in range.
+if [ "$mode" = scan ] || [ "$mode" = list ]; then
+	ip link set "$iface" up 2>/dev/null
+	if command -v iw >/dev/null 2>&1; then
+		if [ "$mode" = list ]; then
+			iw dev "$iface" scan 2>/dev/null | sed -n 's/^[[:space:]]*SSID: //p' | \
+				grep -v '^$' | sort -u
+		else
+			printf '%-34s %-7s %s\n' "SSID" "SIGNAL" "SECURITY"
+			iw dev "$iface" scan 2>/dev/null | awk '
+				/^BSS /            { sig=""; ssid=""; sec="open" }
+				/signal:/          { sig=$2 }
+				/SSID: /           { sub(/^[ \t]*SSID: /, ""); ssid=$0 }
+				/RSN:|WPA:/        { sec="wpa" }
+				/^[ \t]*$/         { if (ssid != "") printf "%-34s %-7s %s\n", ssid, sig, sec; ssid="" }
+				END                { if (ssid != "") printf "%-34s %-7s %s\n", ssid, sig, sec }'
+		fi
+		exit 0
+	fi
+	echo "wifi-connect: iw is not installed - cannot scan (alpm ins iw)" >&2
+	exit 1
+fi
 
 command -v wpa_supplicant >/dev/null 2>&1 || { echo "wifi-connect: wpa_supplicant not found" >&2; exit 1; }
 
