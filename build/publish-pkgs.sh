@@ -31,6 +31,13 @@ MAXSIZE=104857600
 
 REPOS="main extra base kernels profile nonfree alt-nonfree multilib fix"
 
+# The large-package repository is not synced or reindexed here. Its packages
+# are release assets, published by publish-big.sh, and its index describes
+# files that are deliberately not in this tree - regenerating it from an empty
+# directory would replace a correct index with an empty one. It is listed
+# below so the directory listing still shows it.
+BIGREPO=big
+
 [ -d "$SITE/ALL" ] || { echo "publish-pkgs: no checkout at $SITE" >&2; exit 1; }
 
 step() { printf '\n:: %s\n' "$*"; }
@@ -162,7 +169,7 @@ EOF
 
 step "writing directory listings"
 listing "$SITE/ALL" "arctic-linux/ALL/"
-for r in $REPOS; do
+for r in $REPOS $BIGREPO; do
 	[ -d "$SITE/ALL/$r" ] || continue
 	listing "$SITE/ALL/$r" "arctic-linux/ALL/$r/"
 	[ -d "$SITE/ALL/$r/$ARCH" ] && listing "$SITE/ALL/$r/$ARCH" "arctic-linux/ALL/$r/$ARCH/"

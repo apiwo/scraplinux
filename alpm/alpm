@@ -384,6 +384,7 @@ fetch_pkg() {
 	file="$pkg-$ver-$rel.$arch.alpmz"
 	dest="$ALPM_CACHE/pkg/$file"
 	url=$(alpm_repo_url "$repo")
+	pkgbase=$(alpm_repo_pkgurl "$repo")
 	FETCH_FILE=$dest
 
 	# "-" in the checksum column means the index does not know the hash. That
@@ -411,8 +412,8 @@ fetch_pkg() {
 		rm -f "$dest"
 	fi
 
-	ui_fetch "$role" "$pkg" "$url/$arch/$file" "${dlsize:-0}" "${FETCH_INDEX:-1}"
-	dl_bar "$url/$arch/$file" "$dest" "${dlsize:-0}" "$pkg" || die "download failed: $file"
+	ui_fetch "$role" "$pkg" "$pkgbase/$file" "${dlsize:-0}" "${FETCH_INDEX:-1}"
+	dl_bar "$pkgbase/$file" "$dest" "${dlsize:-0}" "$pkg" || die "download failed: $file"
 	if [ "$want" != "-" ] && [ "$(sha256 "$dest")" != "$want" ]; then
 		rm -f "$dest"
 		die "checksum mismatch on $file - refusing to install"

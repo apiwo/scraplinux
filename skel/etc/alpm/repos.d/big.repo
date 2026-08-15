@@ -1,0 +1,11 @@
+# Arctic Linux - large packages
+# The kernel, firmware and the toolchain: everything too large for a mirror
+# served out of a git host, which refuses any file over 100 MB. The index
+# lives in the tree with the others; the packages themselves are release
+# assets, which is what "pkgurl" points at - they are flat under one tag, so
+# there is no architecture directory to descend into.
+name = big
+url = https://raw.githubusercontent.com/apiwo/arctic-linux-pkgs/main/ALL/big
+pkgurl = https://github.com/apiwo/arctic-linux-pkgs/releases/download/pkgs-x86_64
+enabled = yes
+priority = 25

@@ -860,6 +860,32 @@ alpm_repo_url() {
 	done
 }
 
+# Where a repository's package files live, which is not always beside its
+# index. A mirror served out of a git host has a size ceiling - GitHub refuses
+# a file over 100 MB - and the packages that exceed it are exactly the ones a
+# machine cannot do without: the kernel is already at 95 MB, linux-firmware is
+# 169 MB and was being dropped from the mirror silently, so no firmware was
+# installable at all, and a packaged LLVM is larger still.
+#
+# Release assets have room for those but no directory structure: they are flat
+# under one tag. So a repository may name a separate base for its package
+# files with "pkgurl", and alpm fetches "<pkgurl>/<file>" instead of
+# "<url>/<arch>/<file>". The index stays where it was, small and in the tree.
+alpm_repo_pkgurl() {
+	_pu_want=$1
+	_pu=$(for f in "$ALPM_REPOD"/*.repo; do
+		[ -f "$f" ] || continue
+		n=$(meta "$f" name); [ -n "$n" ] || n=$(basename "$f" .repo)
+		[ "$n" = "$_pu_want" ] || continue
+		meta "$f" pkgurl
+	done)
+	if [ -n "$_pu" ]; then
+		printf '%s\n' "$_pu"
+	else
+		printf '%s/%s\n' "$(alpm_repo_url "$_pu_want")" "$ARCH"
+	fi
+}
+
 # Index line format (tab separated, one package per line):
 #   name  version  release  arch  size  isize  sha256  deps  desc
 idx_lookup() {
