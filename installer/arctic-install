@@ -39,9 +39,23 @@ for d in /usr/lib/alpm "$(dirname "$0")/../alpm" ./alpm; do
 	[ -f "$d/libalpm.sh" ] && { . "$d/libalpm.sh"; break; }
 done
 
-VERSION="1.0.0"
+# One label for the whole distribution, spelled the same way in the ISO's
+# filename and volume id, /etc/arctic-release, arcticfetch's "os" line and
+# here. VERSION_TAG is the same thing where a filename needs it.
+VERSION="Arctic Linux - Alpha v.1"
+VERSION_TAG="alpha-v1"
 CONF=/etc/arctic/install.conf
-LOGF=/tmp/arctic-install.log
+# The install log. /run is a root-owned tmpfs; /tmp is world-writable, and
+# this runs as root - a non-root user on the live session could leave a
+# symlink named arctic-install.log in /tmp and have every line the installer
+# writes land wherever it pointed. rm -f first either way: it removes a
+# symlink rather than following it.
+if mkdir -p /run/arctic 2>/dev/null && [ -w /run/arctic ]; then
+	LOGF=/run/arctic/install.log
+else
+	LOGF=/tmp/arctic-install.log
+fi
+rm -f "$LOGF" 2>/dev/null || :
 
 # ------------------------------------------------------------------- defaults
 # Used as-is for anything the config file leaves unset - either because there
@@ -69,7 +83,7 @@ A_KERNEL_ARGS=""
 A_GENERATIONS="5"
 A_INIT="busybox"
 A_PKGIT="n"
-A_KERNEL="Arctic-base-kernel"
+A_KERNEL="arctic-base-kernel"
 A_MICROCODE="auto"
 A_DESKTOP="none"
 A_DM=""
@@ -306,7 +320,7 @@ check_config() {
 	cfg_enum A_BOOT_FW "$A_BOOT_FW" "efi bios"
 	cfg_enum A_BOOTLOADER "$A_BOOTLOADER" "limine grub"
 	cfg_enum A_MICROCODE "$A_MICROCODE" "auto intel amd none"
-	cfg_enum A_INIT "$A_INIT" "busybox openrc sysvinit runit dinit systemd-libre"
+	cfg_enum A_INIT "$A_INIT" "busybox openrc sysvinit runit dinit nitro systemd-libre"
 	cfg_enum A_PKGIT "$A_PKGIT" "y n"
 	cfg_enum A_NET "$A_NET" "offline dhcp wifi static"
 	cfg_enum A_DESKTOP "$A_DESKTOP" "none xfce kde niri dwm"
@@ -713,6 +727,7 @@ init_packages() {
 	sysvinit)      echo "sysvinit" ;;
 	runit)         echo "runit" ;;
 	dinit)         echo "dinit" ;;
+	nitro)         echo "nitro" ;;
 	systemd-libre)         echo "systemd" ;;
 	esac
 }
@@ -725,6 +740,7 @@ init_path() {
 	sysvinit)      echo "/sbin/init" ;;
 	runit)         echo "/sbin/runit-init" ;;
 	dinit)         echo "/sbin/dinit" ;;
+	nitro)         echo "/usr/bin/nitro" ;;
 	systemd-libre)         echo "/usr/lib/systemd/systemd" ;;
 	esac
 }
@@ -869,7 +885,7 @@ do_install() {
 
 	step "Installing firmware" "linux-firmware"
 	case "$A_KERNEL" in
-	Arctic-libre-kernel) logit "libre kernel: skipping nonfree firmware" ;;
+	arctic-libre-kernel) logit "libre kernel: skipping nonfree firmware" ;;
 	*) target_alpm ins linux-firmware || warn_soft "firmware not installed" ;;
 	esac
 
@@ -1073,13 +1089,13 @@ EOF
 	# system boots on its own without that disc/USB in it. mkiso disabled
 	# the matching network repo rather than deleting it specifically so this
 	# step could put it back; skipping it left every fresh install with
-	# main/kernels/source/profile silently unreachable afterward, until
-	# someone noticed 'alpm fetch' coming up empty and fixed repos.d by
-	# hand. Done last, once every package this install needs has already
-	# come from wherever it was actually going to come from.
+	# main/kernels/profile silently unreachable afterward, until someone
+	# noticed 'alpm fetch' coming up empty and fixed repos.d by hand. Done
+	# last, once every package this install needs has already come from
+	# wherever it was actually going to come from.
 	step "Restoring network repositories" "medium repos were only for install time"
 	rm -f "$TARGET"/etc/alpm/repos.d/00-medium-*.repo
-	for r in main kernels source profile; do
+	for r in main kernels profile; do
 		f="$TARGET/etc/alpm/repos.d/$r.repo"
 		[ -f "$f" ] && sed -i 's/^enabled = no$/enabled = yes/' "$f"
 	done
@@ -1569,12 +1585,14 @@ enable_services() {
 write_release() {
 	cat >"$TARGET/etc/arctic-release" <<EOF
 NAME="Arctic Linux"
-PRETTY_NAME="Arctic Linux"
+PRETTY_NAME="$VERSION"
+VERSION="$VERSION"
+VERSION_ID=$VERSION_TAG
 ID=arctic
 BUILD_ID=$(date '+%Y.%m.%d')
 KERNEL=$A_KERNEL
 INSTALLED=$(date '+%Y-%m-%d %H:%M:%S')
-INSTALLER="arctic-install $VERSION"
+INSTALLER="arctic-install ($VERSION)"
 LIBC=glibc
 TOOLCHAIN=llvm
 USERLAND=bsd
@@ -1587,7 +1605,30 @@ EOF
 }
 
 finished_banner() {
+	# The one place the penguin belongs: a finished install, asking to be
+	# rebooted into. It is not an error decoration and it is not part of the
+	# package manager.
+	tux_reboot_prompt() {
+		cat <<'EOF'
+
+     _____________________________
+    < Arctic Linux is installed!  >
+    < Reboot into it?             >
+     -----------------------------
+       \
+        \
+            .--.
+           |o_o |
+           |:_/ |
+          //   \ \
+         (|     | )
+        /'\_   _/`\
+        \___)=(___/
+EOF
+	}
+
 	if [ -n "$A_DISK" ]; then
+		tux_reboot_prompt
 		cat <<EOF
 
 $(printf '%s' "$c_teal$t_bold")  Arctic Linux is installed on $A_DISK, bootloader included.$(printf '%s' "$t_reset")
@@ -1638,7 +1679,7 @@ while [ $# -gt 0 ]; do
 	-h|--help|help)
 		sed -n '2,27p' "$0" | sed 's/^# \?//'; exit 0 ;;
 	--version)
-		printf 'arctic-install %s\n' "$VERSION"; exit 0 ;;
+		printf 'arctic-install - %s\n' "$VERSION"; exit 0 ;;
 	-*) echo "arctic-install: unknown option $1" >&2; exit 1 ;;
 	*)
 		# There is deliberately no target argument any more. The config

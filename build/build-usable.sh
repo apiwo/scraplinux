@@ -28,6 +28,12 @@ L=$B/logs
 J=$(nproc)
 
 step() { printf '\n\033[1;36m:: %s\033[0m\n' "$*"; }
+sha256() {
+	if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1
+	elif command -v sha256 >/dev/null 2>&1; then sha256 -q "$1"
+	else openssl dgst -sha256 "$1" | sed 's/.*= //'
+	fi
+}
 ok()   { printf '   \033[32mok\033[0m %s\n' "$*"; }
 bad()  { printf '   \033[31mFAILED\033[0m %s\n' "$*"; }
 
@@ -311,11 +317,21 @@ step "installing wireless firmware"
 # --no-cone for these patterns and the full tree is several gigabytes. An
 # installer only needs enough to bring a network up.
 FWTAR=$SRC/linux-firmware-20260622.tar.xz
+FWSHA=2b9d8a358e76eb766588609135e53fa548b902c551daae33ee32f26f25e60dbb
 if [ ! -e "$R/usr/lib/firmware/iwlwifi-cc-a0-77.ucode" ] 2>/dev/null; then
 	if [ ! -s "$FWTAR" ]; then
 		curl -fL --retry 3 -o "$FWTAR" \
 			https://cdn.kernel.org/pub/linux/kernel/firmware/linux-firmware-20260622.tar.xz \
 			>"$L/firmware.log" 2>&1 || bad "firmware download"
+	fi
+	if [ -s "$FWTAR" ]; then
+		got=$(sha256 "$FWTAR")
+		if [ "$got" != "$FWSHA" ]; then
+			echo "checksum mismatch for $(basename "$FWTAR") (expected $FWSHA, got $got)" \
+				>>"$L/firmware.log"
+			rm -f "$FWTAR"
+			bad "firmware (checksum mismatch, see logs/firmware.log)"
+		fi
 	fi
 	if [ -s "$FWTAR" ]; then
 		rm -rf "$W/fw"; mkdir -p "$W/fw"

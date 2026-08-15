@@ -1,5 +1,5 @@
 # Arctic Linux - kernels repository
-# Kernel flavours: Arctic-base-kernel, Arctic-libre-kernel, Arctic-small-kernel, and their headers.
+# Kernel flavours: arctic-base-kernel, arctic-libre-kernel, arctic-small-kernel, and their headers.
 # Kernel/firmware packages are too large for the free-tier pkg mirror - get
 # them from the ISO itself or a GitHub release until they land here too.
 name = kernels

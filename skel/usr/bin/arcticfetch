@@ -246,9 +246,9 @@ esac
 
 # Side by side. Both halves are generated first, then zipped line by line so we
 # never depend on paste(1) or a terminal that understands cursor save/restore.
-tmpl=/tmp/.arcticfetch.logo.$$
-tmpi=/tmp/.arcticfetch.info.$$
-trap 'rm -f "$tmpl" "$tmpi"' EXIT
+tmpl=$(mktemp /tmp/.arcticfetch.logo.XXXXXX) || exit 1
+tmpi=$(mktemp /tmp/.arcticfetch.info.XXXXXX) || exit 1
+trap 'rm -f "$tmpl" "$tmpi" "$tmpl.raw"' EXIT
 
 i=0
 logo_lines >"$tmpl.raw"

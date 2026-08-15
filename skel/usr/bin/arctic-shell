@@ -37,6 +37,7 @@ else
 fi
 note() { printf '%s::%s %s\n' "$TEAL" "$R" "$*"; }
 die()  { printf '%serror:%s %s\n' "$RED" "$R" "$*" >&2; exit 1; }
+shquote() { printf '%s' "$1" | sed "s/'/'\\\\''/g" | sed "1s/^/'/;\$s/\$/'/"; }
 
 case "${1:-}" in
 -h|--help|help) sed -n '2,25p' "$0" | sed 's/^# \?//'; exit 0 ;;
@@ -60,7 +61,7 @@ while [ $# -gt 0 ]; do
 done
 if [ -n "${mode:-}" ]; then
 	for a in "$@"; do
-		cmd="$cmd $(printf '%s' "$a" | sed "s/'/'\\\\''/g" | sed "1s/^/'/;\$s/\$/'/")"
+		cmd="$cmd $(shquote "$a")"
 	done
 fi
 
@@ -147,8 +148,25 @@ trap cleanup EXIT INT TERM
 SH=/bin/sh
 [ -x "$ENVROOT/bin/zsh" ] && SH=/bin/zsh
 
-PS1_TAG="arctic-shell@$(id -un)|dir=$HERE"
-inner="export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; export PS1='[$PS1_TAG]\$ '; export HOME=/root; cd '$HERE' 2>/dev/null || cd /"
+# The prompt has to answer "what am I inside of" at a glance: an arctic-shell
+# looks like the host's shell in every other way, and forgetting you are in
+# one means installing into an environment that evaporates on exit.
+#
+# Passed as environment rather than as PS1: the inner shell is usually zsh,
+# and /etc/zsh/zshrc sets its own PROMPT, which would overwrite anything
+# exported as PS1 before the user ever saw it. zshrc looks for
+# ARCTIC_SHELL_ENV and renders the environment into its own prompt instead.
+# PS1 is still set for the /bin/sh fallback, which has no zshrc.
+_env_pkgs=$pkgs
+[ -n "$_env_pkgs" ] || _env_pkgs="(empty)"
+_env_net=offline
+[ "$NETWORK" = 1 ] && _env_net=network
+_env_life=ephemeral
+[ "$KEEP" = 1 ] && _env_life=kept
+
+PS1_TAG="arctic-shell $_env_pkgs [$_env_net,$_env_life]"
+PS1RAW="($PS1_TAG) "'$ '
+inner="export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; export PS1=$(shquote "$PS1RAW"); export ARCTIC_SHELL_ENV=$(shquote "$_env_pkgs"); export ARCTIC_SHELL_NET=$_env_net; export ARCTIC_SHELL_LIFE=$_env_life; export HOME=/root; cd $(shquote "$HERE") 2>/dev/null || cd /"
 
 run_in() {
 	if [ "$NETWORK" = 1 ]; then

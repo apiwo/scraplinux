@@ -78,10 +78,13 @@ banner() {
 		i=0; while [ "$i" -lt "$seg" ]; do printf '='; i=$((i+1)); done
 	done
 	printf '%s\n' "$_R"
-	v=$(sed -n 's/^BUILD_ID=//p' /etc/arctic-release 2>/dev/null | head -1)
-	printf '  %sArctic Linux%s %s%s%s   %s%s%s\n' \
-		"$_SNOW$_B" "$_R" "$_GREY" "${v:-rolling}" "$_R" \
-		"$_GREY" "$(uname -r)" "$_R"
+	# The release label, not the build date: BUILD_ID is a timestamp, and a
+	# boot banner reading "2026.08.14" tells you when the image was rolled
+	# rather than which release of Arctic you are looking at.
+	v=$(sed -n 's/^VERSION=//p' /etc/arctic-release 2>/dev/null | tr -d '"' | head -1)
+	[ -n "$v" ] || v="Arctic Linux"
+	printf '  %s%s%s   %s%s%s\n' \
+		"$_SNOW$_B" "$v" "$_R" "$_GREY" "$(uname -r)" "$_R"
 	printf '\n'
 }
 

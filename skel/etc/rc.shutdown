@@ -12,35 +12,39 @@ printf '\n'
 if [ -d /etc/arctic/services ]; then
 	for s in $(ls -r /etc/arctic/services 2>/dev/null); do
 		[ -x "/etc/rc.d/$s" ] || continue
-		begin "stopping $s"
+		begin "Stopping $s"
 		"/etc/rc.d/$s" stop >/dev/null 2>&1 && good || bad
 	done
 fi
 
-begin "saving the random seed"
+begin "Saving random seed"
 mkdir -p /var/lib/arctic
-dd if=/dev/urandom of=/var/lib/arctic/random-seed bs=512 count=1 2>/dev/null
+# chmod before writing, not after - this runs before user sessions are
+# killed below, so a plain dd of a not-yet-existing file would leave fresh
+# entropy world-readable for a real window, not just a theoretical one.
+: >/var/lib/arctic/random-seed
 chmod 600 /var/lib/arctic/random-seed
+dd if=/dev/urandom of=/var/lib/arctic/random-seed bs=512 count=1 2>/dev/null
 good
 
-begin "saving the hardware clock"
+begin "Saving system clock to RTC"
 [ -e /dev/rtc0 ] && hwclock --systohc --utc 2>/dev/null || :
 good
 
-begin "sending TERM to everything"
+begin "Sending TERM to all processes"
 killall5 -15 2>/dev/null || kill -15 -1 2>/dev/null
 sleep 2
 good
 
-begin "sending KILL to what is left"
+begin "Sending KILL to remaining processes"
 killall5 -9 2>/dev/null || kill -9 -1 2>/dev/null
 good
 
-begin "deactivating swap"
+begin "Deactivating swap"
 swapoff -a 2>/dev/null || :
 good
 
-begin "unmounting filesystems"
+begin "Unmounting filesystems"
 sync
 umount -a -r 2>/dev/null || :
 mount -o remount,ro / 2>/dev/null || :

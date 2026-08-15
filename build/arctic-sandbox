@@ -74,6 +74,8 @@ sandbox() {
 			--unshare-pid \
 			--unshare-uts \
 			--unshare-ipc \
+			--cap-drop CAP_SYS_ADMIN \
+			--cap-drop CAP_SYS_MODULE \
 			--die-with-parent \
 			--new-session \
 			--setenv TMPDIR /tmp \
@@ -138,6 +140,27 @@ if [ "${1:-}" = "--check" ]; then
 	out=$(sandbox /bin/sh -c 'cp /bin/true /usr/lib/libc.so.6 2>&1' 2>&1)
 	case "$out" in
 	*"Read-only file system"*|*"Permission denied"*) printf 'ok\n' ;;
+	*) printf 'FAIL - got: %s\n' "$out"; fail=1 ;;
+	esac
+
+	# The read-only bind above is a mount flag, not a permission - a process
+	# with CAP_SYS_ADMIN could remount it read-write from the inside and then
+	# write straight through to the real host file, no EROFS in the way at
+	# all. Dropping that one capability is what closes it, and it matters
+	# most on this machine specifically, since builds run as real root here -
+	# an unprivileged user gets this for free from bwrap's user namespace
+	# regardless, but root does not unless the capability is dropped.
+	#
+	# CAP_SYS_ADMIN and CAP_SYS_MODULE, not "ALL": a build legitimately needs
+	# CAP_CHOWN/CAP_FOWNER/CAP_DAC_OVERRIDE to unpack a tarball and write
+	# into a tree it does not own, and dropping everything turned every
+	# source build into a wall of "Can't set user=1000/group=1000" and
+	# "Can't unlink already-existing object" before it compiled a line.
+	printf '  %-46s' "remounting /usr/lib read-write is refused"
+	out=$(sandbox /bin/sh -c 'mount -o remount,rw /usr/lib 2>&1' 2>&1)
+	case "$out" in
+	*"Operation not permitted"*|*"permission denied"*|*"Permission denied"*) printf 'ok\n' ;;
+	"") printf 'FAIL - the remount had no error output (may have succeeded)\n'; fail=1 ;;
 	*) printf 'FAIL - got: %s\n' "$out"; fail=1 ;;
 	esac
 

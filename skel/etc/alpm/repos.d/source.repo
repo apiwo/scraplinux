@@ -1,6 +1,0 @@
-# Arctic Linux - source repository
-# Build recipes for every package in every other repo. Used by 'alpm ins -s'.
-name = source
-url = https://ports-arctic.apiwow.net/ALL
-enabled = yes
-priority = 90

@@ -59,8 +59,14 @@ bound|renew)
 		ip route add default via "$r" dev "$interface" 2>/dev/null && break
 	done
 
+	# domain/dns come straight from whatever DHCP server answered - strip
+	# newlines before they land in resolv.conf, or a malicious server could
+	# use an embedded newline in the domain option to inject an extra
+	# directive line instead of just a search domain.
+	domain=$(printf '%s' "${domain:-}" | tr -d '\n\r')
+
 	{
-		[ -n "${domain:-}" ] && printf 'search %s\n' "$domain"
+		[ -n "$domain" ] && printf 'search %s\n' "$domain"
 		for d in ${dns:-}; do printf 'nameserver %s\n' "$d"; done
 	} >"$RESOLV_CONF.tmp"
 	# Only replace resolv.conf if the lease actually carried DNS servers -

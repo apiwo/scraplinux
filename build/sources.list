@@ -1,12 +1,16 @@
-linux-7.1.3.tar.xz https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.1.3.tar.xz
-glibc-2.44.tar.xz https://ftp.gnu.org/gnu/glibc/glibc-2.44.tar.xz
-busybox-1.38.0.tar.bz2 https://busybox.net/downloads/busybox-1.38.0.tar.bz2
-toybox-0.8.14.tar.gz https://landley.net/toybox/downloads/toybox-0.8.14.tar.gz
-zsh-5.9.2.tar.xz https://www.zsh.org/pub/zsh-5.9.2.tar.xz
-libarchive-3.8.9.tar.gz https://github.com/libarchive/libarchive/archive/refs/tags/v3.8.9.tar.gz
-opendoas-6.8.2.tar.gz https://github.com/Duncaen/OpenDoas/archive/refs/tags/v6.8.2.tar.gz
-mandoc-1.14.6.tar.gz https://mandoc.bsd.lv/snapshots/mandoc-1.14.6.tar.gz
-onetrueawk-20260426.tar.gz https://github.com/onetrueawk/awk/archive/refs/tags/20260426.tar.gz
-limine-12.5.2.tar.gz https://github.com/limine-bootloader/limine/releases/download/v12.5.2/limine-12.5.2.tar.gz
-bmake-20260714.tar.gz http://www.crufty.net/ftp/pub/sjg/bmake-20260714.tar.gz
-byacc.tar.gz https://invisible-island.net/datafiles/release/byacc.tar.gz
+linux-7.1.3.tar.xz https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.1.3.tar.xz be41c068e88f5242a19bccdbffbe077b18c47b45f627e2325504b4fab79dd1dc
+glibc-2.44.tar.xz https://ftp.gnu.org/gnu/glibc/glibc-2.44.tar.xz 37f600f2bef3c5e8300147059568b2a2e40a7ad6ccc65ce942556d49429cc667
+busybox-1.38.0.tar.bz2 https://busybox.net/downloads/busybox-1.38.0.tar.bz2 34f9ea6ff8636f2c9241153b9114eefa9e65674a45318ae1ef95bb5f31c53bb2
+toybox-0.8.14.tar.gz https://landley.net/toybox/downloads/toybox-0.8.14.tar.gz 827e4cdfd69f5da973e00e2a59b30b3c9857fb7fae74c362fd0b4f96be7929b0
+zsh-5.9.2.tar.xz https://www.zsh.org/pub/zsh-5.9.2.tar.xz 36fa734374b44783582cec09bcd67822e2f992c779ec1624ab5596df078d2f81
+libarchive-3.8.9.tar.gz https://github.com/libarchive/libarchive/archive/refs/tags/v3.8.9.tar.gz 744346f6bca195c8f894f847bb32a16e9bcae6002624a58fadc81e80f595b3cb
+opendoas-6.8.2.tar.gz https://github.com/Duncaen/OpenDoas/archive/refs/tags/v6.8.2.tar.gz 6da058a0e70b7543bc60624389b0b00b686189ec933828c522bf8b2600495a67
+mandoc-1.14.6.tar.gz https://mandoc.bsd.lv/snapshots/mandoc-1.14.6.tar.gz 8bf0d570f01e70a6e124884088870cbed7537f36328d512909eb10cd53179d9c
+onetrueawk-20260426.tar.gz https://github.com/onetrueawk/awk/archive/refs/tags/20260426.tar.gz 7ae5b9fc6a8149bc45ea0ba3ba434a69a16d1460d19f6d01b6f04cc885b8e02b
+limine-12.5.2.tar.gz https://github.com/limine-bootloader/limine/releases/download/v12.5.2/limine-12.5.2.tar.gz 1780781336d690c551fc5305604b4c3e3d7499f6cebc504bfa0cda3b712213c1
+bmake-20260714.tar.gz http://www.crufty.net/ftp/pub/sjg/bmake-20260714.tar.gz 0810781d24ad6efe010a8ce91c5c529dc8dd95a561d6c93b30e56b8d679cce65
+byacc.tar.gz https://invisible-island.net/datafiles/release/byacc.tar.gz b618c5fb44c2f5f048843db90f7d1b24f78f47b07913c8c7ba8c942d3eb24b00
+gcc-15.3.0.tar.xz https://ftp.gnu.org/gnu/gcc/gcc-15.3.0/gcc-15.3.0.tar.xz fa59c1beef8995f27c4d71c1df227587189315d3e6faff1bb4306e61b0c530eb
+make-4.4.1.tar.gz https://ftp.gnu.org/gnu/make/make-4.4.1.tar.gz dd16fb1d67bfab79a72f5e8390735c49e3e8e70b4945a15ab1f81ddb78658fb3
+libglvnd-1.7.0.tar.gz https://github.com/NVIDIA/libglvnd/archive/refs/tags/v1.7.0.tar.gz 2b6e15b06aafb4c0b6e2348124808cbd9b291c647299eaaba2e3202f51ff2f3d
+linux-firmware-20260622.tar.xz https://cdn.kernel.org/pub/linux/kernel/firmware/linux-firmware-20260622.tar.xz 2b9d8a358e76eb766588609135e53fa548b902c551daae33ee32f26f25e60dbb

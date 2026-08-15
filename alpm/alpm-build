@@ -27,6 +27,18 @@ recipe=$(cd "$(dirname "$recipe")" && printf '%s/%s' "$(pwd)" "$(basename "$reci
 
 : "${ALPM_BUILDROOT:=$ALPM_CACHE/build}"
 OUT="$ALPM_BUILDROOT/out"
+
+# The build sysroot: everything already built, unpacked into one tree that
+# later builds compile and link against.
+#
+# Without it a build only ever saw the *host's* headers and libraries, so a
+# package could not use one Arctic had just produced. libxcb is the clearest
+# case - it needs the XML descriptions out of xcb-proto, and with xcb-proto
+# built as a package but invisible, c_client.py got no input file and every
+# generated source failed with "IndexError: list index out of range". It also
+# means anything that did build was linked against whatever the host happened
+# to have installed, which is not what ends up on an Arctic system.
+: "${ALPM_SYSROOT:=$ALPM_BUILDROOT/sysroot}"
 # The source cache has to exist before anything is downloaded into it.
 mkdir -p "$OUT" "$ALPM_CACHE/src" "$ALPM_CACHE/pkg"
 
@@ -61,6 +73,33 @@ if command -v ld.lld >/dev/null 2>&1; then
 else
 	export LDFLAGS="${LDFLAGS:--Wl,-O1,--as-needed,-z,relro,-z,now}"
 fi
+# Point every search path a build uses at the sysroot, ahead of the host's
+# own. -rpath-link, not -rpath: it tells the linker where to find the
+# dependencies of the libraries it is linking against, without recording the
+# build machine's paths into the binary that ships.
+if [ -d "$ALPM_SYSROOT/usr" ]; then
+	export PKG_CONFIG_PATH="$ALPM_SYSROOT/usr/lib/pkgconfig:$ALPM_SYSROOT/usr/share/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+	export ACLOCAL_PATH="$ALPM_SYSROOT/usr/share/aclocal${ACLOCAL_PATH:+:$ACLOCAL_PATH}"
+	export PATH="$ALPM_SYSROOT/usr/bin:$PATH"
+	CFLAGS="-isystem $ALPM_SYSROOT/usr/include $CFLAGS"
+	CXXFLAGS="-isystem $ALPM_SYSROOT/usr/include $CXXFLAGS"
+	LDFLAGS="-L$ALPM_SYSROOT/usr/lib -Wl,-rpath-link,$ALPM_SYSROOT/usr/lib $LDFLAGS"
+	export CFLAGS CXXFLAGS LDFLAGS
+fi
+
+# A build's HOME has to be inside the build tree, on the same filesystem as
+# its temporary files. Left pointing at /root, tools that write a cache there
+# fail in two different ways: the sandbox has /root read-only, and anything
+# that builds a file under $TMPDIR and then renames it into the cache crosses
+# a filesystem boundary - harfbuzz's g-ir-scanner died on exactly that with
+# "OSError: [Errno 18] Invalid cross-device link". Same reason CARGO_HOME is
+# set for the Rust recipes.
+export HOME="$ALPM_BUILDROOT/home"
+export XDG_CACHE_HOME="$HOME/.cache"
+export XDG_CONFIG_HOME="$HOME/.config"
+export XDG_DATA_HOME="$HOME/.local/share"
+mkdir -p "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME"
+
 export MAKEFLAGS="-j${ALPM_JOBS}"
 JOBS=$ALPM_JOBS
 export JOBS
@@ -110,7 +149,14 @@ info "compiler   $CC / $LD"
 info "flags      $CFLAGS"
 info "jobs       $JOBS"
 
-rm -rf "$pkgdir"
+# Both trees, not just $pkgdir. A reused $srcdir carries every object file,
+# config.status and half-applied patch the last attempt left in it, and make
+# happily links yesterday's objects against today's flags: bzip2's shared
+# library failed with "recompile with -fPIC" against .o files that predated
+# the flag being passed at all, and a recipe that changed its source version
+# built the version still sitting on disk. Extraction is cheap - the
+# tarballs themselves are cached separately, under $ALPM_CACHE/src.
+rm -rf "$pkgdir" "$srcdir"
 mkdir -p "$srcdir" "$pkgdir"
 
 # ------------------------------------------------------------------ get sources
@@ -157,7 +203,7 @@ if [ -n "$source" ]; then
 		case "$fn" in
 		*.tar.gz|*.tgz|*.tar.xz|*.tar.bz2|*.tar.zst|*.tar)
 			info "unpack $fn"
-			( cd "$srcdir" && untar "$cache" . ) ;;
+			( cd "$srcdir" && untar_src "$cache" . ) ;;
 		*.zip)
 			( cd "$srcdir" && unzip -q "$cache" ) ;;
 		*)
@@ -244,6 +290,28 @@ if have bsdtar; then
 else
 	( cd "$pkgdir" && tar -cf - . | xz -T0 -9 >"$tarball" )
 fi
+
+# Publish it into the sysroot so whatever is built next can use it.
+#
+# The .pc files are rewritten as they land: a pkg-config file names absolute
+# paths under /usr, and inside a sysroot those have to point at the sysroot
+# instead - otherwise "pkg-config --variable=xcbincludedir xcb-proto" answers
+# with a directory on the host that may hold a different version, or nothing
+# at all. Only whole /usr-rooted values are rewritten; anything built out of
+# ${prefix} already follows.
+msg2 "publishing into the build sysroot"
+mkdir -p "$ALPM_SYSROOT"
+cp -a "$pkgdir/." "$ALPM_SYSROOT/" 2>/dev/null || :
+rm -f "$ALPM_SYSROOT/.PKGINFO" "$ALPM_SYSROOT/.FILES" "$ALPM_SYSROOT/.INSTALL"
+# Two plain expressions rather than one with \?, which is a GNU extension
+# busybox and toybox sed do not have - alpm-build runs on Arctic too.
+for _pc in "$ALPM_SYSROOT"/usr/lib/pkgconfig/*.pc "$ALPM_SYSROOT"/usr/share/pkgconfig/*.pc; do
+	[ -f "$_pc" ] || continue
+	sed -i \
+		-e "s|^\\([a-zA-Z_][a-zA-Z0-9_]*\\)=/usr$|\\1=$ALPM_SYSROOT/usr|" \
+		-e "s|^\\([a-zA-Z_][a-zA-Z0-9_]*\\)=/usr/|\\1=$ALPM_SYSROOT/usr/|" \
+		"$_pc"
+done
 
 dsize=$(wc -c <"$tarball")
 printf '\n'

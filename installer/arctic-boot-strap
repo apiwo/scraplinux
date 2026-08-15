@@ -36,7 +36,16 @@ done
 
 CONF=/tmp/arctic-install.conf
 BOOTCONF=/tmp/arctic-boot-strap.conf
-LOGF=/tmp/arctic-install.log
+# The same log arctic-install writes, appended to, not replaced - this runs
+# as one step of an install that is already underway. /run is a root-owned
+# tmpfs and /tmp is world-writable, so prefer the former: a non-root user on
+# the live session could otherwise leave a symlink named arctic-install.log
+# in /tmp and have every line written here land wherever it pointed.
+if [ -d /run/arctic ] && [ -w /run/arctic ]; then
+	LOGF=/run/arctic/install.log
+else
+	LOGF=/tmp/arctic-install.log
+fi
 
 detect_firmware() { [ -d /sys/firmware/efi ] && echo efi || echo bios; }
 logit() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*" >>"$LOGF"; }
@@ -242,7 +251,7 @@ fi
 [ -n "$loader" ] || loader=limine
 
 # The kernel choice is remembered from arctic-install's run, if there was one.
-K=Arctic-base-kernel
+K=arctic-base-kernel
 [ -f "$CONF" ] && . "$CONF" 2>/dev/null && K=${A_KERNEL:-$K}
 
 # Work out the root of the install from the boot directory. Arctic's own

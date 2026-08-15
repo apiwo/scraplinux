@@ -74,12 +74,20 @@ add() {
 	for f in "$@"; do
 		[ -f "$f" ] || die "no such package: $f"
 		pi=$(extract_pkginfo "$f") || die "$f is not a valid .alpmz"
-		echo "$pi" >/tmp/.alpmrepo.$$
-		a=$(meta /tmp/.alpmrepo.$$ arch); : "${a:=x86_64}"
+		# /tmp/.alpmrepo.$$ was a predictable name in a world-writable
+		# directory, written by a tool that runs as root: anyone able to
+		# create a file in /tmp could put a symlink there first and have this
+		# truncate and overwrite whatever it pointed at. The arch is one line
+		# of the .PKGINFO already in $pi - read it out here instead of round
+		# tripping it through a file at all.
+		a=$(printf '%s\n' "$pi" | sed -n 's/^[ 	]*arch[ 	]*=[ 	]*//p' | head -1)
+		: "${a:=x86_64}"
+		case "$a" in
+		""|.|..|*/*) die "$f has an unusable arch field ('$a')" ;;
+		esac
 		mkdir -p "$dir/$a"
 		cp -f "$f" "$dir/$a/"
 		msg2 "filed $(basename "$f") into $dir/$a"
-		rm -f /tmp/.alpmrepo.$$
 	done
 	for a in "$dir"/*/; do
 		[ -d "$a" ] && gen "$dir" "$(basename "$a")"

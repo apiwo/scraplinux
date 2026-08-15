@@ -31,7 +31,7 @@ DATE=$(date '+%s')
 SRC_EXTRA=$B/src
 
 mkdir -p "$PKGDIRS" "$REPO"
-for r in main extra base kernels source nonfree alt-nonfree multilib musl; do
+for r in main extra base kernels nonfree alt-nonfree multilib; do
 	mkdir -p "$REPO/$r/$ARCH"
 done
 
@@ -234,10 +234,6 @@ emit "$pd" limine 12.5.2 main "The Arctic bootloader, BIOS and UEFI" \
 
 # --------------------------------------------------------------- arctic's own
 step "packaging alpm"
-# Shipping the shell implementation for now. alpm-rs/ (a Rust rewrite of
-# alpm/alpm-build/alpm-repo) exists in the tree and builds cleanly, but stays
-# on the shelf until it's had more real-world use - not wired into what
-# actually gets packaged here.
 pd=$PKGDIRS/alpm; rm -rf "$pd"
 mkdir -p "$pd/usr/bin" "$pd/usr/lib/alpm" "$pd/etc/alpm/repos.d"
 install -Dm755 "$SRCTREE/alpm/alpm"       "$pd/usr/bin/alpm"
@@ -259,6 +255,12 @@ cp -a "$SRCTREE/skel/etc" "$pd/etc"
 cp -a "$SRCTREE/skel/usr/." "$pd/usr/"
 rm -rf "$pd/etc/alpm"   # alpm owns those files
 chmod +x "$pd/etc/rc.boot" "$pd/etc/rc.shutdown" "$pd/etc/rc.d"/* "$pd/usr/bin"/*
+# git only tracks the executable bit, not full permission modes, so a fresh
+# checkout of skel/etc/shadow comes out at whatever the umask gives regular
+# files (typically 644) regardless of what it's chmod'd to on disk right now.
+# Every real install went out with world-readable password hashes until this
+# matched the chmod mkiso already does for the live image.
+chmod 600 "$pd/etc/shadow"
 for d in ascii limine plasma wallpaper icons sddm misc; do
 	[ -d "$SRCTREE/branding/$d" ] && cp -a "$SRCTREE/branding/$d" "$pd/usr/share/arctic/"
 done
@@ -446,24 +448,24 @@ meta_pkg base-devel "llvm bmake byacc pkgconf cmake ninja meson git" \
 	"The toolchain needed to build Arctic packages"
 
 # ------------------------------------------------------------------- kernels
-step "packaging Arctic-base-kernel"
-pd=$PKGDIRS/Arctic-base-kernel; rm -rf "$pd"; mkdir -p "$pd/boot" "$pd/usr/lib/modules"
+step "packaging arctic-base-kernel"
+pd=$PKGDIRS/arctic-base-kernel; rm -rf "$pd"; mkdir -p "$pd/boot" "$pd/usr/lib/modules"
 cp -a "$B/stage/kernel-base/boot/." "$pd/boot/"
 cp -a "$B/stage/kernel-base/lib/modules/." "$pd/usr/lib/modules/"
 KREL=$(ls "$B/stage/kernel-base/lib/modules" | head -1)
 rm -f "$pd/usr/lib/modules/$KREL/build" "$pd/usr/lib/modules/$KREL/source"
-emit "$pd" Arctic-base-kernel 7.1.3 kernels \
+emit "$pd" arctic-base-kernel 7.1.3 kernels \
 	"Arctic Linux kernel, broad hardware support" "GPL-2.0-only" \
 	"https://kernel.org/" "glibc"
 
-step "packaging Arctic-kernel"
+step "packaging arctic-kernel"
 if [ -d "$B/stage/kernel-zen/boot" ]; then
-	pd=$PKGDIRS/Arctic-kernel; rm -rf "$pd"; mkdir -p "$pd/boot" "$pd/usr/lib/modules"
+	pd=$PKGDIRS/arctic-kernel; rm -rf "$pd"; mkdir -p "$pd/boot" "$pd/usr/lib/modules"
 	cp -a "$B/stage/kernel-zen/boot/." "$pd/boot/"
 	cp -a "$B/stage/kernel-zen/lib/modules/." "$pd/usr/lib/modules/"
 	KREL=$(ls "$B/stage/kernel-zen/lib/modules" | head -1)
 	rm -f "$pd/usr/lib/modules/$KREL/build" "$pd/usr/lib/modules/$KREL/source"
-	emit "$pd" Arctic-kernel 6.12.100 kernels \
+	emit "$pd" arctic-kernel 6.12.100 kernels \
 		"ZEN patchset on the 6.12 LTS line - PDS/BMQ, ACS override, ntsync, vhba" \
 		"GPL-2.0-only" "https://github.com/apiwo/arctic-kernel" "glibc"
 else
@@ -478,50 +480,10 @@ if ( cd "$W/linux-7.1.3" && make headers_install INSTALL_HDR_PATH="$pd/usr" ) \
 		"GPL-2.0-only WITH Linux-syscall-note" "https://kernel.org/" "-"
 else bad linux-headers; fi
 
-# -------------------------------------------------------------- source repo
-step "laying out the source repository"
-SR=$REPO/source
-mkdir -p "$SR/recipes"
-n=0
-for r in main extra base kernels nonfree alt-nonfree multilib musl; do
-	for d in "$SRCTREE/ports/$r"/*/; do
-		[ -f "$d/recipe" ] || continue
-		p=$(basename "$d")
-		mkdir -p "$SR/recipes/$p"
-		cp -f "$d/recipe" "$SR/recipes/$p/recipe"
-		[ -f "$d/install" ] && cp -f "$d/install" "$SR/recipes/$p/install"
-		# sources.list is what 'alpm get -s' reads to fetch upstream tarballs.
-		awk -F'"' '/^source=/{print $2}' "$d/recipe" | tr ' ' '\n' | \
-			while read -r u; do
-				[ -n "$u" ] || continue
-				case "$u" in
-				*::*) printf '%s %s\n' "${u%%::*}" "${u#*::}" ;;
-				*)    printf '%s %s\n' "$(basename "$u")" "$u" ;;
-				esac
-			done >"$SR/recipes/$p/sources.list"
-		n=$((n+1))
-	done
-done
-ok "$n recipes published to the source repo"
-
-# The source repo index lists every buildable package.
-{
-	printf '# Arctic Linux source repository index\n'
-	printf '# format\t2\n# generated\t%s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
-	printf '# fields\tname version release arch dlsize isize sha256 deps desc\n'
-	grep -v '^#' "$SRCTREE/ports/manifest.tsv" | while IFS='	' read -r repo name ver bs lic deps mdeps url src desc; do
-		[ -n "$name" ] || continue
-		d=$(printf '%s' "$deps" | tr ',' ' ' | sed 's/  */ /g; s/^ //; s/ $//')
-		[ -n "$d" ] && [ "$d" != "-" ] || d="-"
-		printf '%s\t%s\t1\tsrc\t0\t0\t-\t%s\t%s\n' "$name" "$ver" "$d" "$desc"
-	done
-} >"$SR/$ARCH/INDEX"
-ok "source INDEX: $(grep -vc '^#' "$SR/$ARCH/INDEX") packages"
-
 # ------------------------------------------------------- index the binary repos
 step "generating repository indexes"
 export ALPM_ROOT=/ ALPM_COLOR=never
-for r in main extra base kernels nonfree alt-nonfree multilib musl; do
+for r in main extra base kernels nonfree alt-nonfree multilib; do
 	c=$(ls -1 "$REPO/$r/$ARCH"/*.alpmz 2>/dev/null | wc -l | tr -d ' ')
 	if [ "$c" = "0" ]; then
 		# An empty repo still needs a valid index so 'alpm fetch' succeeds.
@@ -539,7 +501,7 @@ for r in main extra base kernels nonfree alt-nonfree multilib musl; do
 done
 
 printf '\n\033[1;36m=== REPOSITORIES ===\033[0m\n'
-for r in main extra base kernels source nonfree alt-nonfree multilib musl; do
+for r in main extra base kernels nonfree alt-nonfree multilib; do
 	c=$(grep -vc '^#' "$REPO/$r/$ARCH/INDEX" 2>/dev/null || echo 0)
 	s=$(du -sh "$REPO/$r" 2>/dev/null | cut -f1)
 	printf '%-14s %5s packages  %s\n' "$r" "$c" "$s"

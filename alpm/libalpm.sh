@@ -24,6 +24,24 @@ ALPM_FORMAT="2"
 : "${ALPM_CACHE:=${ALPM_ROOT%/}/var/cache/alpm}"
 : "${ALPM_LOG:=${ALPM_ROOT%/}/var/log/alpm.log}"
 : "${ALPM_JOBS:=$(nproc 2>/dev/null || echo 1)}"
+# Recipes are not a repository. repos.d is binary-only - every entry in it
+# serves .alpmz files and nothing else - and the ports tree is a separate
+# host with its own layout (ALL/<repo>/<name>/recipe), reached only through
+# this setting. Keeping the two apart is what stops "what can be installed"
+# and "what can be compiled" from being the same list.
+: "${ALPM_PORTS:=https://ports-arctic.apiwow.net/ALL}"
+
+# How an install reports itself. The mechanics are identical in all three -
+# same resolver, same fetch, same progress driven by real byte counts - only
+# the wording and layout change.
+#
+#   arctic  the default: ":: " headings, per-dependency lines
+#   apt     Debian's shape: "Reading package lists...", a "The following NEW
+#           packages will be installed" block, "Get:1 <url> ... [size]",
+#           "Setting up <pkg> (<version>) ..."
+#   aeryn   Aeryn OS's shape: a boxed, columnar transaction summary and
+#           status glyphs rather than prose
+: "${ALPM_STYLE:=arctic}"
 
 # ---------------------------------------------------------------- presentation
 
@@ -45,27 +63,7 @@ msg()   { printf '%s::%s %s%s%s\n' "$A_TEAL$C_B" "$C_R$C_B" "$*" "$C_R" ""; }
 msg2()  { printf '  %s->%s %s\n' "$A_ICE$C_B" "$C_R" "$*"; }
 info()  { printf '  %s*%s  %s\n' "$A_IND" "$C_R" "$*"; }
 warn()  { printf '%s::%s %s%s\n' "$A_AMB$C_B" "$C_B" "$*" "$C_R" >&2; }
-# tux says what went wrong. Not a real cowsay bubble - some of these
-# messages span several lines (a checksum mismatch prints three), which a
-# fixed-width bubble does not degrade well for.
-tux_say() {
-	{
-		printf '%s\n' "$*"
-		cat <<'EOF'
-   \
-    \
-        .--.
-       |o_o |
-       |:_/ |
-      //   \ \
-     (|     | )
-    /'\_   _/`\
-    \___)=(___/
-EOF
-	} >&2
-}
-
-err()   { tux_say "error: $*"; }
+err()   { printf '%sE:%s %s\n' "$A_RED$C_B" "$C_R" "$*" >&2; }
 die()   { err "$*"; exit 1; }
 ok()    { printf '  %sok%s  %s\n' "$A_MINT$C_B" "$C_R" "$*"; }
 
@@ -80,62 +78,25 @@ alpm_log() {
 	printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >>"$ALPM_LOG" 2>/dev/null || :
 }
 
-# A progress bar that degrades gracefully on a dumb tty.
-#
-# Every local here is prefixed _bar_: this is POSIX sh with no real variable
-# scoping, and the plain name "i" used to double as this function's own
-# fill-loop counter *and* leak back into whatever loop variable the caller
-# happened to also call "i" - which alpm's own package-fetch loop does
-# ("for p in $todo; do i=$((i+1)); bar "$i" "$n" "$p"; ...; done"). bar()
-# would run its drawing loop up to $width and leave the caller's "i" sitting
-# there instead of at the package index, so the next call's percentage was
-# computed from that leaked value - cur*100/tot growing to several thousand
-# percent by the second or third package, and the stray '#'/'-' fill string
-# growing long enough to wrap the whole screen with it.
-bar() {
-	_bar_cur=$1 _bar_tot=$2 _bar_label=$3
-	[ -t 1 ] || return 0
-	[ "$_bar_tot" -gt 0 ] 2>/dev/null || return 0
-	_bar_width=$(( ${COLUMNS:-80} - 34 )); [ "$_bar_width" -lt 10 ] && _bar_width=10
-	_bar_fill=$(( _bar_cur * _bar_width / _bar_tot ))
-	_bar_pct=$(( _bar_cur * 100 / _bar_tot ))
-	_bar_b=""; _bar_i=0
-	while [ "$_bar_i" -lt "$_bar_fill" ]; do _bar_b="$_bar_b#"; _bar_i=$((_bar_i+1)); done
-	while [ "$_bar_i" -lt "$_bar_width" ]; do _bar_b="$_bar_b-"; _bar_i=$((_bar_i+1)); done
-	printf '\r  %s%-22.22s%s %s[%s]%s %3d%%' \
-		"$A_SNOW" "$_bar_label" "$C_R" "$A_TEAL" "$_bar_b" "$C_R" "$_bar_pct"
-	[ "$_bar_cur" -ge "$_bar_tot" ] && printf '\n'
-}
-
 # --------------------------------------------------------------------- helpers
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
-# True on a musl root (a musl-edition install, or ALPM_ROOT pointed at one) -
-# Arctic's own binary repo is always built against glibc regardless of which
-# root alpm is pointed at, so a binary install there would just fail at
-# runtime with an unresolvable dynamic linker.
-is_musl_root() {
-	[ -e "$ALPM_ROOT/lib/ld-musl-x86_64.so.1" ] && [ ! -e "$ALPM_ROOT/usr/lib/libc.so.6" ]
-}
-
-musl_binary_warning() {
-	cat >&2 <<'EOF'
- _______________________________________
-/ Musl libc can only use source pkgs on \
-| Arctic. Binaries are compiled via     |
-\ glibc.                                /
- ---------------------------------------
-   \
-    \
-        .--.
-       |o_o |
-       |:_/ |
-      //   \ \
-     (|     | )
-    /'\_   _/`\
-    \___)=(___/
-EOF
+# A package/version/release/arch field is safe to drop straight into a
+# filesystem path (ALPM_CACHE/pkg/<name>-<ver>-<rel>.<arch>.alpmz,
+# ALPM_DB/local/<name>, ...) only if it cannot itself contain a path
+# separator. name/ver/rel/arch normally come from this machine's own repo
+# index or from a package's .PKGINFO - both are effectively remote input
+# (a compromised mirror, a MITM'd http:// repo, a hand-crafted .alpmz), and
+# nothing upstream of fetch_pkg()/install_one() checks them. A version field
+# of "1.0/../../../etc/cron.d/x" would otherwise be free to walk the
+# resulting path anywhere a root-run alpm can write.
+safe_component() {
+	case "$1" in
+	""|.|..) return 1 ;;
+	*/*) return 1 ;;
+	esac
+	return 0
 }
 
 sha256() {
@@ -152,40 +113,350 @@ sha256() {
 # busybox wget rejects the scheme outright ("not an http or ftp url") - so
 # without this the offline install could never reach the packages sitting on the
 # disc it booted from.
+# _dl_file/dl/dlq's own variables are prefixed _dl_: both are called directly
+# (not via a subshell) from sync_repo, fetch_pkg and others that use plain
+# "url"/"out"/"src" names of their own for the very same call - dl() used to
+# assign those as bare globals and stomp the caller's variable of the same
+# name the moment it returned. sync_repo() was the one place this actually
+# bit: it keeps its repo's base url in "$url", calls dl() with
+# "$url/$ARCH/INDEX", and used "$url" again afterward to record the repo's
+# url in sync/<repo>.url - which then got the fetch path written into it
+# instead, silently, every successful sync.
 _dl_file() {
-	src=${1#file://}
-	[ -f "$src" ] || return 1
+	_dl_src=${1#file://}
+	[ -f "$_dl_src" ] || return 1
 	mkdir -p "$(dirname "$2")"
-	cp -f "$src" "$2" 2>/dev/null
+	cp -f "$_dl_src" "$2" 2>/dev/null
+}
+
+# The transfer itself, no progress and no output. Never call this directly -
+# dl/dlq/dl_bar handle file://, the .part file and the rename.
+#
+# The wget branch takes -O and nothing else on purpose. toybox's wget is the
+# only one a freshly installed Arctic system has, and it implements exactly
+# --max-redirect, -d, -O and -p: "wget -q" is a hard "Unknown option 'q'"
+# there, which is what every source-build fetch died with. -O is the one
+# output flag toybox, busybox and GNU wget all agree on, so quietness comes
+# from a redirect rather than a flag no one can rely on.
+_dl_run() {
+	if have curl; then
+		curl -fsSL --retry 3 --retry-delay 2 -o "$2" "$1"
+	elif have wget; then
+		wget -O "$2" "$1" >/dev/null 2>&1
+	else
+		return 127
+	fi
 }
 
 dl() {
-	url=$1 out=$2
-	mkdir -p "$(dirname "$out")" 2>/dev/null || :
-	case "$url" in
-	file://*) _dl_file "$url" "$out"; return $? ;;
+	_dl_url=$1 _dl_out=$2
+	mkdir -p "$(dirname "$_dl_out")" 2>/dev/null || :
+	case "$_dl_url" in
+	file://*) _dl_file "$_dl_url" "$_dl_out"; return $? ;;
 	esac
-	if have curl; then
-		curl -fL --retry 3 --retry-delay 2 -# -o "$out.part" "$url" || return 1
-	elif have wget; then
-		wget -q -O "$out.part" "$url" || return 1
-	else
-		err "no downloader available (need curl or wget)"; return 1
-	fi
-	mv "$out.part" "$out"
+	have curl || have wget || { err "no downloader available (need curl or wget)"; return 1; }
+	_dl_run "$_dl_url" "$_dl_out.part" || { rm -f "$_dl_out.part"; return 1; }
+	mv "$_dl_out.part" "$_dl_out"
 }
 
 # Silent variant for index files.
 dlq() {
-	url=$1 out=$2
-	mkdir -p "$(dirname "$out")" 2>/dev/null || :
-	case "$url" in
-	file://*) _dl_file "$url" "$out"; return $? ;;
+	_dl_url=$1 _dl_out=$2
+	mkdir -p "$(dirname "$_dl_out")" 2>/dev/null || :
+	case "$_dl_url" in
+	file://*) _dl_file "$_dl_url" "$_dl_out"; return $? ;;
 	esac
-	if have curl; then curl -fsSL -o "$out.part" "$url" || return 1
-	elif have wget; then wget -q -O "$out.part" "$url" || return 1
-	else return 1; fi
-	mv "$out.part" "$out"
+	_dl_run "$_dl_url" "$_dl_out.part" || { rm -f "$_dl_out.part"; return 1; }
+	mv "$_dl_out.part" "$_dl_out"
+}
+
+# ------------------------------------------------------------------- progress
+#
+# Everything below redraws its line with a carriage return and nothing else.
+# No terminal clear, no cursor addressing: an install has to stay readable
+# scrolled back in a log, over a serial console, and in a terminal that was
+# already full of other output when it started.
+
+# The file being polled does not exist yet for the first frame or two, and a
+# failed input redirection is reported by the shell itself - redirecting only
+# wc's stderr would still leave "No such file or directory" printed over the
+# bar. The braces put the redirection inside what gets silenced.
+_bytes() { { wc -c <"$1"; } 2>/dev/null || echo 0; }
+
+_rate() {
+	_r_b=${1:-0}
+	if   [ "$_r_b" -ge 1048576 ] 2>/dev/null; then
+		printf '%s.%sMB/s' $((_r_b/1048576)) $(( (_r_b%1048576)*10/1048576 ))
+	elif [ "$_r_b" -ge 1024 ] 2>/dev/null; then
+		printf '%s.%skB/s' $((_r_b/1024)) $(( (_r_b%1024)*10/1024 ))
+	else
+		printf '%sB/s' "$_r_b"
+	fi
+}
+
+_clock() {
+	_c_s=${1:-0}
+	[ "$_c_s" -ge 0 ] 2>/dev/null || _c_s=0
+	[ "$_c_s" -gt 359999 ] && _c_s=359999
+	printf '%d:%02d:%02d' $((_c_s/3600)) $(( (_c_s%3600)/60 )) $((_c_s%60))
+}
+
+# One frame of a download bar. cur/total in bytes, rate in bytes/s, eta in
+# seconds. A total of 0 means the size is not known ahead of time, in which
+# case there is no percentage to show and the bar stays empty rather than
+# inventing a position.
+_bar_line() {
+	_bl_label=$1 _bl_cur=$2 _bl_total=$3 _bl_rate=$4 _bl_eta=$5
+	_bl_w=$(( ${COLUMNS:-80} - 54 )); [ "$_bl_w" -lt 10 ] && _bl_w=10
+	if [ "${_bl_total:-0}" -gt 0 ] 2>/dev/null; then
+		_bl_pct=$(( _bl_cur * 100 / _bl_total ))
+		[ "$_bl_pct" -gt 100 ] && _bl_pct=100
+		_bl_fill=$(( _bl_pct * _bl_w / 100 ))
+	else
+		_bl_pct=-1; _bl_fill=0
+	fi
+	_bl_s=""; _bl_i=0
+	while [ "$_bl_i" -lt "$_bl_fill" ]; do _bl_s="$_bl_s#"; _bl_i=$((_bl_i+1)); done
+	while [ "$_bl_i" -lt "$_bl_w" ];    do _bl_s="$_bl_s "; _bl_i=$((_bl_i+1)); done
+	if [ "$_bl_pct" -lt 0 ]; then
+		printf '\r  %s%-18.18s%s [%s]  ---   %9s %8s' \
+			"$A_SNOW" "$_bl_label" "$C_R" "$_bl_s" "$(_rate "$_bl_rate")" "$(_clock "$_bl_eta")"
+	else
+		printf '\r  %s%-18.18s%s [%s%s%s] %3d%%  %9s %8s' \
+			"$A_SNOW" "$_bl_label" "$C_R" "$A_TEAL" "$_bl_s" "$C_R" "$_bl_pct" \
+			"$(_rate "$_bl_rate")" "$(_clock "$_bl_eta")"
+	fi
+}
+
+# Download with a live bar: the file grows on disk, so the bar is driven by
+# the real byte count rather than a timer pretending to be one. $3 is the
+# size the repository index says to expect.
+dl_bar() {
+	_dlb_url=$1 _dlb_out=$2 _dlb_total=${3:-0} _dlb_label=$4
+	mkdir -p "$(dirname "$_dlb_out")" 2>/dev/null || :
+	case "$_dlb_url" in
+	file://*)
+		_dl_file "$_dlb_url" "$_dlb_out" || return 1
+		if [ -t 1 ]; then
+			_dlb_got=$(_bytes "$_dlb_out")
+			_bar_line "$_dlb_label" "$_dlb_got" "${_dlb_total:-0}" 0 0
+			printf '\n'
+		fi
+		return 0 ;;
+	esac
+	have curl || have wget || { err "no downloader available (need curl or wget)"; return 1; }
+	rm -f "$_dlb_out.part"
+	if [ ! -t 1 ]; then
+		_dl_run "$_dlb_url" "$_dlb_out.part" || { rm -f "$_dlb_out.part"; return 1; }
+		mv "$_dlb_out.part" "$_dlb_out"; return 0
+	fi
+	_dl_run "$_dlb_url" "$_dlb_out.part" &
+	_dlb_pid=$!
+	_dlb_t0=$(date '+%s')
+	while kill -0 "$_dlb_pid" 2>/dev/null; do
+		_dlb_got=$(_bytes "$_dlb_out.part")
+		_dlb_el=$(( $(date '+%s') - _dlb_t0 )); [ "$_dlb_el" -lt 1 ] && _dlb_el=1
+		_dlb_rate=$(( _dlb_got / _dlb_el ))
+		if [ "${_dlb_total:-0}" -gt 0 ] && [ "$_dlb_rate" -gt 0 ]; then
+			_dlb_eta=$(( (_dlb_total - _dlb_got) / _dlb_rate ))
+			[ "$_dlb_eta" -lt 0 ] && _dlb_eta=0
+		else
+			_dlb_eta=0
+		fi
+		_bar_line "$_dlb_label" "$_dlb_got" "${_dlb_total:-0}" "$_dlb_rate" "$_dlb_eta"
+		sleep 1
+	done
+	wait "$_dlb_pid" || { rm -f "$_dlb_out.part"; printf '\n'; return 1; }
+	_dlb_got=$(_bytes "$_dlb_out.part")
+	_dlb_el=$(( $(date '+%s') - _dlb_t0 )); [ "$_dlb_el" -lt 1 ] && _dlb_el=1
+	_bar_line "$_dlb_label" "$_dlb_got" "${_dlb_got:-0}" $(( _dlb_got / _dlb_el )) 0
+	printf '\n'
+	mv "$_dlb_out.part" "$_dlb_out"
+}
+
+# "Calculating dependencies... [====      ]", advanced by the resolver itself
+# as each package's index entry is actually read. calc_begin resets it,
+# calc_step redraws it from done/total, calc_done replaces the whole line
+# with the finished form. total grows as the graph opens up, so the bar can
+# sit still for a while - it never runs backwards, and it is never a timer.
+# ----------------------------------------------------------------- ui styles
+#
+# One function per thing an install has to say, with the wording for each
+# style inside it. Nothing here changes what alpm does - the resolver, the
+# fetch and the progress bars are the same in all three - so a style can
+# never be more optimistic than the transaction actually is.
+
+ui_reading() {
+	case "$ALPM_STYLE" in
+	apt)   printf 'Reading package lists... Done\n'
+	       printf 'Building dependency tree... ' ;;
+	aeryn) printf '\n  %s%s%s\n' "$A_TEAL$C_B" "Resolving transaction" "$C_R" ;;
+	*)     msg "Reading package lists" ;;
+	esac
+}
+
+ui_reading_done() {
+	case "$ALPM_STYLE" in
+	apt)   printf 'Done\n' ;;
+	esac
+}
+
+# $1 packages to install  $2 already satisfied  $3 download bytes  $4 count
+ui_summary() {
+	_ui_todo=$1 _ui_met=$2 _ui_bytes=$3 _ui_n=$4
+	_ui_nmet=0
+	for _u in $_ui_met; do _ui_nmet=$((_ui_nmet+1)); done
+	case "$ALPM_STYLE" in
+	apt)
+		printf 'The following NEW packages will be installed:\n '
+		for _u in $_ui_todo; do printf ' %s' "$_u"; done
+		printf '\n'
+		printf '%s upgraded, %s newly installed, 0 to remove and 0 not upgraded.\n' \
+			0 "$_ui_n"
+		printf 'Need to get %s of archives.\n' "$(human "$_ui_bytes")"
+		[ "$_ui_nmet" -gt 0 ] && \
+			printf '%s package(s) are already the newest version.\n' "$_ui_nmet"
+		;;
+	aeryn)
+		# The frame is drawn to a fixed interior width rather than typed out
+		# as a literal run of box characters, so the summary line at the
+		# bottom lines up with the package rows above it whatever it says.
+		_ui_w=57
+		_ui_bar=""; _ui_i=0
+		while [ "$_ui_i" -lt "$_ui_w" ]; do _ui_bar="$_ui_bar─"; _ui_i=$((_ui_i+1)); done
+		_ui_head="─ Transaction "
+		_ui_i=14
+		while [ "$_ui_i" -lt "$_ui_w" ]; do _ui_head="$_ui_head─"; _ui_i=$((_ui_i+1)); done
+		printf '\n  %s┌%s┐%s\n' "$A_TEAL" "$_ui_head" "$C_R"
+		for _u in $_ui_todo; do
+			_ue=$(idx_lookup "$_u") || continue
+			printf '  %s│%s  %s+%s %-24.24s %-15.15s %11s %s│%s\n' \
+				"$A_TEAL" "$C_R" "$A_MINT" "$C_R" "$_u" \
+				"$(printf '%s' "$_ue" | cut -f3)-$(printf '%s' "$_ue" | cut -f4)" \
+				"$(human "$(printf '%s' "$_ue" | cut -f6)")" "$A_TEAL" "$C_R"
+		done
+		for _u in $_ui_met; do
+			printf '  %s│%s  %s=%s %-24.24s %-15.15s %11s %s│%s\n' \
+				"$A_TEAL" "$C_R" "$A_GREY" "$C_R" "$_u" \
+				"$(installed_version "$_u")" "held" "$A_TEAL" "$C_R"
+		done
+		printf '  %s├%s┤%s\n' "$A_TEAL" "$_ui_bar" "$C_R"
+		_ui_sum=$(printf '  %s new, %s already satisfied, %s to download' \
+			"$_ui_n" "$_ui_nmet" "$(human "$_ui_bytes")")
+		_ui_i=${#_ui_sum}
+		while [ "$_ui_i" -lt "$_ui_w" ]; do _ui_sum="$_ui_sum "; _ui_i=$((_ui_i+1)); done
+		printf '  %s│%s%s%s│%s\n' "$A_TEAL" "$C_R" "$_ui_sum" "$A_TEAL" "$C_R"
+		printf '  %s└%s┘%s\n' "$A_TEAL" "$_ui_bar" "$C_R"
+		;;
+	*)
+		printf '\n'
+		printf '  %sPackages (%s)%s\n  ' "$C_B" "$_ui_n" "$C_R"
+		for _u in $_ui_todo; do
+			_ue=$(idx_lookup "$_u") || continue
+			printf '%s-%s ' "$_u" "$(printf '%s' "$_ue" | cut -f3)"
+		done
+		printf '\n'
+		[ "$_ui_nmet" -gt 0 ] && \
+			printf '\n  %s%s dependency(s) already met and left alone%s\n' \
+				"$A_GREY" "$_ui_nmet" "$C_R"
+		printf '\n  %sDownload size:%s  %s\n' "$A_GREY" "$C_R" "$(human "$_ui_bytes")"
+		;;
+	esac
+}
+
+ui_confirm_text() {
+	case "$ALPM_STYLE" in
+	apt)   printf 'Do you want to continue?' ;;
+	aeryn) printf 'Apply this transaction?' ;;
+	*)     printf 'Proceed with installation?' ;;
+	esac
+}
+
+# $1 role (package|dependency)  $2 name  $3 url  $4 size  $5 index
+ui_fetch() {
+	case "$ALPM_STYLE" in
+	apt)   printf 'Get:%s %s [%s]\n' "$5" "$3" "$(human "$4")" ;;
+	aeryn) printf '  %s↓%s %s\n' "$A_ICE" "$C_R" "$2" ;;
+	*)
+		if [ "$1" = dependency ]; then printf '  Fetching dependency %s\n' "$3"
+		else printf "  Fetching package '%s'\n" "$2"; fi ;;
+	esac
+}
+
+ui_cached() {
+	case "$ALPM_STYLE" in
+	apt)   printf 'Get:%s %s [cached]\n' "${3:-1}" "$2" ;;
+	aeryn) printf '  %s=%s %s (cached)\n' "$A_GREY" "$C_R" "$2" ;;
+	*)
+		if [ "$1" = dependency ]; then printf "  Dependency '%s' is already in the cache\n" "$2"
+		else printf "  Package '%s' is already in the cache\n" "$2"; fi ;;
+	esac
+}
+
+# $1 role  $2 name  $3 version-release
+ui_install() {
+	case "$ALPM_STYLE" in
+	apt)   printf 'Setting up %s (%s) ...\n' "$2" "$3" ;;
+	aeryn) printf '  %s✓%s %-24s %s\n' "$A_MINT" "$C_R" "$2" "$3" ;;
+	*)
+		if [ "$1" = dependency ]; then printf "  Installing dependency '%s'\n" "$2"
+		else printf "  Installing package '%s'\n" "$2"; fi ;;
+	esac
+}
+
+ui_met() {
+	case "$ALPM_STYLE" in
+	apt)   printf '%s is already the newest version.\n' "$1" ;;
+	aeryn) : ;;
+	*)     printf "  Dependency met '%s', skipping...\n" "$1" ;;
+	esac
+}
+
+# $1 name  $2 dependency count  $3 transaction id
+ui_done() {
+	case "$ALPM_STYLE" in
+	apt)
+		printf 'Processing triggers ...\n'
+		printf "Done. Undo with 'alpm rollback %s'.\n" "$3" ;;
+	aeryn)
+		printf '\n  %s%s applied%s  %s\n' "$A_MINT$C_B" "Transaction" "$C_R" "$3"
+		printf '  %sundo with: alpm rollback %s%s\n' "$A_GREY" "$3" "$C_R" ;;
+	*)
+		case "$2" in
+		0) ok "Package '$1' installed" ;;
+		1) ok "Package '$1' installed with 1 dependency" ;;
+		*) ok "Package '$1' installed with $2 dependencies" ;;
+		esac ;;
+	esac
+}
+
+case "$ALPM_STYLE" in
+apt)   CALC_LABEL="Building dependency tree..." ;;
+aeryn) CALC_LABEL="Resolving..." ;;
+*)     CALC_LABEL="Calculating dependencies..." ;;
+esac
+
+calc_begin() { _calc_last=-1; [ -t 1 ] && printf '  %s' "$CALC_LABEL"; return 0; }
+
+calc_step() {
+	[ -t 1 ] || return 0
+	_calc_done=$1 _calc_tot=$2
+	[ "${_calc_tot:-0}" -gt 0 ] 2>/dev/null || return 0
+	_calc_w=20
+	_calc_f=$(( _calc_done * _calc_w / _calc_tot ))
+	[ "$_calc_f" = "${_calc_last}" ] && return 0
+	_calc_last=$_calc_f
+	_calc_s=""; _calc_i=0
+	while [ "$_calc_i" -lt "$_calc_f" ]; do _calc_s="$_calc_s="; _calc_i=$((_calc_i+1)); done
+	while [ "$_calc_i" -lt "$_calc_w" ]; do _calc_s="$_calc_s "; _calc_i=$((_calc_i+1)); done
+	printf '\r  %s %s[%s]%s' "$CALC_LABEL" "$A_TEAL" "$_calc_s" "$C_R"
+}
+
+calc_done() {
+	[ -t 1 ] || return 0
+	# The trailing run of spaces is what wipes the bar this replaces - there
+	# is deliberately no clear-line escape anywhere in here.
+	printf '\r  %s %sDone!%s                    \n' "$CALC_LABEL" "$A_MINT" "$C_R"
 }
 
 # .alpmz is a plain tar.xz, so bsdtar or busybox tar both work.
@@ -202,9 +473,46 @@ dlq() {
 # ever runs against the real $ALPM_ROOT, after everything has merged.
 untar() {
 	archive=$1 dest=$2
+	# Reject a member path that would land outside $dest before anything is
+	# extracted - neither tar implementation this ships against (bsdtar,
+	# busybox tar) can be assumed to refuse a ".." or absolute entry on its
+	# own, and a package's payload is otherwise trusted enough to unpack
+	# straight onto $ALPM_ROOT (see install_one). Checked against the listing
+	# rather than during extraction so nothing is written before the whole
+	# archive has been looked at.
+	_ut_bad="" _ut_oldifs=$IFS
+	IFS='
+'
+	for _ut_ent in $(tarlist "$archive" 2>/dev/null); do
+		case "$_ut_ent" in
+		/*|../*|*/../*|*/..) _ut_bad=$_ut_ent; break ;;
+		esac
+	done
+	IFS=$_ut_oldifs
+	if [ -n "$_ut_bad" ]; then
+		err "refusing to unpack $archive: unsafe path entry '$_ut_bad'"
+		return 1
+	fi
 	mkdir -p "$dest"
 	if have bsdtar; then bsdtar -xpf "$archive" -C "$dest"
 	else tar -xpf "$archive" -C "$dest"; fi
+}
+
+# Unpacking an upstream source tarball, as opposed to installing a package.
+#
+# -o (no-same-owner, spelled the same way by bsdtar, busybox tar and GNU tar)
+# instead of -p. An upstream tarball carries whatever uid the maintainer
+# happened to roll it as, and restoring that needs CAP_CHOWN - which the
+# build sandbox drops along with every other capability, so bsdtar failed
+# every single file with "Can't set user=1000/group=1000" and then exited
+# non-zero, taking the whole build with it. Nothing in a build needs those
+# uids: the package's own ownership comes from what package() installs into
+# $pkgdir, not from who shipped the tarball.
+untar_src() {
+	archive=$1 dest=$2
+	mkdir -p "$dest"
+	if have bsdtar; then bsdtar -xof "$archive" -C "$dest"
+	else tar -xof "$archive" -C "$dest"; fi
 }
 
 # A package archive that contains a bare directory entry for bin/, sbin/,
@@ -324,25 +632,70 @@ idx_lookup() {
 	return 1
 }
 
-# The mirror of idx_lookup: find a package that exists ONLY as a recipe. Used to
-# distinguish "no such package" from "we have the recipe but nobody built it".
-idx_lookup_src() {
-	local want f line
-	want=$1
-	for f in "$ALPM_DB"/sync/*.idx; do
-		[ -f "$f" ] || continue
-		line=$(awk -F'\t' -v p="$want" '$1==p && $4=="src"{print; exit}' "$f") || :
-		if [ -n "$line" ]; then
-			printf '%s\t%s\n' "$(basename "$f" .idx)" "$line"
-			return 0
+# ----------------------------------------------------------------- ports tree
+
+# The ports manifest, cached. Columns are
+# "repo name version buildsystem license deps makedeps url source desc".
+# Refetched when it is missing; kept otherwise, so a source build does not
+# need the network twice.
+ports_manifest() {
+	_pm_f="$ALPM_CACHE/ports/manifest.tsv"
+	if [ ! -s "$_pm_f" ]; then
+		mkdir -p "$ALPM_CACHE/ports"
+		dlq "$ALPM_PORTS/manifest.tsv" "$_pm_f" || return 1
+		# A missing file on a static host is answered with the site's own
+		# HTML rather than a 404, so "the download worked" is not enough -
+		# check it actually looks like the manifest before caching it.
+		if ! grep -q '^[a-z-]*	[a-zA-Z0-9]' "$_pm_f" 2>/dev/null; then
+			rm -f "$_pm_f"; return 1
 		fi
-	done
-	return 1
+	fi
+	printf '%s\n' "$_pm_f"
+}
+
+# The ports repo a package's recipe lives under, or nothing if it has no
+# recipe at all. This is what tells "we never heard of it" apart from "we
+# have the recipe but nobody built a binary".
+ports_repo_of() {
+	_pr_m=$(ports_manifest) || return 1
+	_pr_r=$(awk -F'\t' -v p="$1" '$1!~/^#/ && $2==p {print $1; exit}' "$_pr_m")
+	[ -n "$_pr_r" ] || return 1
+	safe_component "$_pr_r" || return 1
+	printf '%s\n' "$_pr_r"
+}
+
+ports_have() { ports_repo_of "$1" >/dev/null 2>&1; }
+
+# A recipe is shell that alpm-build sources. A static host answers a missing
+# file with its own index page, so an unchecked download lands an HTML
+# document in the recipe's place and the build dies somewhere much stranger.
+looks_like_recipe() {
+	[ -s "$1" ] || return 1
+	grep -q '^name=' "$1" 2>/dev/null
 }
 
 idx_field() { printf '%s' "$1" | cut -f"$2"; }
 
-is_installed() { [ -d "$ALPM_DB/local/$1" ]; }
+# PKGINFO is the last file install_one writes, so it is the only thing in a
+# package's database directory that proves the install ran to the end. The
+# directory existing proves nothing: an install interrupted (or died) between
+# "mkdir $ALPM_DB/local/$p" and the end of the transaction left a directory
+# with no DEPS and no PKGINFO behind, and this said "installed" for it
+# forever after - `alpm ins vim` would report vim was already there while
+# `alpm deps vim` died on the missing DEPS file, and the dependency tree
+# marked it satisfied for everything that needed it.
+is_installed() { [ -f "$ALPM_DB/local/$1/PKGINFO" ]; }
+
+# Directories under local/ that is_installed() rejects: an interrupted
+# install, or one from before PKGINFO was written last. Nothing reads them
+# and they only confuse the resolver.
+alpm_partials() {
+	for _pt_d in "$ALPM_DB"/local/*/; do
+		[ -d "$_pt_d" ] || continue
+		[ -f "$_pt_d/PKGINFO" ] && continue
+		printf '%s\n' "${_pt_d%/}"
+	done
+}
 
 installed_version() {
 	[ -f "$ALPM_DB/local/$1/PKGINFO" ] || return 1
@@ -386,7 +739,11 @@ human() {
 
 confirm() {
 	[ "${ALPM_YES:-0}" = "1" ] && return 0
-	printf '%s::%s %s %s[Y/n]%s ' "$A_TEAL$C_B" "$C_R$C_B" "$1$C_R" "$A_GREY" "$C_R"
+	case "$ALPM_STYLE" in
+	apt)   printf '%s [Y/n] ' "$1" ;;
+	aeryn) printf '\n  %s?%s %s %s[Y/n]%s ' "$A_ICE$C_B" "$C_R" "$1" "$A_GREY" "$C_R" ;;
+	*)     printf '%s::%s %s %s[Y/n]%s ' "$A_TEAL$C_B" "$C_R$C_B" "$1$C_R" "$A_GREY" "$C_R" ;;
+	esac
 	read -r a || return 1
 	case "$a" in n|N|no|NO|No) return 1 ;; *) return 0 ;; esac
 }

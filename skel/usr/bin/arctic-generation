@@ -95,7 +95,13 @@ all_ids() {
 
 current_id() { cat "$GENDIR/current" 2>/dev/null; }
 
-gen_exists() { [ -d "$GENDIR/$1" ]; }
+# Generation ids are plain increasing integers (see next_id) - reject anything
+# else before it reaches a path, so "switch ../../etc" or "delete .." can't
+# walk $GENDIR/$1 outside of $GENDIR.
+gen_exists() {
+	case "$1" in ''|*[!0-9]*) return 1 ;; esac
+	[ -d "$GENDIR/$1" ]
+}
 
 # ------------------------------------------------------------------ commands
 
@@ -109,7 +115,16 @@ cmd_create() {
 	_c_dir="$GENDIR/$_c_id"
 	mkdir -p "$_c_dir" || die "cannot create $_c_dir"
 
-	[ -f "$CONF" ] && cp -f "$CONF" "$_c_dir/system.conf" || : >"$_c_dir/system.conf"
+	# Not "A && B || C": if $CONF exists but cp itself fails (disk full,
+	# permission trouble), that pattern falls through to the empty-file
+	# branch too, silently recording an empty system.conf instead of either
+	# the real one or a visible error - and a later rollback would restore
+	# that empty file over the real config.
+	if [ -f "$CONF" ]; then
+		cp -f "$CONF" "$_c_dir/system.conf" || die "cannot copy $CONF into $_c_dir"
+	else
+		: >"$_c_dir/system.conf"
+	fi
 	explicit_pkgs           >"$_c_dir/packages"
 	explicit_pkgs_versioned >"$_c_dir/packages.versioned"
 	enabled_services        >"$_c_dir/services"

@@ -1,70 +1,218 @@
 #!/bin/sh
 # service - start, stop and enable Arctic services
 #
-#   service list                 show every service and its state
-#   service status <name>        is it running?
+#   service list                 show every service, its state and its init
+#   service status <name>        is it installed, enabled, running?
 #   service start|stop|restart <name>
 #   service enable|disable <name>
 #
 # A service is a script in /etc/rc.d taking start/stop/status. Enabling one
 # creates a marker in /etc/arctic/services, which rc.boot reads in order.
+#
+# Exit codes for 'status', so scripts can tell the cases apart:
+#   0  running        3  installed but stopped
+#   1  no such service in /etc/rc.d
+#   4  the service script is there but the program it runs is not installed
+#
+# On a system running dinit, OpenRC or runit instead of busybox init, this
+# hands the verbs to that init's own tool rather than driving /etc/rc.d
+# behind its back - the state it would report otherwise is not the state the
+# running init is actually in.
 # shellcheck shell=sh disable=SC2039
 
 set -u
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-. /etc/arctic/rc.lib 2>/dev/null || { _R= ; _B= ; _MINT= ; _RED= ; _GREY= ; _SNOW= ; _AMB= ; _TEAL= ; }
+# Tested before sourcing, not with "|| fallback": "." is a special builtin,
+# so a shell that cannot open the file exits on the spot and the fallback
+# after || never runs - which made this tool die without printing anything
+# at all on a system missing rc.lib (or inside a chroot that has not got one
+# yet), rather than degrading to plain output.
+if [ -r /etc/arctic/rc.lib ]; then
+	. /etc/arctic/rc.lib
+else
+	_R= ; _B= ; _MINT= ; _RED= ; _GREY= ; _SNOW= ; _AMB= ; _TEAL=
+	begin() { printf '  :: %s' "$*"; }
+	good()  { printf ' [ ok ]\n'; }
+	bad()   { printf ' [failed] %s\n' "${*:-}"; }
+fi
 
 RCD=/etc/rc.d
 ENA=/etc/arctic/services
 
 need_root() { [ "$(id -u)" = "0" ] || { echo "Must be run as root." >&2; exit 1; }; }
 
-exists() { [ -x "$RCD/$1" ]; }
+# A name is a single path component, always. Every subcommand builds a path
+# out of it - "$RCD/$n", "$ENA/$n" - and disable's rm -f in particular would
+# otherwise take "../../etc/passwd" and delete it as root.
+valid_name() {
+	case "$1" in
+	""|.|..) return 1 ;;
+	*/*|*' '*) return 1 ;;
+	esac
+	return 0
+}
+
+exists() { [ -f "$RCD/$1" ]; }
 enabled() { [ -e "$ENA/$1" ]; }
 
+# What the service script actually runs. Read out of the script rather than
+# sourced: sourcing it to find one variable also runs whatever else is in it.
+svc_cmd() {
+	sed -n 's/^[ 	]*CMD=//p' "$RCD/$1" 2>/dev/null | head -1 | tr -d '"'"'"''
+}
+
+# Is the program behind the service on this system at all? An rc.d script
+# ships with the base system whether or not the daemon it starts was ever
+# installed - /etc/rc.d/sddm exists on every Arctic install, sddm itself does
+# not - so "the script is executable" says nothing about whether the service
+# can run. Checking $CMD is what tells "installed but stopped" apart from
+# "not installed", which used to come out as a flat, wrong "stopped".
+installed() {
+	_ic=$(svc_cmd "$1")
+	[ -n "$_ic" ] || return 0     # no CMD line: nothing to check against
+	[ -x "$_ic" ]
+}
+
 running() {
-	# The service script knows best; ask it first.
-	if exists "$1" && "$RCD/$1" status >/dev/null 2>&1; then return 0; fi
+	installed "$1" || return 1
+	if [ -x "$RCD/$1" ] && "$RCD/$1" status >/dev/null 2>&1; then return 0; fi
 	# Then a pidfile. Deliberately no name-based lookup: comm is the script's
 	# own name for an interpreted service script, so matching on it always hits.
 	[ -f "/run/$1.pid" ] && kill -0 "$(cat "/run/$1.pid")" 2>/dev/null
 }
 
-case "${1:-list}" in
+# Which init this system uses.
+#
+# /etc/arctic/init - written by the installer and rewritten by
+# arctic-init-setup - comes first, and pid 1 is only consulted when that file
+# is absent. It is the other way round from what you would expect, for one
+# reason: inside arctic-chroot (or any chroot) /proc/1 is the *host's* init,
+# not this system's, so trusting it there makes every answer wrong in the one
+# situation where someone is most likely to be repairing services by hand.
+# ARCTIC_INIT overrides both.
+init_kind() {
+	if [ -n "${ARCTIC_INIT:-}" ]; then printf '%s\n' "$ARCTIC_INIT"; return; fi
+	if [ -s /etc/arctic/init ]; then head -1 /etc/arctic/init; return; fi
+	_ik=$(readlink /proc/1/exe 2>/dev/null)
+	case "${_ik##*/}" in
+	dinit)            echo dinit ;;
+	openrc-init|rc)   echo openrc ;;
+	runit|runit-init) echo runit ;;
+	*)                echo busybox ;;
+	esac
+}
+
+# Hand a verb to the running init's own tool. Anything this does not know how
+# to express there is reported as such instead of being silently ignored.
+delegate() {
+	_dv=$1 _dn=$2
+	case "$INIT" in
+	dinit)
+		case "$_dv" in
+		start)   exec dinitctl start "$_dn" ;;
+		stop)    exec dinitctl stop "$_dn" ;;
+		restart) exec dinitctl restart "$_dn" ;;
+		status)  exec dinitctl status "$_dn" ;;
+		enable)  exec dinitctl enable "$_dn" ;;
+		disable) exec dinitctl disable "$_dn" ;;
+		list)    exec dinitctl list ;;
+		esac ;;
+	openrc)
+		case "$_dv" in
+		start|stop|restart|status) exec rc-service "$_dn" "$_dv" ;;
+		enable)  exec rc-update add "$_dn" default ;;
+		disable) exec rc-update del "$_dn" default ;;
+		list)    exec rc-status --all ;;
+		esac ;;
+	nitro)
+		case "$_dv" in
+		start)   exec nitroctl start "$_dn" ;;
+		stop)    exec nitroctl stop "$_dn" ;;
+		restart) exec nitroctl restart "$_dn" ;;
+		status)  exec nitroctl status "$_dn" ;;
+		# nitro decides what to start from the service directory itself: a
+		# "down" file means do not bring this up at boot. There is no enable
+		# command to call - the file is the state.
+		enable)  rm -f "/etc/nitro/$_dn/down" && nitroctl rescan && \
+		         printf '  %s%s%s will start at boot\n' "$_SNOW" "$_dn" "$_R"; exit $? ;;
+		disable) : >"/etc/nitro/$_dn/down" && nitroctl rescan && \
+		         printf '  %s%s%s will no longer start at boot\n' "$_SNOW" "$_dn" "$_R"; exit $? ;;
+		list)    exec nitroctl list ;;
+		esac ;;
+	runit)
+		case "$_dv" in
+		start)   exec sv up "$_dn" ;;
+		stop)    exec sv down "$_dn" ;;
+		restart) exec sv restart "$_dn" ;;
+		status)  exec sv status "$_dn" ;;
+		enable)  ln -sf "/etc/sv/$_dn" "/var/service/$_dn" && \
+		         printf '  %s%s%s will start at boot\n' "$_SNOW" "$_dn" "$_R"; exit $? ;;
+		disable) rm -f "/var/service/$_dn" && \
+		         printf '  %s%s%s will no longer start at boot\n' "$_SNOW" "$_dn" "$_R"; exit $? ;;
+		list)    exec sv status /var/service/* ;;
+		esac ;;
+	esac
+	echo "service: $INIT has no equivalent of '$_dv'" >&2
+	exit 1
+}
+
+INIT=$(init_kind)
+VERB=${1:-list}
+[ "$INIT" = busybox ] || delegate "$VERB" "${2:-}"
+
+case "$VERB" in
 list|ls)
 	printf '\n  %s%-18s %-10s %s%s\n' "$_B" "SERVICE" "ENABLED" "STATE" "$_R"
 	for f in "$RCD"/*; do
-		[ -x "$f" ] || continue
+		[ -f "$f" ] || continue
 		n=$(basename "$f")
 		if enabled "$n"; then e="${_MINT}yes${_R}"; else e="${_GREY}no${_R} "; fi
-		if running "$n"; then s="${_MINT}running${_R}"; else s="${_GREY}stopped${_R}"; fi
+		if ! installed "$n"; then s="${_GREY}not installed${_R}"
+		elif running "$n";    then s="${_MINT}running${_R}"
+		else                       s="${_GREY}stopped${_R}"; fi
 		printf '  %s%-18s%s %-19s %s\n' "$_SNOW" "$n" "$_R" "$e" "$s"
 	done
-	printf '\n' ;;
+	printf '\n  %sservices marked "not installed" have a start script but the\n' "$_GREY"
+	printf '  program behind it is not on this system%s\n\n' "$_R" ;;
 status)
 	n=${2:?usage: service status <name>}
+	valid_name "$n" || { echo "invalid service name: $n" >&2; exit 1; }
 	exists "$n" || { echo "no such service: $n" >&2; exit 1; }
+	if ! installed "$n"; then
+		printf '  %s%s%s is %snot installed%s - %s is missing\n' \
+			"$_SNOW" "$n" "$_R" "$_AMB" "$_R" "$(svc_cmd "$n")"
+		printf '  %sinstall it with: alpm ins %s%s\n' "$_GREY" "$n" "$_R"
+		exit 4
+	fi
 	if running "$n"; then
 		printf '  %s%s%s is %srunning%s%s\n' "$_SNOW" "$n" "$_R" "$_MINT" "$_R" \
 			"$(enabled "$n" && printf ' (enabled)' || printf ' (not enabled at boot)')"
 	else
-		printf '  %s%s%s is %sstopped%s\n' "$_SNOW" "$n" "$_R" "$_GREY" "$_R"
+		printf '  %s%s%s is %sstopped%s%s\n' "$_SNOW" "$n" "$_R" "$_GREY" "$_R" \
+			"$(enabled "$n" && printf ' (enabled)' || printf ' (not enabled at boot)')"
 		exit 3
 	fi ;;
 start)
 	need_root
 	n=${2:?usage: service start <name>}
+	valid_name "$n" || { echo "invalid service name: $n" >&2; exit 1; }
 	exists "$n" || { echo "no such service: $n" >&2; exit 1; }
+	installed "$n" || {
+		echo "$n is not installed: $(svc_cmd "$n") is missing" >&2; exit 4; }
 	begin "starting $n"; "$RCD/$n" start >/dev/null 2>&1 && good || { bad; exit 1; } ;;
 stop)
 	need_root
 	n=${2:?usage: service stop <name>}
+	valid_name "$n" || { echo "invalid service name: $n" >&2; exit 1; }
 	exists "$n" || { echo "no such service: $n" >&2; exit 1; }
 	begin "stopping $n"; "$RCD/$n" stop >/dev/null 2>&1 && good || { bad; exit 1; } ;;
 restart)
 	need_root
 	n=${2:?usage: service restart <name>}
+	valid_name "$n" || { echo "invalid service name: $n" >&2; exit 1; }
 	exists "$n" || { echo "no such service: $n" >&2; exit 1; }
+	installed "$n" || {
+		echo "$n is not installed: $(svc_cmd "$n") is missing" >&2; exit 4; }
 	begin "restarting $n"
 	"$RCD/$n" stop >/dev/null 2>&1
 	sleep 1
@@ -72,15 +220,30 @@ restart)
 enable)
 	need_root
 	n=${2:?usage: service enable <name>}
+	valid_name "$n" || { echo "invalid service name: $n" >&2; exit 1; }
 	exists "$n" || { echo "no such service: $n" >&2; exit 1; }
 	mkdir -p "$ENA"; : >"$ENA/$n"
-	printf '  %s%s%s will start at boot\n' "$_SNOW" "$n" "$_R" ;;
+	if installed "$n"; then
+		printf '  %s%s%s will start at boot\n' "$_SNOW" "$n" "$_R"
+	else
+		# Enabling something that is not installed yet is legitimate - the
+		# installer does exactly that while the target is still being built -
+		# but it must not look like it will work as things stand.
+		printf '  %s%s%s is enabled, but %s is not installed yet\n' \
+			"$_SNOW" "$n" "$_R" "$(svc_cmd "$n")"
+	fi ;;
 disable)
 	need_root
 	n=${2:?usage: service disable <name>}
+	# Unlike every other subcommand here, disable never checked the name at
+	# all - one with a "/" in it (or "..") reached rm -f "$ENA/$n" as-is, so
+	# "service disable ../../etc/passwd" would delete an arbitrary file as
+	# root instead of failing with "no such service".
+	valid_name "$n" || { echo "invalid service name: $n" >&2; exit 1; }
+	exists "$n" || { echo "no such service: $n" >&2; exit 1; }
 	rm -f "$ENA/$n"
 	printf '  %s%s%s will no longer start at boot\n' "$_SNOW" "$n" "$_R" ;;
 *)
-	sed -n '2,10p' "$0" | sed 's/^# \?//'
+	sed -n '2,17p' "$0" | sed 's/^# \?//'
 	exit 1 ;;
 esac

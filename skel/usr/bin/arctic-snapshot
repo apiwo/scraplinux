@@ -72,6 +72,15 @@ delegate() {
 
 snap_name() { printf 'arctic-%s' "$(date '+%Y%m%d-%H%M%S')"; }
 
+# A snapshot name always becomes a literal path component under $SUBVOL_DIR
+# (for btrfs subvolume delete/snapshot, and the plain rm of its .description
+# sidecar) - reject "." / ".." / anything with a "/" so a name like "../.."
+# can never walk that operation outside $SUBVOL_DIR.
+valid_snap_name() {
+	case "$1" in ''|.|..|*/*) return 1 ;; esac
+	return 0
+}
+
 cmd_create() {
 	need_btrfs
 	desc=${1:-manual}
@@ -109,6 +118,7 @@ cmd_list() {
 cmd_delete() {
 	need_btrfs
 	n=${1:?usage: arctic-snapshot delete <name>}
+	valid_snap_name "$n" || die "invalid snapshot name: $n"
 	[ -d "$SUBVOL_DIR/$n" ] || die "no such snapshot: $n"
 	btrfs subvolume delete "$SUBVOL_DIR/$n" >/dev/null 2>&1 || die "could not delete $n"
 	rm -f "$SUBVOL_DIR/$n.description"
@@ -132,6 +142,7 @@ cmd_prune() {
 cmd_rollback() {
 	need_btrfs
 	n=${1:?usage: arctic-snapshot rollback <name>}
+	valid_snap_name "$n" || die "invalid snapshot name: $n"
 	[ -d "$SUBVOL_DIR/$n" ] || die "no such snapshot: $n"
 	printf '\n%sThis replaces the running root subvolume with %s.%s\n' "$AMB$B" "$n" "$R"
 	printf 'The current root is kept as a snapshot first, so this is reversible.\n'

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Arctic Linux - kernel builder
-# Arctic-base-kernel starts from the Gentoo dist-kernel .config, as specified,
+# arctic-base-kernel starts from the Gentoo dist-kernel .config, as specified,
 # then applies the Arctic delta: no BTF/debuginfo, no module signing, and the
 # live-ISO filesystems built in-tree instead of as modules.
 set -e

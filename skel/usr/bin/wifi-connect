@@ -33,11 +33,25 @@ if [ -z "$iface" ]; then
 	exit 1
 fi
 
+# iface either came from the sysfs scan above or was typed in as $3 - either
+# way, reject anything with a "/" before it becomes part of a path below, and
+# require it to actually be a real interface.
+case "$iface" in */*) echo "wifi-connect: bad interface name: $iface" >&2; exit 1 ;; esac
+[ -d "/sys/class/net/$iface" ] || { echo "wifi-connect: no such interface: $iface" >&2; exit 1; }
+
 command -v wpa_supplicant >/dev/null 2>&1 || { echo "wifi-connect: wpa_supplicant not found" >&2; exit 1; }
 
 conf="/etc/wpa_supplicant-$iface.conf"
-wpa_passphrase "$ssid" "$psk" >"$conf" 2>/dev/null
+# Create the file world-unreadable *before* the PSK is ever written to it -
+# a plain ">" redirect creates it with the umask's default mode first, which
+# would leave the passphrase readable by anyone for the (short) window before
+# a chmod that comes after the write.
+: >"$conf"
 chmod 600 "$conf"
+# Passphrase goes in over stdin, not argv - wpa_passphrase would otherwise put
+# it in its own command line, readable by any local user via ps/proc while it
+# runs.
+printf '%s\n' "$psk" | wpa_passphrase "$ssid" >"$conf" 2>/dev/null
 
 # Replace any previous run for this interface rather than stacking a
 # second wpa_supplicant instance fighting the first one over the same nl80211

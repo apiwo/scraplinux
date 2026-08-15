@@ -38,8 +38,17 @@ DEFAULT="bzip2 lz4 expat libffi pcre2 attr libcap libedit sqlite less
 TARGETS=${*:-$DEFAULT}
 
 find_recipe() {
-	for r in main extra base kernels nonfree alt-nonfree multilib profile musl; do
+	for r in main extra base kernels nonfree alt-nonfree multilib profile; do
 		[ -f "$TREE/ports/$r/$1/recipe" ] && { printf '%s|%s' "$r" "$TREE/ports/$r/$1/recipe"; return 0; }
+	done
+	return 1
+}
+
+have_binary() {
+	for f in "$B/repo/$1/x86_64/"*.alpmz; do
+		[ -f "$f" ] || continue
+		n=$(basename "$f" | sed 's/-[^-]*-[0-9]*\.[^.]*\.alpmz$//')
+		[ "$n" = "$2" ] && return 0
 	done
 	return 1
 }
@@ -58,7 +67,14 @@ for pkg in $TARGETS; do
 	repo=${info%%|*}; recipe=${info#*|}
 
 	# Already built and current? Leave it alone.
-	if ls "$B/repo/$repo/x86_64/$pkg"-*.alpmz >/dev/null 2>&1; then
+	#
+	# Matched on the name a filename actually decodes to, not on
+	# "<name>-*.alpmz": that glob makes every package a prefix of another
+	# one's name look built. wayland-protocols-1.48-1.x86_64.alpmz answered
+	# for wayland, so wayland was reported "already built" and skipped on
+	# every run - while nothing in any repository provided it and every
+	# package that depended on it stayed uninstallable.
+	if have_binary "$repo" "$pkg"; then
 		printf '  %-22s %-9s %s\n' "$pkg" "have" "already built"
 		continue
 	fi
@@ -83,7 +99,7 @@ for pkg in $TARGETS; do
 done
 
 # Reindex everything we touched.
-for r in main extra base kernels nonfree alt-nonfree multilib profile musl; do
+for r in main extra base kernels nonfree alt-nonfree multilib profile; do
 	[ -d "$B/repo/$r/x86_64" ] || continue
 	ls "$B/repo/$r/x86_64"/*.alpmz >/dev/null 2>&1 || continue
 	sh "$TREE/alpm/alpm-repo" gen "$B/repo/$r" x86_64 >/dev/null 2>&1 || :
@@ -92,7 +108,7 @@ done
 printf '\n  %s built, %s failed, %s skipped\n' "$built" "$failed" "$skipped"
 [ -n "$FAILED_LIST" ] && printf '  still source-only:%s\n' "$FAILED_LIST"
 printf '\n'
-for r in main extra base kernels profile musl; do
+for r in main extra base kernels profile; do
 	c=$(ls -1 "$B/repo/$r/x86_64"/*.alpmz 2>/dev/null | wc -l | tr -d ' ')
 	printf '  %-12s %s binaries\n' "$r" "$c"
 done

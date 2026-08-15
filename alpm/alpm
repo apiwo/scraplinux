@@ -15,6 +15,20 @@ done
 
 alpm_load_conf
 
+# Anything half-built when alpm stops - a resolver scratch directory, a
+# database entry an interrupted install_one was still assembling - is removed
+# on the way out. A leftover .incoming-<pkg> is harmless (nothing reads it,
+# and is_installed only counts a directory with a PKGINFO in it), but there
+# is no reason to leave it lying in the database either.
+alpm_cleanup() {
+	[ -n "${RES_DIR:-}" ] && rm -rf "$RES_DIR" 2>/dev/null
+	[ -n "${ALPM_DB:-}" ] && rm -rf "$ALPM_DB"/local/.incoming-* 2>/dev/null
+	return 0
+}
+trap 'alpm_cleanup' EXIT
+trap 'alpm_cleanup; exit 130' INT
+trap 'alpm_cleanup; exit 143' TERM
+
 ARCH=${ALPM_ARCH:-x86_64}
 NOMOD=0
 SOURCE=0
@@ -52,7 +66,7 @@ ${C_B}FETCHING${C_R}
   alpm get <pkg>...          unpack package contents here without installing
   alpm get -s <pkg>...       fetch upstream source here
   alpm fetch all             sync every enabled repo
-  alpm fetch <repo>...       sync main | extra | base | source | kernels |
+  alpm fetch <repo>...       sync main | extra | base | kernels |
                              nonfree | alt-nonfree | multilib | profile
 
 ${C_B}REPOSITORIES${C_R}
@@ -93,35 +107,92 @@ EOF
 
 # ------------------------------------------------------------- dependency logic
 
-_seen=""
-_order=""
+# Resolution happens in two passes, and neither of them runs in a command
+# substitution: a die() inside a subshell only kills the subshell, so the old
+# single-pass version could fail to resolve a dependency and still hand back
+# an empty-but-successful list for alpm to carry on with.
+#
+# Pass one walks the graph breadth-first and is where every bit of the work
+# is - one index lookup per package. It writes the graph, the closure and
+# anything unresolvable into $RES_DIR, and drives the "Calculating
+# dependencies..." bar from packages-read over packages-discovered: two real
+# counts, so the bar can sit still while a big subtree opens up and never
+# moves without something having actually happened.
+#
+# Pass two orders that closure deps-first. It reads nothing new - just the
+# graph pass one already wrote - so it is instant and needs no progress of
+# its own.
+RES_DIR=""
 
-_resolve() {
-	# Every one of these must be local: this function recurses, and without
-	# local the inner call overwrites the caller's pkg, so the wrong name ends
-	# up in _order and packages appear twice.
-	local pkg entry deps d
-	pkg=$1
-	case " $_seen " in *" $pkg "*) return 0 ;; esac
-	_seen="$_seen $pkg"
+resolve_targets() {
+	RES_DIR="$ALPM_CACHE/build/.resolve.$$"
+	rm -rf "$RES_DIR"; mkdir -p "$RES_DIR"
+	: >"$RES_DIR/graph"; : >"$RES_DIR/missing"; : >"$RES_DIR/order"
 
-	entry=$(idx_lookup "$pkg") || {
-		if is_installed "$pkg"; then return 0; fi
-		die "package not found: $pkg (try 'alpm fetch all')"
-	}
-	deps=$(printf '%s' "$entry" | cut -f9)
-	for d in $deps; do
-		[ "$d" = "-" ] && continue
-		_resolve "$d"
+	_rt_frontier="$*"
+	_rt_seen=""
+	_rt_read=0
+	_rt_found=0
+	for _rt_p in $_rt_frontier; do _rt_found=$((_rt_found+1)); done
+
+	calc_begin
+	while [ -n "$_rt_frontier" ]; do
+		_rt_next=""
+		for _rt_p in $_rt_frontier; do
+			case " $_rt_seen " in *" $_rt_p "*) continue ;; esac
+			_rt_seen="$_rt_seen $_rt_p"
+			_rt_deps=""
+			if _rt_e=$(idx_lookup "$_rt_p"); then
+				_rt_deps=$(printf '%s' "$_rt_e" | cut -f9)
+			elif is_installed "$_rt_p"; then
+				# Already on the system and no longer in any index (a repo
+				# it came from is gone, or it was built from source). Its own
+				# recorded dependencies are still the truth for it.
+				_rt_deps=$(tr '\n' ' ' <"$ALPM_DB/local/$_rt_p/DEPS" 2>/dev/null)
+			else
+				printf '%s\n' "$_rt_p" >>"$RES_DIR/missing"
+			fi
+			printf '%s\t%s\n' "$_rt_p" "$_rt_deps" >>"$RES_DIR/graph"
+			_rt_read=$((_rt_read+1))
+			for _rt_d in $_rt_deps; do
+				[ "$_rt_d" = "-" ] && continue
+				case " $_rt_seen $_rt_next " in *" $_rt_d "*) continue ;; esac
+				_rt_next="$_rt_next $_rt_d"
+				_rt_found=$((_rt_found+1))
+			done
+			calc_step "$_rt_read" "$_rt_found"
+		done
+		_rt_frontier=$_rt_next
 	done
-	_order="$_order $pkg"
+	calc_done
+
+	_topo_seen=""
+	for _rt_p in $*; do _topo "$_rt_p"; done
+	return 0
 }
 
-# Prints the install order for a set of targets, deps first.
-resolve_targets() {
-	_seen=""; _order=""
-	for t in "$@"; do _resolve "$t"; done
-	printf '%s\n' $_order
+_g_deps() { awk -F'\t' -v p="$1" '$1==p{print $2; exit}' "$RES_DIR/graph"; }
+
+_topo() {
+	# local, because this recurses: without it the inner call overwrites the
+	# caller's package name and the wrong entry lands in the install order.
+	local p deps d
+	p=$1
+	case " $_topo_seen " in *" $p "*) return 0 ;; esac
+	_topo_seen="$_topo_seen $p"
+	deps=$(_g_deps "$p")
+	for d in $deps; do
+		[ "$d" = "-" ] && continue
+		_topo "$d"
+	done
+	printf '%s\n' "$p" >>"$RES_DIR/order"
+}
+
+# Who pulled a package in - used to explain a dependency that cannot be
+# resolved instead of just naming it.
+_needed_by() {
+	awk -F'\t' -v d="$1" '{n=split($2,a," "); for(i=1;i<=n;i++) if(a[i]==d){print $1; exit}}' \
+		"$RES_DIR/graph"
 }
 
 # ------------------------------------------------------------------ transactions
@@ -163,6 +234,27 @@ tx_save() {
 }
 
 tx_added() { [ -n "$TX_DIR" ] && printf '%s\n' "$1" >>"$TX_DIR/added" || :; }
+
+# The package database is not part of the filesystem snapshot above: tx_save
+# only covers files a package payload replaces, and $ALPM_DB/local is written
+# by alpm itself. Without these two, rollback put every *file* back and left
+# the database describing the state it had just undone - a rolled-back
+# install stayed "installed" with no files, and a rolled-back upgrade kept the
+# new version's entry.
+#
+# tx_db_save records what the entry looked like before this transaction
+# touched it; tx_db_new records that there was no entry at all, so rollback
+# knows to delete rather than restore.
+tx_db_save() {
+	[ -n "$TX_DIR" ] || return 0
+	if [ -f "$ALPM_DB/local/$1/PKGINFO" ]; then
+		mkdir -p "$TX_DIR/db"
+		rm -rf "$TX_DIR/db/$1"
+		cp -a "$ALPM_DB/local/$1" "$TX_DIR/db/$1"
+	else
+		printf '%s\n' "$1" >>"$TX_DIR/db-new"
+	fi
+}
 
 tx_end() {
 	[ -n "$TX_DIR" ] || return 0
@@ -214,32 +306,52 @@ pkg_script() {
 
 # ---------------------------------------------------------------------- install
 
+# Fetches one package and leaves the result in FETCH_FILE. Deliberately not
+# a function that prints the path for a caller's $(...) to capture: it draws
+# a progress bar on stdout, and the two cannot share a channel.
+#
+# $2 is "package" for something the user actually asked for and "dependency"
+# for anything dragged in behind it - the only difference is how the line
+# above the bar reads.
+FETCH_FILE=""
+FETCH_INDEX=1
+
 fetch_pkg() {
-	pkg=$1
+	pkg=$1 role=${2:-package}
 	entry=$(idx_lookup "$pkg") || die "package not found: $pkg"
 	repo=$(printf '%s' "$entry" | cut -f1)
 	ver=$(printf '%s' "$entry" | cut -f3)
 	rel=$(printf '%s' "$entry" | cut -f4)
 	arch=$(printf '%s' "$entry" | cut -f5)
+	dlsize=$(printf '%s' "$entry" | cut -f6)
 	want=$(printf '%s' "$entry" | cut -f8)
+	# name/version/release/arch all end up as path components below (and in
+	# the URL fetched from). A repo index is remote input - refuse to build a
+	# path out of a field that could walk it somewhere other than
+	# ALPM_CACHE/pkg.
+	for _c in "$pkg" "$ver" "$rel" "$arch"; do
+		safe_component "$_c" || die "package index entry for $pkg has an unsafe field ('$_c') - refusing to fetch"
+	done
 	file="$pkg-$ver-$rel.$arch.alpmz"
 	dest="$ALPM_CACHE/pkg/$file"
+	url=$(alpm_repo_url "$repo")
+	FETCH_FILE=$dest
 
 	if [ -s "$dest" ]; then
 		if [ "$want" = "-" ] || [ "$(sha256 "$dest")" = "$want" ]; then
-			printf '%s\n' "$dest"; return 0
+			ui_cached "$role" "$pkg" "${FETCH_INDEX:-1}"
+			return 0
 		fi
 		warn "cached $file failed checksum, refetching"
 		rm -f "$dest"
 	fi
 
-	url=$(alpm_repo_url "$repo")
-	dl "$url/$arch/$file" "$dest" || die "download failed: $file"
+	ui_fetch "$role" "$pkg" "$url/$arch/$file" "${dlsize:-0}" "${FETCH_INDEX:-1}"
+	dl_bar "$url/$arch/$file" "$dest" "${dlsize:-0}" "$pkg" || die "download failed: $file"
 	if [ "$want" != "-" ] && [ "$(sha256 "$dest")" != "$want" ]; then
 		rm -f "$dest"
 		die "checksum mismatch on $file - refusing to install"
 	fi
-	printf '%s\n' "$dest"
 }
 
 install_one() {
@@ -254,6 +366,12 @@ install_one() {
 	rel=$(meta "$tmp/.PKGINFO" release)
 	deps=$(metaall "$tmp/.PKGINFO" depend | tr '\n' ' ')
 	desc=$(meta "$tmp/.PKGINFO" desc)
+
+	# name becomes $ALPM_DB/local/$name below - a .PKGINFO is part of the
+	# package payload itself, not something alpm generated, so a hostile
+	# .alpmz could otherwise put "../" in its own name and write its database
+	# entry (and everything install_one files under $db) outside ALPM_DB.
+	safe_component "$name" || die "$archive has an unsafe package name in .PKGINFO ('$name')"
 
 	# File-conflict check against other packages' manifests.
 	( cd "$tmp" && find . -type f -o -type l ) | sed 's|^\.||' | \
@@ -278,11 +396,16 @@ install_one() {
 			"$A_AMB$C_B" "$C_R"
 	fi
 
+	# The version detail line belongs to the default style only - apt says
+	# "Setting up <pkg> (<version>) ..." and aeryn prints the version in its
+	# own status line, so printing it here as well just doubles it.
 	if [ -n "$old" ]; then
-		msg2 "upgrading $name $old -> $ver-$rel"
+		[ "$ALPM_STYLE" = arctic ] && \
+			printf '    %s%s %s -> %s-%s%s\n' "$A_GREY" "$name" "$old" "$ver" "$rel" "$C_R"
 		pkg_script "$tmp" pre_upgrade "$name"
 	else
-		msg2 "installing $name $ver-$rel"
+		[ "$ALPM_STYLE" = arctic ] && \
+			printf '    %s%s %s-%s%s\n' "$A_GREY" "$name" "$ver" "$rel" "$C_R"
 		pkg_script "$tmp" pre_install "$name"
 	fi
 
@@ -305,23 +428,47 @@ install_one() {
 	fix_usrmerge "$ALPM_ROOT"
 
 	# Record it.
+	#
+	# The whole entry is assembled beside the real one and moved into place at
+	# the end, with PKGINFO - the file is_installed() keys off - written last
+	# of all. Written straight into $ALPM_DB/local/$name, an install that died
+	# or was interrupted anywhere in here left a half-built directory behind
+	# that every later command counted as an installed package: `alpm ins vim`
+	# would say vim was already there, `alpm deps vim` died on the DEPS file
+	# that never got written, and the resolver marked it satisfied for
+	# everything that needed it. Assembling to the side also means a failed
+	# upgrade leaves the *old* entry intact instead of a broken one.
 	db="$ALPM_DB/local/$name"
-	mkdir -p "$db"
-	cp -a "$tmp.PKGINFO" "$db/PKGINFO"
-	[ -f "$tmp.INSTALL" ] && cp -a "$tmp.INSTALL" "$db/INSTALL"
-	cp -a "$tmp.files" "$db/FILES"
-	printf '%s\n' $deps >"$db/DEPS"
+	dbnew="$ALPM_DB/local/.incoming-$name"
+	rm -rf "$dbnew"; mkdir -p "$dbnew"
+	[ -f "$tmp.INSTALL" ] && cp -a "$tmp.INSTALL" "$dbnew/INSTALL"
+	cp -a "$tmp.files" "$dbnew/FILES"
+	# "-" is the index's placeholder for "no dependencies", not a package.
+	# Written through to DEPS verbatim, it made every dependency-free package
+	# permanently unsatisfied: `alpm doctor` reported "1 unsatisfied" on a
+	# perfectly healthy system and pointed at a package named "-".
+	: >"$dbnew/DEPS"
+	for _d in $deps; do
+		[ "$_d" = "-" ] && continue
+		printf '%s\n' "$_d" >>"$dbnew/DEPS"
+	done
 	printf 'installed = %s\nsize = %s\ntx = %s\n' \
-		"$(date '+%Y-%m-%d %H:%M:%S')" "$(wc -c <"$archive")" "$TX" >"$db/STATE"
-	[ "$NOMOD" = "1" ] && printf 'activated = no\n' >>"$db/STATE"
-	[ -f "$db/REASON" ] || printf '%s\n' "${REASON:-explicit}" >"$db/REASON"
+		"$(date '+%Y-%m-%d %H:%M:%S')" "$(wc -c <"$archive")" "$TX" >"$dbnew/STATE"
+	[ "$NOMOD" = "1" ] && printf 'activated = no\n' >>"$dbnew/STATE"
+	if [ -f "$db/REASON" ]; then cp -a "$db/REASON" "$dbnew/REASON"
+	else printf '%s\n' "${REASON:-explicit}" >"$dbnew/REASON"; fi
 
 	# Per-file checksums, so 'alpm verify' can detect tampering or bit rot.
-	: >"$db/HASHES"
+	: >"$dbnew/HASHES"
 	while read -r f; do
 		[ -f "$ALPM_ROOT$f" ] || continue
-		printf '%s  %s\n' "$(sha256 "$ALPM_ROOT$f")" "$f" >>"$db/HASHES"
+		printf '%s  %s\n' "$(sha256 "$ALPM_ROOT$f")" "$f" >>"$dbnew/HASHES"
 	done <"$tmp.files"
+
+	cp -a "$tmp.PKGINFO" "$dbnew/PKGINFO"
+	tx_db_save "$name"
+	rm -rf "$db"
+	mv "$dbnew" "$db"
 
 	if [ -n "$old" ]; then pkg_script "$db" post_upgrade "$name"
 	else pkg_script "$db" post_install "$name"; fi
@@ -339,27 +486,31 @@ cmd_ins() {
 
 	if [ "$SOURCE" = "1" ]; then cmd_ins_source "$@"; return; fi
 
-	if is_musl_root; then
-		musl_binary_warning
-		cmd_ins_source "$@"
-		return
-	fi
+	# Nothing below can tell "there is no binary for this" from "no index has
+	# been read yet" once it is past this point, and the difference decides
+	# whether a package gets offered for compilation. Stop here instead: an
+	# unsynced system offering to compile something the repo has a binary for
+	# is the whole bug.
+	ls "$ALPM_DB"/sync/*.idx >/dev/null 2>&1 || 		die "no repository index on this system - run 'alpm fetch all' first"
 
-	# Check the requested names before resolving. resolve_targets runs in a
-	# command substitution, so a die() inside it only exits that subshell and
-	# alpm would carry on with an empty list and report success.
-	# Sort the requested names into three groups before doing anything: ones we
-	# have a binary for, ones we only have a recipe for, and ones we have never
-	# heard of. resolve_targets runs in a command substitution, so a die() inside
-	# it only exits that subshell - the check has to happen out here.
+	requested="$*"
+	ui_reading
+
+	# Sort the requested names into three groups before anything else: ones a
+	# synced repo has a binary for, ones only the ports tree has a recipe for,
+	# and ones nothing has ever heard of. A package with a binary is never
+	# offered for compilation, whatever the ports tree says about it.
 	need_build=""; keep=""
 	for p in "$@"; do
 		if idx_lookup "$p" >/dev/null 2>&1 || is_installed "$p"; then
 			keep="$keep $p"; continue
 		fi
-		if idx_lookup_src "$p" >/dev/null 2>&1; then
-			printf '\n%sWARN: This package has no binary. Proceed to compile Y/n?%s ' \
-				"$A_AMB$C_B" "$C_R"
+		if ports_have "$p"; then
+			printf "\n  %sno binary for '%s' in any synced repository - only a source recipe.%s\n" \
+				"$A_AMB$C_B" "$p" "$C_R"
+			printf '  %scompiling it here can take anywhere from seconds to hours.%s\n\n' \
+				"$A_GREY" "$C_R"
+			printf '  %sCompile it now? [Y/n]%s ' "$C_B" "$C_R"
 			if [ "${ALPM_YES:-0}" = "1" ]; then
 				printf 'y\n'
 				ans=y
@@ -392,38 +543,60 @@ cmd_ins() {
 	set -- $keep
 	[ $# -gt 0 ] || { [ -n "$need_build" ] || msg "nothing to do"; return 0; }
 
-	targets=$(resolve_targets "$@")
-	[ -n "$targets" ] || die "could not resolve $* - see 'alpm deps <pkg>'"
-	todo=""
-	for p in $targets; do
+	# shellcheck disable=SC2086
+	resolve_targets $keep
+	if [ -s "$RES_DIR/missing" ]; then
+		# Name what wanted it. "package not found: wayland" on its own, in the
+		# middle of installing something else entirely, tells you nothing
+		# about which package needs wayland or what to do next.
+		while read -r m; do
+			[ -n "$m" ] || continue
+			by=$(_needed_by "$m")
+			if [ -n "$by" ] && [ "$by" != "$m" ]; then
+				err "$by needs $m, and no synced repository has it"
+			else
+				err "package not found: $m"
+			fi
+			if ports_have "$m"; then
+				printf "  %sthere is a recipe for it: alpm ins -s %s%s\n" "$A_GREY" "$m" "$C_R" >&2
+			fi
+		done <"$RES_DIR/missing"
+		die "unresolved dependencies - nothing was installed"
+	fi
+
+	# Split the resolved set into what is already satisfied and what actually
+	# has to be fetched. An installed package at the version the index offers
+	# is a met dependency, not a reinstall - re-fetching glibc every time
+	# something depends on it is exactly what this avoids.
+	todo=""; met=""
+	while read -r p; do
+		[ -n "$p" ] || continue
 		if is_installed "$p"; then
 			cur=$(installed_version "$p")
-			e=$(idx_lookup "$p") || { info "$p $cur is up to date"; continue; }
+			e=$(idx_lookup "$p") || { met="$met $p"; continue; }
 			nv="$(printf '%s' "$e" | cut -f3)-$(printf '%s' "$e" | cut -f4)"
-			if [ "$cur" = "$nv" ]; then
-				case " $* " in *" $p "*) info "$p $cur is already installed" ;; esac
-				continue
-			fi
+			[ "$cur" = "$nv" ] && { met="$met $p"; continue; }
 		fi
 		todo="$todo $p"
-	done
-	[ -n "$todo" ] || { msg "nothing to do"; return 0; }
+	done <"$RES_DIR/order"
 
-	msg "Resolving dependencies"
+	if [ -z "$todo" ]; then
+		for p in $met; do
+			case " $requested " in
+			*" $p "*) info "$p $(installed_version "$p") is already installed" ;;
+			esac
+		done
+		msg "nothing to do"
+		return 0
+	fi
+
 	n=0; total=0
 	for p in $todo; do
 		e=$(idx_lookup "$p") || continue
 		total=$(( total + $(printf '%s' "$e" | cut -f6) ))
 		n=$((n+1))
 	done
-	printf '\n'
-	printf '  %sPackages (%s)%s\n' "$C_B" "$n" "$C_R"
-	printf '  '
-	for p in $todo; do
-		e=$(idx_lookup "$p") || continue
-		printf '%s-%s ' "$p" "$(printf '%s' "$e" | cut -f3)"
-	done
-	printf '\n\n  %sDownload size:%s  %s\n' "$A_GREY" "$C_R" "$(human $total)"
+	ui_summary "$todo" "$met" "$total" "$n"
 	[ "$NOMOD" = "1" ] && printf '  %sMode:%s           staged (-nomod, not put into place)\n' "$A_AMB" "$C_R"
 
 	# Profile packages are not ordinary packages: they pull in a whole set and
@@ -443,32 +616,41 @@ cmd_ins() {
 	fi
 
 	printf '\n'
-	confirm "Proceed with installation?" || { msg "aborted"; return 1; }
+	confirm "$(ui_confirm_text)" || { msg "aborted"; return 1; }
+	printf '\n'
 
 	tx_snapshot "before installing:$(printf '%s' "$todo" | cut -c1-60)"
 	tx_begin
-	msg "Retrieving packages"
-	i=0
-	files=""
+	HOOK_KERNEL=""
+	ndeps=0
+
+	for p in $met; do ui_met "$p"; done
+
+	getn=0
 	for p in $todo; do
-		i=$((i+1)); bar "$i" "$n" "$p"
-		f=$(fetch_pkg "$p") || exit 1
-		files="$files $f"
+		case " $requested " in
+		*" $p "*) role=package; REASON=explicit ;;
+		*)        role=dependency; REASON=dep; ndeps=$((ndeps+1)) ;;
+		esac
+		getn=$((getn+1))
+		FETCH_INDEX=$getn
+		fetch_pkg "$p" "$role"
+		e=$(idx_lookup "$p") || e=""
+		ui_install "$role" "$p" \
+			"$(printf '%s' "$e" | cut -f3)-$(printf '%s' "$e" | cut -f4)"
+		install_one "$FETCH_FILE"
 	done
 
-	msg "Installing"
-	HOOK_KERNEL=""
-	for f in $files; do
-		case " $* " in
-			*" $(basename "$f" | sed 's/-[0-9].*//') "*) REASON=explicit ;;
-			*) REASON=dep ;;
-		esac
-		install_one "$f"
-	done
 	run_hooks
 	tx_end ok
 	printf '\n'
-	ok "$n package(s) installed. Transaction ${A_TEAL}$TX${C_R} (undo with 'alpm rollback')"
+	for p in $requested; do
+		is_installed "$p" || continue
+		ui_done "$p" "$ndeps" "$TX"
+	done
+	[ "$ALPM_STYLE" = arctic ] && \
+		printf '  %stransaction %s - undo it with: alpm rollback%s\n' "$A_GREY" "$TX" "$C_R"
+	:
 }
 
 cmd_ins_source() {
@@ -480,11 +662,24 @@ cmd_ins_source() {
 			[ -f "$d" ] && { recipe=$d; break; }
 		done
 		if [ -z "$recipe" ]; then
-			msg2 "fetching recipe for $p from the source repo"
-			u=$(alpm_repo_url source) || die "no 'source' repo configured"
+			# Recipes come from the ports tree, which is not one of the
+			# repositories in repos.d and does not share their layout: it is
+			# ALL/<ports-repo>/<name>/recipe, so the ports repo the package
+			# lives under has to be looked up before the URL can be built.
+			# The old code asked repos.d for a "source" repo and fetched
+			# <url>/recipes/<name>/recipe, a path that does not exist on that
+			# host - and since a static host answers a missing file with its
+			# own index page rather than a 404, the download "succeeded" and
+			# left an HTML document sitting where the recipe should be.
+			safe_component "$p" || die "invalid package name: $p"
+			msg2 "fetching the recipe for $p from the ports tree"
+			pr=$(ports_repo_of "$p") || die "no source recipe for $p"
 			mkdir -p "$ALPM_CACHE/src/$p"
-			dlq "$u/recipes/$p/recipe" "$ALPM_CACHE/src/$p/recipe" || \
+			dlq "$ALPM_PORTS/$pr/$p/recipe" "$ALPM_CACHE/src/$p/recipe" || \
 				die "no source recipe for $p"
+			looks_like_recipe "$ALPM_CACHE/src/$p/recipe" || {
+				rm -f "$ALPM_CACHE/src/$p/recipe"
+				die "what the ports tree returned for $p is not a recipe"; }
 			recipe="$ALPM_CACHE/src/$p/recipe"
 		fi
 		msg2 "building $p from $recipe"
@@ -503,9 +698,9 @@ cmd_reins() {
 	tx_begin; HOOK_KERNEL=""
 	for p in "$@"; do
 		is_installed "$p" || die "$p is not installed"
-		f=$(fetch_pkg "$p")
+		fetch_pkg "$p" package
 		REASON=$(cat "$ALPM_DB/local/$p/REASON" 2>/dev/null || echo explicit)
-		install_one "$f"
+		install_one "$FETCH_FILE"
 	done
 	run_hooks; tx_end ok
 	ok "reinstalled: $*"
@@ -547,18 +742,26 @@ remove_files() {
 }
 
 purge_junk() {
+	# Every local here is prefixed _pj_: called directly (not in a subshell)
+	# from do_remove()'s own "for p in ..." package loop, and a plain "p" used
+	# to double as this function's own leftover-path loop variable too -
+	# do_remove would come back from purge_junk with its "p" overwritten to
+	# the last leftover path checked instead of the package name, so the
+	# "rm -rf $ALPM_DB/local/$p" and log line right after it ran against that
+	# path instead. The package's own database entry never actually got
+	# removed by 'alpm del+junk' - it stayed "installed" with its files gone.
 	name=$1
 	msg2 "$name: purging leftovers"
-	for p in \
+	for _pj_p in \
 		"$ALPM_ROOT/etc/$name" "$ALPM_ROOT/var/cache/$name" \
 		"$ALPM_ROOT/var/lib/$name" "$ALPM_ROOT/var/log/$name" \
 		"$ALPM_ROOT/usr/share/$name"
 	do
-		[ -e "$p" ] && { info "removing $p"; rm -rf "$p"; }
+		[ -e "$_pj_p" ] && { info "removing $_pj_p"; rm -rf "$_pj_p"; }
 	done
 	# .alpmnew / .alpmsave files left by config merges.
 	find "$ALPM_ROOT/etc" -name "*.alpmnew" -o -name "*.alpmsave" 2>/dev/null | \
-		while read -r f; do rm -f "$f"; done
+		while read -r _pj_f; do rm -f "$_pj_f"; done
 	rm -f "$ALPM_CACHE/pkg/$name"-*.alpmz
 }
 
@@ -566,6 +769,7 @@ find_orphans() {
 	for d in "$ALPM_DB"/local/*/; do
 		[ -d "$d" ] || continue
 		p=$(basename "$d")
+		is_installed "$p" || continue
 		[ "$(cat "$d/REASON" 2>/dev/null)" = "dep" ] || continue
 		needed=0
 		for o in "$ALPM_DB"/local/*/DEPS; do
@@ -618,6 +822,7 @@ do_remove() {
 		remove_files "$p"
 		pkg_script "$ALPM_DB/local/$p" post_remove "$p"
 		[ "$withjunk" = "1" ] && purge_junk "$p"
+		tx_db_save "$p"
 		rm -rf "$ALPM_DB/local/$p"
 		alpm_log "remove $p junk=$withjunk"
 	done
@@ -661,15 +866,22 @@ cmd_get() {
 	alpm_init_db
 	[ $# -gt 0 ] || die "no packages named."
 	if [ "$SOURCE" = "1" ]; then
-		u=$(alpm_repo_url source) || die "no 'source' repo configured"
 		for p in "$@"; do
 			msg "Fetching source for $p"
+			safe_component "$p" || die "invalid package name: $p"
+			pr=$(ports_repo_of "$p") || die "no recipe for $p in the ports tree"
 			e=$(idx_lookup "$p") || die "package not found: $p"
 			v=$(printf '%s' "$e" | cut -f3)
 			mkdir -p "$p-$v"
-			for f in recipe sources.list patches.tar; do
-				dlq "$u/recipes/$p/$f" "$p-$v/$f" 2>/dev/null && info "got $f" || :
+			for f in recipe sources.list patches.tar install; do
+				dlq "$ALPM_PORTS/$pr/$p/$f" "$p-$v/$f" 2>/dev/null && info "got $f" || :
 			done
+			# A static host serves its own index page for a file that is not
+			# there, so an unchecked "success" leaves HTML in the recipe's
+			# place. Nothing below should read that as a recipe.
+			looks_like_recipe "$p-$v/recipe" || {
+				rm -f "$p-$v/recipe"
+				die "what the ports tree returned for $p is not a recipe"; }
 			# Pull the upstream tarballs the recipe names.
 			if [ -f "$p-$v/sources.list" ]; then
 				while read -r nm url; do
@@ -684,11 +896,11 @@ cmd_get() {
 	fi
 	for p in "$@"; do
 		msg "Fetching $p"
-		f=$(fetch_pkg "$p")
+		fetch_pkg "$p" package
 		e=$(idx_lookup "$p"); v=$(printf '%s' "$e" | cut -f3)
 		d="$p-$v"
 		rm -rf "$d"; mkdir -p "$d"
-		untar "$f" "$d"
+		untar "$FETCH_FILE" "$d"
 		ok "contents of $p unpacked into ./$d (nothing was installed)"
 		printf '  %s%s files, %s%s\n' "$A_GREY" \
 			"$(find "$d" -type f | wc -l)" "$(du -sh "$d" | cut -f1)" "$C_R"
@@ -699,20 +911,67 @@ cmd_get() {
 
 sync_repo() {
 	name=$1 url=$2
-	printf '  %s->%s %-14s ' "$A_ICE$C_B" "$C_R" "$name"
+	idx="$ALPM_DB/sync/$name.idx"
 	tmp="$ALPM_DB/sync/.$name.new"
-	if dlq "$url/$ARCH/INDEX" "$tmp" 2>/dev/null; then
-		# Strip comments and blank lines; keep it a clean TSV.
-		grep -v '^#' "$tmp" | grep -v '^[[:space:]]*$' >"$ALPM_DB/sync/$name.idx" || :
+	old="$ALPM_DB/sync/.$name.old"
+
+	# The line is written before the transfer starts and rewritten when it
+	# finishes, so a slow or dead mirror is visibly *being waited on* rather
+	# than the whole command sitting silent and then printing a verdict.
+	printf '  %s->%s %-14s %sfetching...%s' "$A_ICE$C_B" "$C_R" "$name" "$A_GREY" "$C_R"
+
+	if ! dlq "$url/$ARCH/INDEX" "$tmp" 2>/dev/null; then
 		rm -f "$tmp"
-		c=$(wc -l <"$ALPM_DB/sync/$name.idx" | tr -d ' ')
-		printf '%sok%s  %s packages\n' "$A_MINT" "$C_R" "$c"
-		printf '%s\n' "$url" >"$ALPM_DB/sync/$name.url"
-	else
-		rm -f "$tmp"
-		printf '%sunreachable%s\n' "$A_RED" "$C_R"
+		printf '\r  %s->%s %-14s %sunreachable%s   \n' \
+			"$A_ICE$C_B" "$C_R" "$name" "$A_RED" "$C_R"
+		# The one failure worth naming: an https repo on a system with no
+		# TLS-capable downloader fails identically to a mirror being down,
+		# and the fix is completely different.
+		case "$url" in
+		https://*) have curl || printf '     %sno https support here - curl is not installed%s\n' \
+			"$A_GREY" "$C_R" ;;
+		esac
 		return 1
 	fi
+
+	[ -f "$idx" ] && cp -f "$idx" "$old" 2>/dev/null || : >"$old"
+	# Strip comments and blank lines; keep it a clean TSV.
+	grep -v '^#' "$tmp" | grep -v '^[[:space:]]*$' >"$idx" || :
+	bytes=$(wc -c <"$tmp" | tr -d ' ')
+	rm -f "$tmp"
+	printf '%s\n' "$url" >"$ALPM_DB/sync/$name.url"
+
+	c=$(wc -l <"$idx" | tr -d ' ')
+	# What actually changed, rather than just how many lines came back. An
+	# index that is byte-for-byte what it was last time is worth saying so.
+	# Plain temp files, not "comm -13 <(...) <(...)": process substitution is
+	# a bashism and this has to run under busybox ash.
+	cut -f1 "$old" | sort -u >"$old.n"
+	cut -f1 "$idx" | sort -u >"$idx.n"
+	cut -f1,2,3 "$old" | sort -u >"$old.v"
+	cut -f1,2,3 "$idx" | sort -u >"$idx.v"
+	added=$(comm -13 "$old.n" "$idx.n" 2>/dev/null | wc -l | tr -d ' ')
+	gone=$(comm -23 "$old.n" "$idx.n" 2>/dev/null | wc -l | tr -d ' ')
+	upd=$(comm -13 "$old.v" "$idx.v" 2>/dev/null | wc -l | tr -d ' ')
+	upd=$(( ${upd:-0} - ${added:-0} )); [ "$upd" -lt 0 ] && upd=0
+	rm -f "$old" "$old.n" "$old.v" "$idx.n" "$idx.v"
+
+	detail=""
+	[ "${added:-0}" -gt 0 ] && detail="$detail +$added new"
+	[ "${upd:-0}" -gt 0 ]   && detail="$detail $upd updated"
+	[ "${gone:-0}" -gt 0 ]  && detail="$detail $gone removed"
+	[ -n "$detail" ] || detail=" unchanged"
+
+	printf '\r  %s->%s %-14s %sok%s  %s packages, %s  %s%s%s\n' \
+		"$A_ICE$C_B" "$C_R" "$name" "$A_MINT" "$C_R" "$c" "$(human "$bytes")" \
+		"$A_GREY" "$detail" "$C_R"
+	# cmd_fetch runs this inside a pipeline for "fetch all", which is a
+	# subshell - totals go to a file it reads afterwards rather than to
+	# variables that would not survive.
+	[ -n "${SYNC_TALLY:-}" ] && \
+		printf '%s %s %s %s\n' "${added:-0}" "${upd:-0}" "${gone:-0}" "${bytes:-0}" \
+			>>"$SYNC_TALLY"
+	:
 }
 
 cmd_fetch() {
@@ -726,6 +985,9 @@ cmd_fetch() {
 	okc=0; failc=0
 	tmpres=$ALPM_DB/.fetch.$$
 	: >"$tmpres"
+	SYNC_TALLY=$ALPM_DB/.fetchtally.$$
+	: >"$SYNC_TALLY"
+	export SYNC_TALLY
 
 	if [ "$which" = "all" ]; then
 		alpm_repos | while IFS='	' read -r n u; do
@@ -743,6 +1005,12 @@ cmd_fetch() {
 	okc=$(grep -c '^ok$'   "$tmpres" 2>/dev/null); okc=${okc:-0}
 	failc=$(grep -c '^fail$' "$tmpres" 2>/dev/null); failc=${failc:-0}
 	rm -f "$tmpres"
+	tadd=0; tupd=0; tgone=0; tbytes=0
+	while read -r a u g b; do
+		tadd=$(( tadd + ${a:-0} )); tupd=$(( tupd + ${u:-0} ))
+		tgone=$(( tgone + ${g:-0} )); tbytes=$(( tbytes + ${b:-0} ))
+	done <"$SYNC_TALLY"
+	rm -f "$SYNC_TALLY"
 
 	tot=$(cat "$ALPM_DB"/sync/*.idx 2>/dev/null | wc -l | tr -d ' ')
 	printf '\n'
@@ -766,6 +1034,14 @@ cmd_fetch() {
 		ok "$tot packages available from 1 repository"
 	else
 		ok "$tot packages available from $okc repositories"
+	fi
+	# What the sync actually changed, not just how many packages exist.
+	if [ $(( tadd + tupd + tgone )) -gt 0 ]; then
+		printf '  %s%s new, %s updated, %s withdrawn - %s of index downloaded%s\n' \
+			"$A_GREY" "$tadd" "$tupd" "$tgone" "$(human "$tbytes")" "$C_R"
+	else
+		printf '  %severy index was already up to date (%s downloaded)%s\n' \
+			"$A_GREY" "$(human "$tbytes")" "$C_R"
 	fi
 	alpm_log "fetch $* ok=$okc fail=$failc"
 
@@ -882,6 +1158,10 @@ cmd_list() {
 	for d in "$ALPM_DB"/local/*/; do
 		[ -d "$d" ] || continue
 		p=$(basename "$d")
+		# A directory with no PKGINFO is a half-written entry, not a package
+		# (see is_installed) - listing it prints a name with no version and
+		# counts it in the totals. 'alpm doctor' is where those get cleaned up.
+		is_installed "$p" || continue
 		r=$(cat "$d/REASON" 2>/dev/null || echo explicit)
 		[ "$only_explicit" = "1" ] && [ "$r" != "explicit" ] && continue
 		v=$(installed_version "$p")
@@ -1045,7 +1325,6 @@ cmd_why() {
 	printf '  %s%s%s is here as a dependency. Chains that need it:\n\n' \
 		"$A_SNOW$C_B" "$p" "$C_R"
 	# Walk upward from p to explicitly-installed roots.
-	printf '%s\n' "$p" >/tmp/.alpm_why.$$
 	depth=0
 	cur="$p"
 	while [ "$depth" -lt 12 ]; do
@@ -1061,7 +1340,6 @@ cmd_why() {
 		[ -n "$nxt" ] || break
 		cur=$nxt; depth=$((depth+1))
 	done
-	rm -f /tmp/.alpm_why.$$
 	printf '\n'
 }
 
@@ -1077,6 +1355,7 @@ cmd_stats() {
 	n=0; tot=0; expl=0; dep=0
 	for d in "$ALPM_DB"/local/*/; do
 		[ -d "$d" ] || continue
+		is_installed "$(basename "$d")" || continue
 		n=$((n+1))
 		s=$(meta "$d/STATE" size 2>/dev/null || echo 0); tot=$(( tot + ${s:-0} ))
 		if [ "$(cat "$d/REASON" 2>/dev/null)" = "dep" ]; then dep=$((dep+1)); else expl=$((expl+1)); fi
@@ -1154,6 +1433,20 @@ cmd_doctor() {
 	inc=$(grep -L 'finished' "$ALPM_DB"/snapshots/*/TXINFO 2>/dev/null | wc -l | tr -d ' ')
 	[ "$inc" = "0" ] && pass || fail "$inc incomplete - consider 'alpm rollback'"
 
+	chk "no half-written database entries"
+	part=$(alpm_partials | wc -l | tr -d ' ')
+	if [ "$part" = "0" ]; then pass
+	else
+		fail "$part"
+		alpm_partials | while read -r d; do
+			printf '    %s%s%s\n' "$A_GREY" "$d" "$C_R"
+		done
+		if [ "$(id -u)" = "0" ] && confirm "Remove them?"; then
+			alpm_partials | while read -r d; do rm -rf "$d"; done
+			probs=$((probs-1))
+		fi
+	fi
+
 	chk "no staged (-nomod) packages pending"
 	st=$(grep -l 'activated = no' "$ALPM_DB"/local/*/STATE 2>/dev/null | wc -l | tr -d ' ')
 	[ "$st" = "0" ] && pass || nag "$st waiting for 'alpm commit'"
@@ -1164,6 +1457,7 @@ cmd_doctor() {
 		[ -f "$f" ] || continue
 		while read -r d; do
 			[ -n "$d" ] || continue
+			[ "$d" = "-" ] && continue      # placeholder, see install_one
 			is_installed "$d" || { broke=$((broke+1)); }
 		done <"$f"
 	done
@@ -1268,8 +1562,14 @@ cmd_rollback() {
 	fi
 	na=$(wc -l <"$d/added" 2>/dev/null | tr -d ' ' || echo 0)
 	nr=$(find "$d/replaced" -type f 2>/dev/null | wc -l | tr -d ' ')
-	printf '\n  rolling back will delete %s new file(s) and restore %s replaced file(s)\n\n' \
+	ndb=0
+	[ -f "$d/db-new" ] && ndb=$(wc -l <"$d/db-new" | tr -d ' ')
+	nre=0
+	[ -d "$d/db" ] && nre=$(ls -1 "$d/db" 2>/dev/null | wc -l | tr -d ' ')
+	printf '\n  rolling back will delete %s new file(s) and restore %s replaced file(s)\n' \
 		"$na" "$nr"
+	printf '  %s database entry(s) will be removed, %s restored to their previous version\n\n' \
+		"$ndb" "$nre"
 	confirm "Roll back transaction $id?" || { msg "aborted"; return 1; }
 
 	if [ -f "$d/added" ]; then
@@ -1285,15 +1585,37 @@ cmd_rollback() {
 			cp -a "$d/replaced/$rf" "$ALPM_ROOT$t"
 		done
 	fi
-	# Reconcile the database with what is now on disk.
-	if [ -f "$d/packages" ]; then
-		while read -r n v; do
+	# Put the database back to what it described before the transaction.
+	#
+	# This is what "rollback restores files but not the database" used to
+	# mean: every file went back, and then local/ still said the new version
+	# was installed - so `alpm list` showed a package whose files had just
+	# been deleted, `verify` reported every one of them missing, and the
+	# resolver counted it as satisfying dependencies it no longer could.
+	# db-new lists packages this transaction created an entry for (delete
+	# them); db/ holds the entry each replaced package had before it (put
+	# those back verbatim).
+	if [ -f "$d/db-new" ]; then
+		while read -r n; do
 			[ -n "$n" ] || continue
-			if [ ! -e "$ALPM_ROOT/var/lib/alpm/local/$n/PKGINFO" ]; then :; fi
-			[ -d "$ALPM_DB/local/$n" ] && [ ! -s "$ALPM_DB/local/$n/PKGINFO" ] && \
-				rm -rf "$ALPM_DB/local/$n"
-		done <"$d/packages"
+			safe_component "$n" || continue
+			rm -rf "$ALPM_DB/local/$n"
+			info "database entry for $n removed"
+		done <"$d/db-new"
 	fi
+	if [ -d "$d/db" ]; then
+		for e in "$d/db"/*; do
+			[ -d "$e" ] || continue
+			n=$(basename "$e")
+			safe_component "$n" || continue
+			rm -rf "$ALPM_DB/local/$n"
+			cp -a "$e" "$ALPM_DB/local/$n"
+			info "database entry for $n restored to $(installed_version "$n")"
+		done
+	fi
+	# Anything left half-written by the transaction that died is not an
+	# install, whatever its directory looks like.
+	alpm_partials | while read -r stale; do rm -rf "$stale"; done
 	alpm_log "rollback $id"
 	HOOK_KERNEL=1; NOMOD=0; run_hooks
 	ok "rolled back $id"

@@ -29,10 +29,16 @@ OUT=$B/iso
 KREL=$(cat "$B/stage/kernel-base/lib/modules"/*/../*.release 2>/dev/null || \
        ls "$B/stage/kernel-base/lib/modules" | head -1)
 BUILD_ID=$(date '+%Y.%m.%d')
+# One label for the whole distribution. Everything that shows a version -
+# the ISO filename and volume id, /etc/arctic-release, the boot menu,
+# arcticfetch's "os" line - reads it from here rather than spelling out its
+# own variation of it.
+VERSION="Arctic Linux - Alpha v.1"
+VERSION_TAG="alpha-v1"
 LABEL="ARCTIC"
 
 case "$PROFILE" in
-minimal) ISONAME="Arctic-base-glibc-$BUILD_ID-x86_64.iso"; LABEL="ARCTIC_MIN" ;;
+minimal) ISONAME="Arctic-$VERSION_TAG-x86_64.iso"; LABEL="ARCTIC_MIN" ;;
 *) echo "mkiso: unknown profile '$PROFILE' (only 'minimal' exists)" >&2; exit 1 ;;
 esac
 
@@ -104,12 +110,13 @@ step "configuring the image"
 
 cat >"$S/etc/arctic-release" <<EOF
 NAME="Arctic Linux"
-PRETTY_NAME="Arctic Linux $PROFILE"
+PRETTY_NAME="$VERSION"
 ID=arctic
-VERSION="$BUILD_ID"
+VERSION="$VERSION"
+VERSION_ID=$VERSION_TAG
 BUILD_ID=$BUILD_ID
 PROFILE=$PROFILE
-KERNEL=Arctic-base-kernel
+KERNEL=arctic-base-kernel
 KERNEL_RELEASE=$KREL
 LIBC=glibc
 LIBC_VERSION=2.44
@@ -182,7 +189,7 @@ cp -f "$SRCTREE/skel/etc/alpm/repos.d/"*.repo "$S/etc/alpm/repos.d/"
 # install a complete system with no network at all. These entries come first;
 # the network mirrors stay configured behind them for anything not on the disc.
 if [ -d "$B/repo" ]; then
-	for r in main kernels source profile; do
+	for r in main kernels profile; do
 		[ -d "$B/repo/$r" ] || continue
 		cat >"$S/etc/alpm/repos.d/00-medium-$r.repo" <<EOF
 # The copy of '$r' carried on this installation medium.
@@ -204,7 +211,7 @@ fi
 # compressed, which is exactly how it was broken.
 if [ -d "$B/repo" ]; then
 	mkdir -p "$S/var/lib/alpm/sync"
-	for r in main kernels source profile; do
+	for r in main kernels profile; do
 		idx="$B/repo/$r/x86_64/INDEX"
 		[ -f "$idx" ] || continue
 		grep -v '^#' "$idx" >"$S/var/lib/alpm/sync/$r.idx" 2>/dev/null || :
@@ -220,12 +227,19 @@ fi
 #
 #   nano, vim   editing install.conf is the whole installation procedure now,
 #               so an editor beyond busybox vi is not optional
+#   curl        the only HTTPS client on the image. toybox's wget - the one
+#   ca-certs    thing the rootfs had - answers every https:// URL with
+#               "unsupported protocol", so `alpm fetch all` reported the
+#               four network repositories unreachable on every single live
+#               session while the four carried on the medium (file://)
+#               worked, and nothing outside the disc could ever be
+#               installed. ca-certificates is what curl verifies against.
 #
 # Wired networking during the install is rc.d/network + busybox udhcpc
 # (built into the rootfs already); wireless is wpa_supplicant + wifi-connect,
 # both staged straight into the rootfs by build-usable.sh - neither needs
 # installing here as a separate live-only package the way dhcpcd used to.
-LIVE_EXTRAS="nano vim ttf-jetbrains-mono ttf-nerd-fonts-symbols"
+LIVE_EXTRAS="curl ca-certificates nano vim ttf-jetbrains-mono ttf-nerd-fonts-symbols"
 step "installing live tools"
 for p in $LIVE_EXTRAS; do
 	pkg=$(ls -t "$B"/repo/*/x86_64/"$p"-*.alpmz 2>/dev/null | head -1)
@@ -342,7 +356,19 @@ else
 	arcticfetch 2>/dev/null || true
 	printf '\n'
 fi
-exec /bin/zsh -l
+
+# Ctrl-D at the prompt ends the shell, which hands tty1 back to init to
+# respawn. Do it a few times in a row and busybox init decides the console is
+# "respawning too fast" and disables it for five minutes - from the outside
+# that looks exactly like the live session breaking for no reason. Two things
+# stop it: the shell below ignores EOF (ARCTIC_IGNORE_EOF, see /etc/zsh/zshrc),
+# and if someone types "exit" anyway they get a fresh shell from here rather
+# than a dead tty.
+while :; do
+	ARCTIC_IGNORE_EOF=1 /bin/zsh -l
+	printf '\n%s  session ended - starting another. poweroff to shut down.%s\n\n' "$GREY" "$R"
+	sleep 1
+done
 WELCOME
 chmod 755 "$S/usr/bin/arctic-welcome"
 
@@ -512,10 +538,10 @@ cp -f "$SRCTREE/branding/limine/splash.png" "$WORK/iso/boot/arctic-splash.png" 2
 
 # Limine's own configuration. The entry is named exactly "Arctic linux".
 cat >"$WORK/iso/boot/limine.conf" <<EOF
-# Arctic Linux $BUILD_ID - $PROFILE
+# $VERSION - $PROFILE ($BUILD_ID)
 timeout: 5
 default_entry: 1
-interface_branding: Arctic Linux $BUILD_ID
+interface_branding: $VERSION
 term_palette: 1a1b26;f7768e;9ece6a;e0af68;7aa2f7;bb9af7;7dcfff;c0caf5
 term_palette_bright: 414868;ff899d;9fe044;faba4a;8db0ff;c7a9ff;a4daff;c8d3f5
 term_background: 1a1b26
@@ -554,7 +580,7 @@ cp -f "$WORK/iso/boot/limine.conf" "$WORK/iso/limine.conf"
 step "copying the repositories onto the medium"
 if [ -d "$B/repo" ]; then
 	mkdir -p "$WORK/iso/arctic/repo"
-	for r in main kernels source profile; do
+	for r in main kernels profile; do
 		[ -d "$B/repo/$r" ] || continue
 		cp -a "$B/repo/$r" "$WORK/iso/arctic/repo/"
 	done
@@ -585,7 +611,7 @@ rm -f "$OUT/$ISONAME"
 
 xorriso -as mkisofs \
 	-volid "$LABEL" \
-	-appid "Arctic Linux $BUILD_ID $PROFILE" \
+	-appid "$VERSION ($BUILD_ID)" \
 	-publisher "Arctic Linux" \
 	-preparer "mkiso" \
 	-joliet -rational-rock \

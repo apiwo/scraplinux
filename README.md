@@ -1,9 +1,11 @@
 # Arctic Linux
 
-glibc,(experimental musl) LLVM, a BSD-style userland, busybox init, zsh, doas, and its own
+**Arctic Linux - Alpha v.1**
+
+glibc, LLVM, a BSD-style userland, busybox init, zsh, doas, and its own
 package manager (alpm).
 
-Full docs: **[arctic-linux.apiwow.net](https://arctic-linux.apiwow.net)**
+Full docs: **[arctic-docs.apiwow.net](https://arctic-docs.apiwow.net)**
 
 ## Install
 
@@ -29,8 +31,14 @@ you want:
 A_DESKTOP=niri
 A_USER=you
 A_ENCRYPT=yes
+A_INIT=nitro
 A_EXTRA=git tmux ripgrep
 ```
+
+`A_INIT` takes busybox (the default), openrc, sysvinit, runit, dinit or
+nitro. Services are declared once in `/etc/rc.d` and translated into
+whichever init you pick, so `service start sshd` means the same thing on
+all of them.
 
 Once installed, the system stays declarative through
 `/etc/arctic/system.conf` + `arctic-rebuild`: list the packages and services
@@ -46,5 +54,26 @@ to clean up.
 
 ## Packages
 
-`docs/STATUS.md` in this repo tracks build status. Package downloads and
-docs are on the site above.
+```sh
+alpm fetch all          # sync the repositories
+alpm ins vim            # install
+alpm ins -s helix       # build from source instead
+alpm rollback           # undo the last transaction
+```
+
+Binaries come from **[pkg-arctic.apiwow.net](https://pkg-arctic.apiwow.net)**,
+recipes from **[ports-arctic.apiwow.net](https://ports-arctic.apiwow.net)**.
+The two never mix: a repository in `/etc/alpm/repos.d` serves `.alpmz`
+binaries and nothing else.
+
+`ALPM_STYLE` in `/etc/alpm/alpm.conf` picks how an install reads — `arctic`,
+`apt` or `aeryn`. Same resolver and the same downloads either way.
+
+`docs/STATUS.md` tracks what is built, what is known-broken, and what is
+still source-only.
+
+## Mirrors
+
+Everything is on GitHub and Codeberg both:
+[github.com/apiwo](https://github.com/apiwo/arctic-linux) ·
+[codeberg.org/apiwo](https://codeberg.org/apiwo/arctic-linux)

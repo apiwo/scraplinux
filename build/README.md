@@ -22,12 +22,6 @@ and re-run without starting over.
 To build one extra package for the repo directly: `build/arctic-sandbox
 build/build-batch.sh <name>`.
 
-Musl packages (anything under `ports/musl/`) go through `build/arctic-musl-sandbox`
-instead - same read-only-host guarantee as `arctic-sandbox`, but it also stages
-a real musl toolchain at `/usr/musl` inside the sandbox and exports `CC`/`MUSLGCC`
-pointing at it, so a recipe can just use `$CC` instead of hunting for musl-gcc
-itself. Run `build/arctic-musl-sandbox --check` to confirm it actually holds.
-
 ## A note on the toolchain
 
 Arctic ships LLVM. glibc, however, cannot be compiled by clang — upstream

@@ -23,7 +23,7 @@ esac
 banner
 
 # --------------------------------------------------------------- pseudo filesystems
-begin "mounting kernel filesystems"
+begin "Mounting pseudo-filesystems"
 mountpoint -q /proc || mount -t proc     -o nosuid,noexec,nodev proc  /proc
 mountpoint -q /sys  || mount -t sysfs    -o nosuid,noexec,nodev sys   /sys
 mountpoint -q /run  || mount -t tmpfs    -o nosuid,nodev,mode=755 run /run
@@ -50,26 +50,30 @@ rc_log "=== Arctic boot $(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null) ==="
 rc_log "kernel: $(uname -r 2>/dev/null)"
 
 # ------------------------------------------------------------------------ devices
-begin "starting the device manager"
 # Arctic uses busybox mdev with libudev-zero, so there is no systemd-derived
 # udev in the base system. eudev is available in extra for anyone who wants it.
+# The line names the one that actually ran - "starting the device manager" is
+# true of either and tells you nothing when you are looking at a boot log
+# trying to work out which one this machine came up with.
 if [ -x /sbin/udevd ] && [ -f /etc/arctic/services/udev ]; then
+	begin "Starting udev"
 	/sbin/udevd --daemon 2>/dev/null
 	udevadm trigger --action=add --type=subsystems 2>/dev/null
 	udevadm trigger --action=add --type=devices 2>/dev/null
 	udevadm settle --timeout=30 2>/dev/null
 else
+	begin "Starting mdev"
 	printf '/sbin/mdev\n' >/proc/sys/kernel/hotplug
 	mdev -s
 	[ -x /sbin/mdev ] && mdev -df & 2>/dev/null
 fi
 good
 
-begin "applying sysctl defaults"
+begin "Applying sysctl settings"
 [ -f /etc/sysctl.conf ] && sysctl -p /etc/sysctl.conf >/dev/null 2>&1
 good
 
-begin "loading kernel modules"
+begin "Loading kernel modules"
 for f in /etc/modules-load.d/*.conf; do
 	[ -f "$f" ] || continue
 	while read -r m; do
@@ -80,7 +84,7 @@ done
 good
 
 # --------------------------------------------------------------------- filesystems
-begin "checking filesystems"
+begin "Checking filesystems"
 if [ -f /forcefsck ] || grep -q ' forcefsck' /proc/cmdline 2>/dev/null; then
 	fsck -A -T -a 2>/dev/null; rm -f /forcefsck
 else
@@ -101,15 +105,15 @@ else
 fi
 good
 
-begin "remounting the root filesystem read-write"
+begin "Remounting rootfs read-write"
 mount -o remount,rw / 2>/dev/null
 good
 
-begin "mounting the remaining filesystems"
+begin "Mounting all filesystems"
 mount -a -t nosquashfs,noproc,nosysfs,nodevtmpfs 2>/dev/null || mount -a 2>/dev/null
 good
 
-begin "activating swap"
+begin "Activating swap"
 swapon -a 2>/dev/null || :
 if [ -f /etc/arctic/zram.conf ]; then
 	. /etc/arctic/zram.conf
@@ -122,7 +126,7 @@ fi
 good
 
 # ------------------------------------------------------------------------- system
-begin "setting the hostname"
+begin "Setting up hostname"
 # Not "A && B || C": if /etc/hostname exists but "hostname -F" itself fails
 # for any reason (an empty file, a trailing-whitespace quirk), that pattern
 # runs the fallback too and silently renames the machine to the literal
@@ -134,7 +138,7 @@ else
 fi
 good
 
-begin "setting up the console"
+begin "Setting up console"
 [ -f /etc/vconsole.conf ] && . /etc/vconsole.conf
 [ -n "${KEYMAP:-}" ] && loadkmap </usr/share/keymaps/"$KEYMAP".bmap 2>/dev/null || :
 
@@ -155,19 +159,23 @@ for _t in /dev/tty1 /dev/tty2 /dev/tty3 /dev/tty4; do
 done
 good
 
-begin "seeding the random pool"
+begin "Initializing random seed"
 [ -f /var/lib/arctic/random-seed ] && \
 	cat /var/lib/arctic/random-seed >/dev/urandom 2>/dev/null
 mkdir -p /var/lib/arctic
-dd if=/dev/urandom of=/var/lib/arctic/random-seed bs=512 count=1 2>/dev/null
+# chmod before writing, not after - a plain dd of a not-yet-existing file
+# creates it at the umask's default mode first, leaving fresh entropy
+# world-readable for the moment between that create and the chmod.
+: >/var/lib/arctic/random-seed
 chmod 600 /var/lib/arctic/random-seed
+dd if=/dev/urandom of=/var/lib/arctic/random-seed bs=512 count=1 2>/dev/null
 good
 
-begin "setting the clock"
+begin "Setting up RTC"
 [ -e /dev/rtc0 ] && hwclock --hctosys --utc 2>/dev/null || :
 good
 
-begin "cleaning up /tmp and /run"
+begin "Cleaning up /tmp and /run"
 rm -rf /tmp/.[!.]* /tmp/* 2>/dev/null || :
 rm -f /run/*.pid 2>/dev/null || :
 # Not "rm -f /run/arctic/*": that is where this boot's own log lives, and
@@ -183,7 +191,7 @@ done
 : >/var/run/utmp 2>/dev/null || :
 good
 
-begin "bringing up the loopback interface"
+begin "Setting up loopback interface"
 ip link set lo up 2>/dev/null || ifconfig lo 127.0.0.1 up 2>/dev/null
 good
 
@@ -204,7 +212,7 @@ for _a in $(cat /proc/cmdline 2>/dev/null); do
 		[ -n "$_g" ] || continue
 		[ -d "/var/lib/arctic/generations/$_g" ] || continue
 		[ "$_g" = "$(cat /var/lib/arctic/generations/current 2>/dev/null)" ] && continue
-		begin "switching to generation $_g"
+		begin "Switching to generation $_g"
 		if command -v arctic-generation >/dev/null 2>&1 && \
 		   arctic-generation switch "$_g" >/var/log/arctic-generation-boot.log 2>&1; then
 			good
@@ -226,10 +234,14 @@ if [ -d /etc/arctic/services ]; then
 			# Enabled but there is no script to run it, or it is not
 			# executable. Silently skipping this is how a service ends up
 			# "enabled" and never running with nothing to show for it.
-			bad "$n (no executable /etc/rc.d/$n)"
+			# begin() first: bad() right-aligns its result against whatever
+			# begin() last set, so without one this printed its [failed] at
+			# the padding of the *previous* line's label.
+			begin "Starting $n"
+			bad "no executable /etc/rc.d/$n"
 			continue
 		fi
-		begin "starting $n"
+		begin "Starting $n"
 		# Failures used to go to /dev/null, which meant a service that could
 		# not start left no trace anywhere. Keep the console tidy on success,
 		# but record what went wrong either way.

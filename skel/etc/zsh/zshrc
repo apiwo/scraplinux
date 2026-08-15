@@ -8,7 +8,16 @@ setopt EXTENDED_GLOB NO_CASE_GLOB NUMERIC_GLOB_SORT
 setopt INTERACTIVE_COMMENTS
 setopt NO_BEEP
 setopt PROMPT_SUBST
-setopt CORRECT
+# No CORRECT. It answers a typo with "zsh: correct 'foo' to 'bar' [nyae]?",
+# which stops the shell dead waiting on a four-letter answer nobody wants to
+# learn, and guesses wrong constantly against a userland this small.
+
+# Ctrl-D at an empty prompt ends the shell. On the live image that hands tty1
+# back to init to respawn, and a few in a row make busybox init disable the
+# console for five minutes as "respawning too fast" - which reads as the live
+# session simply breaking. arctic-welcome sets ARCTIC_IGNORE_EOF there; a real
+# install leaves Ctrl-D alone, where logging out is what it should do.
+[[ -n $ARCTIC_IGNORE_EOF ]] && setopt IGNORE_EOF
 
 # History that survives, shared between shells, without duplicates.
 HISTFILE=${HOME}/.zsh_history
@@ -60,7 +69,7 @@ _alpm() {
 	ins|get|update)
 		_values 'package' $(cut -f1 /var/lib/alpm/sync/*.idx 2>/dev/null | sort -u) ;;
 	fetch)
-		_values 'repository' all main extra base source kernels nonfree alt-nonfree multilib ;;
+		_values 'repository' all main extra base kernels profile nonfree alt-nonfree multilib ;;
 	esac
 }
 compdef _alpm alpm 2>/dev/null
@@ -102,6 +111,24 @@ _arctic_prompt() {
 }
 PROMPT='$(_arctic_prompt)'
 RPROMPT='%F{238}%*%f'
+
+# Inside an `arctic-shell`, say so on every prompt. An ephemeral environment
+# is otherwise indistinguishable from the real system right up until it
+# disappears on exit, taking whatever was installed into it. The line names
+# the package set that defines the environment, whether the network is
+# reachable from inside it, and whether it survives exit.
+if [[ -n $ARCTIC_SHELL_ENV ]]; then
+	_arctic_shell_bar() {
+		local net=${ARCTIC_SHELL_NET:-offline} life=${ARCTIC_SHELL_LIFE:-ephemeral}
+		local netcol=203; [[ $net == network ]] && netcol=49
+		local lifecol=215; [[ $life == kept ]] && lifecol=49
+		print -n "%F{44}%Barctic-shell%b%f %F{245}${ARCTIC_SHELL_ENV}%f"
+		print -n " %F{$netcol}${net}%f%F{238}/%f%F{$lifecol}${life}%f"
+	}
+	PROMPT='$(_arctic_shell_bar)
+$(_arctic_prompt)'
+	RPROMPT=''
+fi
 
 # --------------------------------------------------------------------- aliases
 # Arctic's userland is toybox and busybox, so ls has no --color=auto. Both
