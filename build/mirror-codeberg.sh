@@ -54,11 +54,19 @@ for entry in $REPOS; do
 		printf '   added codeberg remote\n'
 	fi
 	branch=$(git -C "$dir" symbolic-ref --short HEAD 2>/dev/null || echo main)
-	if git -C "$dir" push codeberg "HEAD:$branch" 2>&1 | sed 's/^/   /'; then
-		:
-	else
-		fail=$((fail+1))
-	fi
+	out=$(git -C "$dir" push codeberg "HEAD:$branch" 2>&1)
+	printf '%s\n' "$out" | sed 's/^/   /'
+	case "$out" in
+	*"Quota exceeded"*)
+		# Codeberg caps how much a user may store, and a repository full of
+		# .alpmz binaries reaches it quickly. This is not something a retry
+		# fixes: either the binaries stay on the GitHub mirror only, or the
+		# quota has to be raised on Codeberg's side.
+		printf '   %s is past Codeberg'"'"'s storage quota - binaries stay on the\n' "$name"
+		printf '   GitHub mirror unless the quota is raised.\n'
+		fail=$((fail+1)) ;;
+	*"rejected"*|*"error:"*) fail=$((fail+1)) ;;
+	esac
 done
 
 printf '\n'

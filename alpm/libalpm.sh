@@ -562,27 +562,35 @@ untar_src() {
 # build-rootfs.sh already does once for usr/sbin when it first lays out the
 # rootfs, generalised to every merged path and run after every single
 # package, since any one of them can retrigger it.
+# Every name in here is prefixed _um_. This is called from install_one, which
+# is called from a plain "for p in ..." loop over package names - and the
+# inner helper used a bare "p" for the path it was fixing up, so the caller
+# came back from fix_usrmerge with its package name replaced by
+# "/usr/sbin". A single-package install only showed it in the closing line
+# ("/usr/sbin built from source and installed"); installing two from source
+# in one command operated on the wrong name entirely for the second.
 fix_usrmerge() {
-	root=$1
+	_um_root=$1
 	_um_fix() {
-		p=$1 real=$2 tgt=$3
-		if [ -d "$p" ] && [ ! -L "$p" ]; then
-			for f in "$p"/* "$p"/.[!.]*; do
-				[ -e "$f" ] || [ -L "$f" ] || continue
-				mv -f "$f" "$real/" 2>/dev/null || :
+		_um_p=$1 _um_real=$2 _um_tgt=$3
+		if [ -d "$_um_p" ] && [ ! -L "$_um_p" ]; then
+			for _um_f in "$_um_p"/* "$_um_p"/.[!.]*; do
+				[ -e "$_um_f" ] || [ -L "$_um_f" ] || continue
+				mv -f "$_um_f" "$_um_real/" 2>/dev/null || :
 			done
-			rmdir "$p" 2>/dev/null || :
+			rmdir "$_um_p" 2>/dev/null || :
 		fi
-		[ -e "$p" ] || ln -sfn "$tgt" "$p"
+		[ -e "$_um_p" ] || ln -sfn "$_um_tgt" "$_um_p"
 	}
-	[ -d "$root/usr/bin" ] || return 0
-	[ -d "$root/usr/lib" ] && \
-		_um_fix "$root/lib"     "$root/usr/lib" "usr/lib"
-	[ -d "$root/usr/lib" ] && \
-		_um_fix "$root/lib64"   "$root/usr/lib" "usr/lib"
-	_um_fix "$root/bin"     "$root/usr/bin" "usr/bin"
-	_um_fix "$root/sbin"    "$root/usr/bin" "usr/bin"
-	_um_fix "$root/usr/sbin" "$root/usr/bin" "bin"
+	[ -d "$_um_root/usr/bin" ] || return 0
+	[ -d "$_um_root/usr/lib" ] && \
+		_um_fix "$_um_root/lib"     "$_um_root/usr/lib" "usr/lib"
+	[ -d "$_um_root/usr/lib" ] && \
+		_um_fix "$_um_root/lib64"   "$_um_root/usr/lib" "usr/lib"
+	_um_fix "$_um_root/bin"      "$_um_root/usr/bin" "usr/bin"
+	_um_fix "$_um_root/sbin"     "$_um_root/usr/bin" "usr/bin"
+	_um_fix "$_um_root/usr/sbin" "$_um_root/usr/bin" "bin"
+	return 0
 }
 
 tarlist() {

@@ -74,6 +74,7 @@ ${C_B}FETCHING${C_R}
   alpm fetch all             sync every enabled repo
   alpm fetch <repo>...       sync main | extra | base | kernels |
                              nonfree | alt-nonfree | multilib | profile
+  alpm fetch ports           refresh the source recipe list only
 
 ${C_B}REPOSITORIES${C_R}
   alpm add repo <url>        add a repository
@@ -727,7 +728,12 @@ cmd_ins_source() {
 		fi
 		msg2 "building $p from $recipe"
 		alpm build "$recipe" || die "build of $p failed"
-		out=$(ls -t "$ALPM_CACHE/build/out/$p"-*.alpmz 2>/dev/null | head -1)
+		# The same directory alpm-build writes to. Hardcoding
+		# $ALPM_CACHE/build/out meant that whenever ALPM_BUILDROOT pointed
+		# anywhere else - which is exactly what the batch builds and any
+		# scratch root do - the build succeeded, wrote its .alpmz, and then
+		# `alpm ins -s` said "build produced no package" and threw it away.
+		out=$(ls -t "${ALPM_BUILDROOT:-$ALPM_CACHE/build}/out/$p"-*.alpmz 2>/dev/null | head -1)
 		[ -n "$out" ] || die "build produced no package for $p"
 		tx_begin; HOOK_KERNEL=""; REASON=explicit
 		install_one "$out"
@@ -1054,6 +1060,24 @@ cmd_fetch() {
 		tgone=$(( tgone + ${g:-0} )); tbytes=$(( tbytes + ${b:-0} ))
 	done <"$SYNC_TALLY"
 	rm -f "$SYNC_TALLY"
+
+	# The ports tree is not a repository - it holds recipes, on its own host,
+	# and `alpm ins -s` is the only thing that reads it. It is still worth
+	# refreshing and reporting here: "fetch all" that silently ignored it
+	# meant `ins -s` was the first thing to discover the ports manifest was
+	# missing or stale, in the middle of a build.
+	if [ "$which" = "all" ] || [ "$which" = "ports" ]; then
+		printf '  %s->%s %-14s %sfetching...%s' "$A_ICE$C_B" "$C_R" "ports" "$A_GREY" "$C_R"
+		rm -f "$ALPM_CACHE/ports/manifest.tsv"
+		if pm=$(ports_manifest); then
+			pc=$(grep -vc '^#' "$pm" 2>/dev/null | tr -d ' ')
+			printf '\r  %s->%s %-14s %sok%s  %s recipes  %ssource builds: alpm ins -s <pkg>%s\n' \
+				"$A_ICE$C_B" "$C_R" "ports" "$A_MINT" "$C_R" "${pc:-0}" "$A_GREY" "$C_R"
+		else
+			printf '\r  %s->%s %-14s %sunreachable%s   %s(%s)%s\n' \
+				"$A_ICE$C_B" "$C_R" "ports" "$A_RED" "$C_R" "$A_GREY" "$ALPM_PORTS" "$C_R"
+		fi
+	fi
 
 	tot=$(cat "$ALPM_DB"/sync/*.idx 2>/dev/null | wc -l | tr -d ' ')
 	printf '\n'
