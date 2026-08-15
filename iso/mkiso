@@ -185,41 +185,13 @@ mkdir -p "$S/etc/alpm/repos.d"
 cp -f "$SRCTREE/skel/etc/alpm/alpm.conf" "$S/etc/alpm/alpm.conf"
 cp -f "$SRCTREE/skel/etc/alpm/repos.d/"*.repo "$S/etc/alpm/repos.d/"
 
-# The image carries its own copy of the repositories, so arctic-install can
-# install a complete system with no network at all. These entries come first;
-# the network mirrors stay configured behind them for anything not on the disc.
-if [ -d "$B/repo" ]; then
-	for r in main kernels profile; do
-		[ -d "$B/repo/$r" ] || continue
-		cat >"$S/etc/alpm/repos.d/00-medium-$r.repo" <<EOF
-# The copy of '$r' carried on this installation medium.
-name = $r
-url = file:///run/arctic/medium/arctic/repo/$r
-enabled = yes
-priority = 1
-EOF
-		# The network repo of the same name would collide, so retire it here and
-		# let arctic-install re-enable it on the installed system.
-		[ -f "$S/etc/alpm/repos.d/$r.repo" ] && \
-			sed -i 's/^enabled = yes/enabled = no/' "$S/etc/alpm/repos.d/$r.repo"
-	done
-fi
-
-# Pre-seed the sync database so 'alpm search' and 'alpm info' work on a fresh
-# boot without running 'alpm fetch' first. This has to happen here, before
-# mksquashfs packs $S - doing it later writes into a tree that has already been
-# compressed, which is exactly how it was broken.
-if [ -d "$B/repo" ]; then
-	mkdir -p "$S/var/lib/alpm/sync"
-	for r in main kernels profile; do
-		idx="$B/repo/$r/x86_64/INDEX"
-		[ -f "$idx" ] || continue
-		grep -v '^#' "$idx" >"$S/var/lib/alpm/sync/$r.idx" 2>/dev/null || :
-		printf 'file:///run/arctic/medium/arctic/repo/%s\n' "$r" \
-			>"$S/var/lib/alpm/sync/$r.url"
-	done
-	ok "sync database seeded ($(cat "$S"/var/lib/alpm/sync/*.idx 2>/dev/null | wc -l) packages)"
-fi
+# repos.d ships as-is: every entry points at the network mirror. Nothing is
+# disabled in favour of a copy on the disc any more, which also means
+# arctic-install has no medium-only entries left to clean up afterwards.
+#
+# The sync database is not pre-seeded either - there is nothing local to seed
+# it from, and a stale index that looks current is worse than an empty one.
+# The live session runs `alpm fetch all` before it installs anything.
 
 # Tools that have to be on the installer image itself, not just available to
 # install onto the target. The rootfs build only produces the minimum needed
@@ -704,17 +676,14 @@ backdrop: 5f5bc6
 EOF
 cp -f "$WORK/iso/boot/limine.conf" "$WORK/iso/limine.conf"
 
-step "copying the repositories onto the medium"
-if [ -d "$B/repo" ]; then
-	mkdir -p "$WORK/iso/arctic/repo"
-	for r in main kernels profile; do
-		[ -d "$B/repo/$r" ] || continue
-		cp -a "$B/repo/$r" "$WORK/iso/arctic/repo/"
-	done
-	ok "repositories on the medium: $(du -sh "$WORK/iso/arctic/repo" | cut -f1)"
-else
-	printf '   no repository at %s, the image will need the network\n' "$B/repo"
-fi
+# No repositories on the medium. The image used to carry main, kernels and
+# profile - some 410 MiB of .alpmz - so that an install could run with no
+# network at all. The cost was an install that fetched from a snapshot as old
+# as the ISO and had to be brought up to date immediately afterwards, and a
+# medium that had to be rebuilt for every package change. Packages come from
+# the mirror now, which is where they are current.
+step "repositories"
+ok "none on the medium - packages are fetched from the network"
 
 cat >"$WORK/iso/arctic/version" <<EOF
 name=Arctic Linux

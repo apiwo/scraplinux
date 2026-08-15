@@ -1,0 +1,100 @@
+#!/bin/sh
+# arctic-power - bring the system down through whichever init is running.
+#
+# Installed as poweroff, reboot, halt and shutdown; it decides what to do
+# from the name it was called by.
+#
+# toybox and busybox both ship a poweroff/reboot that calls the reboot(2)
+# syscall directly. That stops the machine, but nothing else: services are
+# never told to stop, /etc/rc.shutdown never runs, the clock is never saved
+# and filesystems go down without being unmounted. What should happen is a
+# request to pid 1, which then runs the shutdown path it knows about - and
+# which pid 1 that is depends on A_INIT.
+#
+# These live in /usr/local/bin, which comes first in PATH, because busybox
+# owns /usr/bin/poweroff and friends and two packages cannot own one path.
+# shellcheck shell=sh disable=SC2039
+
+set -u
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+case "$(basename "$0")" in
+reboot)             action=reboot ;;
+halt)               action=halt ;;
+poweroff|shutdown)  action=poweroff ;;
+*)                  action=${1:-poweroff} ;;
+esac
+
+# "shutdown -r now" and "shutdown -h now" are muscle memory for a lot of
+# people; honour the two flags that actually mean something here.
+for a in "$@"; do
+	case "$a" in
+	-r|--reboot)   action=reboot ;;
+	-h|-H|--halt)  action=halt ;;
+	-P|--poweroff) action=poweroff ;;
+	-f|--force)    force=1 ;;
+	esac
+done
+
+[ "$(id -u)" = "0" ] || { echo "arctic-power: must be run as root." >&2; exit 1; }
+
+init_kind() {
+	if [ -n "${ARCTIC_INIT:-}" ]; then printf '%s\n' "$ARCTIC_INIT"; return; fi
+	if [ -s /etc/arctic/init ]; then head -1 /etc/arctic/init; return; fi
+	_k=$(readlink /proc/1/exe 2>/dev/null)
+	case "${_k##*/}" in
+	dinit)            echo dinit ;;
+	openrc-init|rc)   echo openrc ;;
+	runit|runit-init) echo runit ;;
+	nitro)            echo nitro ;;
+	*)                echo busybox ;;
+	esac
+}
+
+sync
+
+case "$(init_kind)" in
+busybox)
+	# busybox init listens for these: SIGUSR1 halt, SIGUSR2 poweroff,
+	# SIGTERM reboot. It runs the inittab's ::shutdown entry - rc.shutdown -
+	# before acting on any of them.
+	case "$action" in
+	halt)     kill -USR1 1 ;;
+	poweroff) kill -USR2 1 ;;
+	reboot)   kill -TERM 1 ;;
+	esac ;;
+dinit)
+	case "$action" in
+	halt)     dinitctl shutdown --halt ;;
+	poweroff) dinitctl shutdown --poweroff ;;
+	reboot)   dinitctl shutdown --reboot ;;
+	esac ;;
+openrc)
+	case "$action" in
+	halt)     openrc-shutdown --halt now ;;
+	poweroff) openrc-shutdown --poweroff now ;;
+	reboot)   openrc-shutdown --reboot now ;;
+	esac ;;
+runit)
+	case "$action" in
+	halt|poweroff) runit-init 0 ;;
+	reboot)        runit-init 6 ;;
+	esac ;;
+nitro)
+	case "$action" in
+	halt|poweroff) nitroctl Shutdown ;;
+	reboot)        nitroctl Reboot ;;
+	esac ;;
+esac
+
+# If pid 1 did not act - no such init, or one that ignores the request -
+# fall back to the syscall rather than leaving someone at a prompt that will
+# not shut down. Only after the request above had its chance.
+sleep 5
+echo "arctic-power: init did not respond; going down the hard way" >&2
+sync
+case "$action" in
+reboot) exec /usr/bin/reboot ;;
+halt)   exec /usr/bin/halt ;;
+*)      exec /usr/bin/poweroff ;;
+esac

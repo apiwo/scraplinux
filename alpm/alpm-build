@@ -43,20 +43,30 @@ OUT="$ALPM_BUILDROOT/out"
 mkdir -p "$OUT" "$ALPM_CACHE/src" "$ALPM_CACHE/pkg"
 
 # ---------------------------------------------------------------- Arctic CFLAGS
-# Arctic is an LLVM distribution: clang/lld everywhere, libc++ over libstdc++,
-# and glibc as the only GNU component in the system.
-# Arctic's toolchain is clang, but a freshly installed system may not have LLVM
-# yet - and refusing to build anything until it does would be a silly bootstrap
-# problem. Prefer clang, fall back to whatever cc is present.
-if command -v clang >/dev/null 2>&1; then
-	export CC="${CC:-clang}" CXX="${CXX:-clang++}"
-else
-	export CC="${CC:-cc}" CXX="${CXX:-c++}"
-fi
-if command -v ld.lld >/dev/null 2>&1; then
-	export LD="${LD:-ld.lld}"
-else
-	export LD="${LD:-ld}"
+# Arctic is an LLVM distribution: clang, lld and the llvm-* binutils, with
+# libc++ over libstdc++. glibc is the only GNU component in the system and
+# there is no second toolchain - a package built by gcc is not an Arctic
+# package.
+#
+# So no silent fallback to whatever "cc" happens to be. Falling back looked
+# helpful and was the opposite: on a machine with gcc installed, every build
+# quietly produced gcc output that then linked against libstdc++ instead of
+# libc++, and nothing said so. Setting CC explicitly still works - that is
+# how a cross or bootstrap build overrides it - but the default is clang or
+# nothing.
+export CC="${CC:-clang}" CXX="${CXX:-clang++}"
+export LD="${LD:-ld.lld}"
+
+# A build machine without clang cannot produce Arctic packages, and saying so
+# is the point - but it has to be possible to say "yes, I know" while the
+# toolchain is being sorted out, or the distribution cannot be rebuilt at all
+# to fix the very thing that is wrong. ARCTIC_ALLOW_GCC is that switch, it is
+# loud, and it is not for ordinary use: the result links against libstdc++
+# and libgcc rather than libc++, which is not what an Arctic package is.
+if ! command -v "$CC" >/dev/null 2>&1 && [ "${ARCTIC_ALLOW_GCC:-}" = "i-know-this-is-not-arctic" ]; then
+	CC=cc; CXX=c++; LD=ld
+	export CC CXX LD
+	warn "building with $(cc --version 2>/dev/null | head -1) - NOT an LLVM build"
 fi
 for _t in ar nm ranlib strip objcopy objdump; do
 	_u=$(printf '%s' "$_t" | tr '[:lower:]' '[:upper:]')
@@ -148,12 +158,20 @@ export pkgdir
 # somewhere in its build() with "make: not found" and no indication that the
 # toolchain is simply not installed.
 _missing=""
-have "$CC" || command -v cc >/dev/null 2>&1 || _missing="$_missing clang(or gcc)"
-have make || have bmake || have gmake || _missing="$_missing bmake"
+have "$CC" || _missing="$_missing $CC"
+have "$LD" || _missing="$_missing $LD"
+have make || have bmake || _missing="$_missing bmake"
 if [ -n "$_missing" ]; then
 	err "this system cannot build from source yet - missing:$_missing"
-	printf '  %sinstall the toolchain first:  alpm ins base-devel%s\n' "$A_GREY" "$C_R" >&2
+	printf '  %sArctic builds with clang, lld and bmake - install them with:%s\n' \
+		"$A_GREY" "$C_R" >&2
+	printf '  %s  alpm ins base-devel%s\n' "$A_GREY" "$C_R" >&2
 	exit 1
+fi
+
+# gcc being present is not an error - it is not what builds anything here.
+if have gcc && ! have clang; then
+	warn "gcc is installed but clang is not; Arctic does not build with gcc"
 fi
 
 printf '\n'

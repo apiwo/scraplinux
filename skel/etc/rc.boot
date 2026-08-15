@@ -259,11 +259,11 @@ if [ -d /etc/arctic/services ]; then
 			# begin() first: bad() right-aligns its result against whatever
 			# begin() last set, so without one this printed its [failed] at
 			# the padding of the *previous* line's label.
-			begin "Starting $n"
+			begin "Service '$n'"
 			bad "no executable /etc/rc.d/$n"
 			continue
 		fi
-		begin "Starting $n"
+		begin "Service '$n'"
 		# Failures used to go to /dev/null, which meant a service that could
 		# not start left no trace anywhere. Keep the console tidy on success,
 		# but record what went wrong either way.

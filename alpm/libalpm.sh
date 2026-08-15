@@ -260,14 +260,22 @@ _dl_file() {
 # there, which is what every source-build fetch died with. -O is the one
 # output flag toybox, busybox and GNU wget all agree on, so quietness comes
 # from a redirect rather than a flag no one can rely on.
+# The downloader's own error is kept in DL_ERR rather than discarded. "curl:
+# error while loading shared libraries: libidn2.so.0" and "the mirror is down"
+# are the same word - "unreachable" - to anyone reading only the exit status,
+# and they need completely different fixes.
+DL_ERR=""
 _dl_run() {
+	DL_ERR=""
 	if have curl; then
-		curl -fsSL --retry 3 --retry-delay 2 -o "$2" "$1"
+		DL_ERR=$(curl -fsSL --retry 3 --retry-delay 2 -o "$2" "$1" 2>&1) && return 0
 	elif have wget; then
-		wget -O "$2" "$1" >/dev/null 2>&1
+		DL_ERR=$(wget -O "$2" "$1" 2>&1) && return 0
 	else
+		DL_ERR="no downloader installed (curl or wget)"
 		return 127
 	fi
+	return 1
 }
 
 dl() {
@@ -358,10 +366,16 @@ dl_bar() {
 	mkdir -p "$(dirname "$_dlb_out")" 2>/dev/null || :
 	case "$_dlb_url" in
 	file://*)
+		# Timed like any other transfer. Reporting 0B/s for every copy off
+		# the installation medium - which is every package during an offline
+		# install - made the rate look permanently broken.
+		_dlb_t0=$(date '+%s')
 		_dl_file "$_dlb_url" "$_dlb_out" || return 1
 		if [ -t 1 ]; then
 			_dlb_got=$(_bytes "$_dlb_out")
-			_bar_line "$_dlb_label" "$_dlb_got" "${_dlb_total:-0}" 0 0
+			_dlb_el=$(( $(date '+%s') - _dlb_t0 )); [ "$_dlb_el" -lt 1 ] && _dlb_el=1
+			_bar_line "$_dlb_label" "$_dlb_got" "${_dlb_got:-0}" \
+				$(( _dlb_got / _dlb_el )) 0
 			printf '\n'
 		fi
 		return 0 ;;
@@ -372,7 +386,13 @@ dl_bar() {
 		_dl_run "$_dlb_url" "$_dlb_out.part" || { rm -f "$_dlb_out.part"; return 1; }
 		mv "$_dlb_out.part" "$_dlb_out"; return 0
 	fi
-	_dl_run "$_dlb_url" "$_dlb_out.part" &
+	# The transfer runs in the background so the bar can be drawn while it
+	# goes, which means DL_ERR - set inside that subshell - never reaches
+	# here. Write it to a file the parent can read instead.
+	rm -f "$_dlb_out.err"
+	( _dl_run "$_dlb_url" "$_dlb_out.part"; _r=$?
+	  [ -n "$DL_ERR" ] && printf '%s' "$DL_ERR" >"$_dlb_out.err"
+	  exit $_r ) &
 	_dlb_pid=$!
 	_dlb_t0=$(date '+%s')
 	while kill -0 "$_dlb_pid" 2>/dev/null; do
@@ -388,11 +408,20 @@ dl_bar() {
 		_bar_line "$_dlb_label" "$_dlb_got" "${_dlb_total:-0}" "$_dlb_rate" "$_dlb_eta"
 		sleep 1
 	done
-	wait "$_dlb_pid" || { rm -f "$_dlb_out.part"; printf '\n'; return 1; }
+	if ! wait "$_dlb_pid"; then
+		rm -f "$_dlb_out.part"
+		printf '\n'
+		if [ -s "$_dlb_out.err" ]; then
+			err "$(head -2 "$_dlb_out.err" | tr '\n' ' ')"
+			rm -f "$_dlb_out.err"
+		fi
+		return 1
+	fi
 	_dlb_got=$(_bytes "$_dlb_out.part")
 	_dlb_el=$(( $(date '+%s') - _dlb_t0 )); [ "$_dlb_el" -lt 1 ] && _dlb_el=1
 	_bar_line "$_dlb_label" "$_dlb_got" "${_dlb_got:-0}" $(( _dlb_got / _dlb_el )) 0
 	printf '\n'
+	rm -f "$_dlb_out.err"
 	mv "$_dlb_out.part" "$_dlb_out"
 }
 

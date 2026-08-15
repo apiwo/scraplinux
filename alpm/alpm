@@ -637,22 +637,71 @@ cmd_ins() {
 	# shellcheck disable=SC2086
 	resolve_targets $keep
 	if [ -s "$RES_DIR/missing" ]; then
-		# Name what wanted it. "package not found: wayland" on its own, in the
-		# middle of installing something else entirely, tells you nothing
-		# about which package needs wayland or what to do next.
+		# Sort what is missing into "the ports tree can build it" and "nobody
+		# has ever heard of it". The first is an ordinary situation - most of
+		# the desktop is still source-only - and answering it with a flat
+		# "unresolved dependencies" made a perfectly installable package look
+		# broken. The second is a real error.
+		_src=""; _gone=""
 		while read -r m; do
 			[ -n "$m" ] || continue
-			by=$(_needed_by "$m")
-			if [ -n "$by" ] && [ "$by" != "$m" ]; then
-				err "$by needs $m, and no synced repository has it"
-			else
-				err "package not found: $m$(not_found_hint)"
-			fi
-			if ports_have "$m"; then
-				printf "  %sthere is a recipe for it: alpm ins -s %s%s\n" "$A_GREY" "$m" "$C_R" >&2
-			fi
+			if ports_have "$m"; then _src="$_src $m"; else _gone="$_gone $m"; fi
 		done <"$RES_DIR/missing"
-		die "unresolved dependencies - nothing was installed"
+
+		if [ -n "$_gone" ]; then
+			for m in $_gone; do
+				by=$(_needed_by "$m")
+				if [ -n "$by" ] && [ "$by" != "$m" ]; then
+					err "$by needs $m, and nothing has it - not a repository, not the ports tree"
+				else
+					err "package not found: $m$(not_found_hint)"
+				fi
+			done
+			die "unresolved dependencies - nothing was installed"
+		fi
+
+		# Everything missing can be built. Ask once, for all of them.
+		_n=0; _list=""
+		for m in $_src; do
+			_n=$((_n+1))
+			[ -n "$_list" ] && _list="$_list, $m" || _list="$m"
+		done
+		printf '\n'
+		if [ "$_n" = 1 ]; then
+			printf '  %sDependency %s is only in ports as of right now.%s\n' \
+				"$A_AMB$C_B" "$_list" "$C_R"
+		else
+			printf '  %sDependencies %s are only in ports as of right now.%s\n' \
+				"$A_AMB$C_B" "$_list" "$C_R"
+		fi
+		printf '  %scompiling them here can take anywhere from seconds to hours.%s\n' \
+			"$A_GREY" "$C_R"
+		printf '  %sDo you wish to compile?%s %s[Y/n]%s ' "$C_B" "$C_R" "$A_GREY" "$C_R"
+		if [ "${ALPM_YES:-0}" = "1" ]; then
+			printf 'y\n'; _ans=y
+		elif { read -r _ans </dev/tty; } 2>/dev/null; then
+			:
+		else
+			read -r _ans 2>/dev/null || _ans=n
+		fi
+		case "$_ans" in
+		n|N|no|NO|No) printf '\n'; die "nothing was installed" ;;
+		esac
+
+		# Build them, then start over: with those installed the resolver has
+		# a complete graph and the rest of the transaction is an ordinary
+		# binary install.
+		# shellcheck disable=SC2086
+		cmd_ins_source $_src
+		# shellcheck disable=SC2086
+		resolve_targets $keep
+		if [ -s "$RES_DIR/missing" ]; then
+			while read -r m; do
+				[ -n "$m" ] || continue
+				err "still missing after building from source: $m"
+			done <"$RES_DIR/missing"
+			die "unresolved dependencies - nothing further was installed"
+		fi
 	fi
 
 	# Split the resolved set into what is already satisfied and what actually
@@ -1043,6 +1092,11 @@ sync_repo() {
 		rm -f "$tmp"
 		printf '\r  %s->%s %-14s %sunreachable%s   \n' \
 			"$A_ICE$C_B" "$C_R" "$name" "$A_RED" "$C_R"
+		# Whatever the downloader actually said. Without it every failure
+		# reads the same, and a broken curl looks exactly like a mirror
+		# being down.
+		[ -n "${DL_ERR:-}" ] && printf '     %s%s%s\n' "$A_GREY" \
+			"$(printf '%s' "$DL_ERR" | head -2 | tr '\n' ' ')" "$C_R"
 		# The one failure worth naming: an https repo on a system with no
 		# TLS-capable downloader fails identically to a mirror being down,
 		# and the fix is completely different.
