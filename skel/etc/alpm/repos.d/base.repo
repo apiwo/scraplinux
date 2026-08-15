@@ -1,6 +1,8 @@
 # Arctic Linux - base repository
 # The bulk of the distribution. Desktops, browsers, toolchains, games, everything.
 name = base
-url = https://pkg-arctic.apiwow.net/ALL/base
+url = https://raw.githubusercontent.com/apiwo/arctic-linux-pkgs/main/ALL/base
+mirror = https://raw.githubusercontent.com/apiwo/arctic-linux-pkgs/main/ALL/base
+mirror = https://pkg-arctic.apiwow.net/ALL/base
 enabled = yes
 priority = 30

@@ -1,6 +1,8 @@
 # Arctic Linux - multilib repository
 # 32-bit libraries, for Steam, Wine and old binaries.
 name = multilib
-url = https://pkg-arctic.apiwow.net/ALL/multilib
+url = https://raw.githubusercontent.com/apiwo/arctic-linux-pkgs/main/ALL/multilib
+mirror = https://raw.githubusercontent.com/apiwo/arctic-linux-pkgs/main/ALL/multilib
+mirror = https://pkg-arctic.apiwow.net/ALL/multilib
 enabled = no
 priority = 50

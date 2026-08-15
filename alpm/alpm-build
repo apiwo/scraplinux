@@ -54,6 +54,27 @@ mkdir -p "$OUT" "$ALPM_CACHE/src" "$ALPM_CACHE/pkg"
 # libc++, and nothing said so. Setting CC explicitly still works - that is
 # how a cross or bootstrap build overrides it - but the default is clang or
 # nothing.
+# Installed clang is not necessarily clang on PATH. Gentoo keeps it in
+# /usr/lib/llvm/<major>/bin and Debian in /usr/lib/llvm-<major>/bin, and
+# neither is linked into /usr/bin until a slot is selected - so a machine with
+# a complete LLVM toolchain still failed every source build with
+# "clang: not found". Look in the slot directories before concluding it is
+# missing, newest first.
+if ! command -v clang >/dev/null 2>&1; then
+	_best= _bestv=0
+	for _d in /usr/lib/llvm/*/bin /usr/lib/llvm-*/bin /usr/local/lib/llvm/*/bin; do
+		[ -x "$_d/clang" ] || continue
+		_v=${_d%/bin}; _v=${_v##*[!0-9]}
+		[ -n "$_v" ] || _v=0
+		[ "$_v" -gt "$_bestv" ] 2>/dev/null || continue
+		_bestv=$_v; _best=$_d
+	done
+	if [ -n "$_best" ]; then
+		PATH="$_best:$PATH"; export PATH
+	fi
+	unset _best _bestv _d _v
+fi
+
 export CC="${CC:-clang}" CXX="${CXX:-clang++}"
 export LD="${LD:-ld.lld}"
 

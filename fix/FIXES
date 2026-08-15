@@ -1,0 +1,23 @@
+# Arctic Linux fix manifest
+# fields	id severity area package version summary
+#
+# severity  major | minor | change
+# area      pkg | init | shell | net | install | bootloader | kernel
+#
+# One line per correction, tab separated. The id is permanent: it is what an
+# installed machine records once it has taken the fix, so an id is never
+# reused and never renumbered. The package named is the one that carries the
+# correction, and it has to exist in this repository as an .alpmz - applying a
+# fix is an ordinary install, which is what keeps the system binary.
+a1-0001	major	pkg	alpm	1.2.1	repository indexes came from a stale edge cache, describing packages that were no longer served
+a1-0002	major	install	alpm	1.2.1	lzo shipped no shared library, so mkfs.btrfs could not start and the install died at formatting
+a1-0003	major	install	arctic-base	1.2.1	the installer drew a progress screen over alpm's own output, leaving the real error unreadable
+a1-0004	minor	init	arctic-base	1.2.1	boot wrote to /proc/sys/kernel/hotplug on kernels built without CONFIG_UEVENT_HELPER
+a1-0005	minor	init	arctic-base	1.2.1	a missing keymap file printed a redirection error the script could not silence
+a1-0006	minor	shell	arctic-base	1.2.1	backspace moved the cursor forward inside the installer's chroot shell
+a1-0007	minor	pkg	alpm	1.2.1	an optional package set that failed to resolve ended the whole install
+a1-0008	change	shell	arctic-base	1.2.1	the system summary no longer prints on every login of an installed machine
+a1-0009	change	init	arctic-base	1.2.1	boot ends on a cleared screen instead of the last service's output
+a1-0010	change	net	arctic-base	1.2.1	wifi-connect can list networks in range instead of needing the name in advance
+a1-0011	change	pkg	alpm	1.2.1	one closing line per transaction rather than one per package
+a1-0012	change	init	arctic-base	1.2.1	services report their own timing, and init reports the total

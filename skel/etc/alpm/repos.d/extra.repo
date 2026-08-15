@@ -1,6 +1,8 @@
 # Arctic Linux - extra repository
 # Extra pieces for a working install: terminals, editors, network tools, fonts.
 name = extra
-url = https://pkg-arctic.apiwow.net/ALL/extra
+url = https://raw.githubusercontent.com/apiwo/arctic-linux-pkgs/main/ALL/extra
+mirror = https://raw.githubusercontent.com/apiwo/arctic-linux-pkgs/main/ALL/extra
+mirror = https://pkg-arctic.apiwow.net/ALL/extra
 enabled = yes
 priority = 20

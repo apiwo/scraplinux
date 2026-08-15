@@ -1,6 +1,8 @@
 # Arctic Linux - main repository
 # Everything needed to install and boot Arctic: glibc, busybox, toybox, zsh, doas, alpm itself.
 name = main
-url = https://pkg-arctic.apiwow.net/ALL/main
+url = https://raw.githubusercontent.com/apiwo/arctic-linux-pkgs/main/ALL/main
+mirror = https://raw.githubusercontent.com/apiwo/arctic-linux-pkgs/main/ALL/main
+mirror = https://pkg-arctic.apiwow.net/ALL/main
 enabled = yes
 priority = 10

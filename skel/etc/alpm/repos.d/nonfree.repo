@@ -1,6 +1,8 @@
 # Arctic Linux - nonfree repository
 # Proprietary firmware and drivers: NVIDIA, Broadcom, microcode, various blobs.
 name = nonfree
-url = https://pkg-arctic.apiwow.net/ALL/nonfree
+url = https://raw.githubusercontent.com/apiwo/arctic-linux-pkgs/main/ALL/nonfree
+mirror = https://raw.githubusercontent.com/apiwo/arctic-linux-pkgs/main/ALL/nonfree
+mirror = https://pkg-arctic.apiwow.net/ALL/nonfree
 enabled = yes
 priority = 40

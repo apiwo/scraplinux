@@ -197,21 +197,15 @@ ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=238'
 for f in /etc/zsh/zshrc.d/*.zsh(N); do source $f; done
 
 # A quiet greeting on the first interactive shell of a login session. The
-# install reminder only shows up on the live ISO - INSTALLED= is only ever
-# written into /etc/arctic-release by arctic-install itself, so its absence
-# is what tells the live image apart from a real install.
 # INSTALLED= is only ever written into /etc/arctic-release by arctic-install,
-# so its absence is what tells the live image apart from a real install. The
-# fetch runs on the live session only: on an installed system it printed a
-# full system summary on every single login, which is noise once you know
+# so its absence is what tells the live image apart from a real install. Both
+# the summary and the reminder belong to the live session: on an installed
+# system they printed on every single login, which is noise once you know
 # what machine you are sitting at.
 if [[ -o interactive ]] && [[ -z $ARCTIC_GREETED ]] && [[ -z $ARCTIC_CHROOT ]] \
+   && [[ $SHLVL -eq 1 ]] \
    && ! grep -q '^INSTALLED=' /etc/arctic-release 2>/dev/null; then
 	export ARCTIC_GREETED=1
-	if [[ -x /usr/bin/arcticfetch ]] && [[ $SHLVL -eq 1 ]]; then
-		arcticfetch
-		if ! grep -q '^INSTALLED=' /etc/arctic-release 2>/dev/null; then
-			print -P "%F{245}Connect with %F{44}wifi-connect <ssid> <psk>%F{245} or plug in Ethernet, edit %F{44}/etc/arctic/install.conf%F{245}, then run %F{44}arctic-install%F{245} to install.%f"
-		fi
-	fi
+	[[ -x /usr/bin/arcticfetch ]] && arcticfetch
+	print -P "%F{245}Connect with %F{44}wifi-connect <ssid> <psk>%F{245} or plug in Ethernet, edit %F{44}/etc/arctic/install.conf%F{245}, then run %F{44}arctic-install%F{245} to install.%f"
 fi

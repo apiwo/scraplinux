@@ -42,8 +42,8 @@ done
 # One label for the whole distribution, spelled the same way in the ISO's
 # filename and volume id, /etc/arctic-release, arcticfetch's "os" line and
 # here. VERSION_TAG is the same thing where a filename needs it.
-VERSION="Arctic Linux - Alpha v.1"
-VERSION_TAG="alpha-v1"
+VERSION="Arctic Linux - Alpha 1.1"
+VERSION_TAG="a1.1"
 CONF=/etc/arctic/install.conf
 # The install log. /run is a root-owned tmpfs; /tmp is world-writable, and
 # this runs as root - a non-root user on the live session could leave a

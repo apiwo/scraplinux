@@ -82,6 +82,14 @@ ${C_B}FETCHING${C_R}
                              nonfree | alt-nonfree | multilib | profile
   alpm fetch ports           refresh the source recipe list only
 
+${C_B}SYSTEM${C_R}
+  alpm system upgrade        sync, upgrade packages and kernel, update the
+                             bootloader, then apply pending fixes
+  alpm system fix            apply corrections from the fix repository
+  alpm system fix <what>     only those for one area (bootloader, kernel,
+                             pkg, init, net) or one level (major, minor,
+                             change, or bugfix for both fix levels)
+
 ${C_B}REPOSITORIES${C_R}
   alpm add repo <url>        add a repository
   alpm del repo <name>       remove a repository
@@ -377,6 +385,22 @@ fetch_pkg() {
 	dest="$ALPM_CACHE/pkg/$file"
 	url=$(alpm_repo_url "$repo")
 	FETCH_FILE=$dest
+
+	# "-" in the checksum column means the index does not know the hash. That
+	# is normal for a local repository built on this machine - alpm-repo wrote
+	# the index from the packages sitting next to it - and it is not
+	# acceptable for anything arriving over a network, where the index is the
+	# only thing vouching for the package. Left unconditional, the weakest
+	# possible index entry disabled verification: anyone able to serve an
+	# index could write "-" and skip the check entirely, and the package's
+	# install script runs as root.
+	case "$url" in
+	file://*|/*) _local=1 ;;
+	*)           _local=0 ;;
+	esac
+	if [ "$want" = "-" ] && [ "$_local" = "0" ]; then
+		die "$repo has no checksum for $file - refusing to fetch it over the network"
+	fi
 
 	if [ -s "$dest" ]; then
 		if [ "$want" = "-" ] || [ "$(sha256 "$dest")" = "$want" ]; then
@@ -1285,6 +1309,197 @@ cmd_update() {
 	cmd_ins $todo
 }
 
+# ----------------------------------------------------------------------- system
+#
+# Package upgrades move a system from one release of a package to the next.
+# They cannot carry a correction that does not change a version: a fix to a
+# shell script inside alpm, a service file that was wrong, a default that
+# turned out to be harmful. Those used to reach an installed machine only by
+# rebuilding it from a newer image.
+#
+# The fix repository is where those corrections live. It is an ordinary binary
+# repository - the packages in it are .alpmz files like any other, so applying
+# a fix is still an install and the system stays binary - with one extra file,
+# FIXES, that says which package carries which correction, how much it matters
+# and what part of the system it touches:
+#
+#   <id>  <severity>  <area>  <package>  <version>  <summary>
+#
+# severity is major, minor or change. area is whatever part of the system the
+# correction lands on - bootloader, kernel, pkg, init, net - and is what makes
+# "alpm system fix bootloader" possible: a machine that will not boot can take
+# the fixes that might explain it without pulling in everything else pending.
+#
+# Applied ids are remembered so a fix is offered once, and so a machine can be
+# asked what it has already taken.
+FIX_REPO=${ALPM_FIX_REPO:-fix}
+
+fix_state() { printf '%s/fixes.applied' "$ALPM_DB"; }
+
+fix_applied() {
+	_fs=$(fix_state)
+	[ -f "$_fs" ] || return 1
+	grep -q "^$1	" "$_fs" 2>/dev/null
+}
+
+# The manifest sits beside the index of the fix repository, so it is fetched
+# from wherever that repository is served rather than from a second place that
+# could disagree with it.
+fix_manifest() {
+	_url=$(alpm_repos | while IFS='	' read -r n u; do
+		[ "$n" = "$FIX_REPO" ] && printf '%s' "$u"
+	done)
+	[ -n "$_url" ] || return 1
+	_out="$ALPM_DB/sync/$FIX_REPO.fixes"
+	dlq "$_url/$ARCH/FIXES" "$_out" 2>/dev/null || return 1
+	printf '%s' "$_out"
+}
+
+# A selector narrows what is offered. It is matched against the severity and
+# the area of each pending fix, so "major" and "bootloader" are both valid and
+# neither has to know about the other; "bugfix" is the one alias, meaning the
+# entries that correct something wrong rather than merely change it.
+fix_selected() {
+	# $1 severity, $2 area
+	case "$FIX_SEL" in
+	"")                    return 0 ;;
+	major|minor|change)    [ "$1" = "$FIX_SEL" ] ;;
+	bugfix|bugfixes|fixes) [ "$1" = "major" ] || [ "$1" = "minor" ] ;;
+	*)                     [ "$2" = "$FIX_SEL" ] ;;
+	esac
+}
+
+cmd_system_fix() {
+	need_root; alpm_init_db
+	FIX_SEL=${1:-}
+
+	_mf=$(fix_manifest) || {
+		# A machine with no fix repository configured is not broken, it just
+		# has nowhere to take corrections from - say which, rather than
+		# reporting "no changes" and leaving it looking up to date.
+		warn "no '$FIX_REPO' repository configured - nothing to check"
+		return 0
+	}
+
+	# A selector that names nothing the repository has ever heard of is a
+	# typo, and answering it with "No changes." would report a healthy system
+	# on the strength of a misspelling. Checked against every entry, applied
+	# or not, so a correct selector whose fixes are all applied still reads as
+	# up to date rather than as a mistake.
+	case "$FIX_SEL" in
+	""|major|minor|change|bugfix|bugfixes|fixes) ;;
+	*)
+		if ! awk -F'	' -v s="$FIX_SEL" \
+			'$1 !~ /^#/ && $3 == s { found = 1 } END { exit !found }' "$_mf"; then
+			err "no such area or severity: $FIX_SEL"
+			_areas=$(awk -F'	' '$1 !~ /^#/ && NF >= 3 { print $3 }' "$_mf" \
+				| sort -u | tr '\n' ' ')
+			info "areas in '$FIX_REPO': ${_areas:-none}"
+			info "severities: major minor change (or bugfix for both fix levels)"
+			return 1
+		fi
+		;;
+	esac
+
+	_maj=0 _min=0 _chg=0 _pkgs="" _ids=""
+	while IFS='	' read -r id sev area pkg ver _summary; do
+		case "$id" in ''|\#*) continue ;; esac
+		fix_applied "$id" && continue
+		fix_selected "$sev" "$area" || continue
+		case "$sev" in
+		major)  _maj=$((_maj + 1)) ;;
+		minor)  _min=$((_min + 1)) ;;
+		*)      _chg=$((_chg + 1)) ;;
+		esac
+		_ids="$_ids $id"
+		case " $_pkgs " in *" $pkg "*) ;; *) _pkgs="$_pkgs $pkg" ;; esac
+		[ -n "$ver" ] || :
+	done <"$_mf"
+
+	if [ -z "$_ids" ]; then
+		if [ -n "$FIX_SEL" ]; then
+			printf 'No %s changes.\n' "$FIX_SEL"
+		else
+			printf 'No changes.\n'
+		fi
+		return 0
+	fi
+
+	# Only the categories that have something in them, each agreeing with its
+	# own count, so the line never reads "1 changes" or lists a zero.
+	_phr=""
+	_add() { [ -z "$_phr" ] && _phr=$1 || _phr="$_phr, $1"; }
+	[ "$_maj" -gt 0 ] && _add "$_maj major fix$([ "$_maj" -eq 1 ] || echo es)"
+	[ "$_min" -gt 0 ] && _add "$_min minor fix$([ "$_min" -eq 1 ] || echo es)"
+	[ "$_chg" -gt 0 ] && _add "$_chg change$([ "$_chg" -eq 1 ] || echo s)"
+	# The last separator reads better as "and".
+	_phr=$(printf '%s' "$_phr" | sed 's/\(.*\), /\1 and /')
+	_are=are; [ $((_maj + _min + _chg)) -eq 1 ] && _are=is
+	# An area is worth naming in the sentence, a severity is not: the counts
+	# already say "2 major fixes", and "2 major fixes for major" says it twice.
+	case "$FIX_SEL" in
+	""|major|minor|change|bugfix|bugfixes|fixes) ;;
+	*) _phr="$_phr for $FIX_SEL" ;;
+	esac
+
+	printf '\n'
+	while IFS='	' read -r id sev area pkg ver summary; do
+		case "$id" in ''|\#*) continue ;; esac
+		fix_applied "$id" && continue
+		fix_selected "$sev" "$area" || continue
+		case "$sev" in
+		major) _c=$A_RED ;; minor) _c=$A_AMB ;; *) _c=$A_GREY ;;
+		esac
+		printf '  %s%-6s%s %-11s %-20s %s\n' \
+			"$_c$C_B" "$sev" "$C_R" "$area" "$pkg" "$summary"
+	done <"$_mf"
+	printf '\n'
+
+	confirm "$_phr $_are in the '$FIX_REPO' repository, would you like to proceed?" \
+		|| { info "no fixes applied"; return 1; }
+
+	# shellcheck disable=SC2086
+	cmd_ins $_pkgs || return 1
+
+	_fs=$(fix_state)
+	for id in $_ids; do
+		printf '%s	%s\n' "$id" "$(date '+%Y-%m-%d %H:%M:%S')" >>"$_fs"
+	done
+	ok "applied $(printf '%s' "$_ids" | wc -w | tr -d ' ') fixes"
+}
+
+# Everything an installed machine needs to be current, in the order that keeps
+# it bootable: indexes first, then packages (a kernel among them is what makes
+# the bootloader step necessary), then the corrections that no version bump
+# would have carried.
+cmd_system_upgrade() {
+	need_root; alpm_init_db
+
+	cmd_fetch all
+	printf '\n'
+	cmd_update
+
+	# cmd_ins runs this itself when a kernel is among the packages it
+	# installed. Doing it here as well covers the machine whose kernel was
+	# already current but whose bootloader entries are not.
+	if have arctic-bootctl; then
+		msg "Updating bootloader entries"
+		arctic-bootctl update >/dev/null 2>&1 || warn "bootloader update failed"
+	fi
+
+	printf '\n'
+	cmd_system_fix || :
+}
+
+cmd_system() {
+	case "${1:-}" in
+	upgrade|up) shift; cmd_system_upgrade "$@" ;;
+	fix)        shift; cmd_system_fix "$@" ;;
+	"")         die "usage: alpm system <upgrade|fix>" ;;
+	*)          die "unknown system command: $1 (try upgrade or fix)" ;;
+	esac
+}
+
 # ------------------------------------------------------------------------ repos
 
 cmd_addrepo() {
@@ -1894,6 +2109,7 @@ autoremove)         cmd_autoremove ;;
 get)                cmd_get "$@" ;;
 fetch|sync)         cmd_fetch "$@" ;;
 update|upgrade|up)  cmd_update "$@" ;;
+system|sys)         cmd_system "$@" ;;
 add)
 	case "${1:-}" in
 	repo) shift; cmd_addrepo "$@" ;;

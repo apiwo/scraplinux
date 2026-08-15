@@ -3,6 +3,8 @@
 # Kernel/firmware packages are too large for the free-tier pkg mirror - get
 # them from the ISO itself or a GitHub release until they land here too.
 name = kernels
-url = https://pkg-arctic.apiwow.net/ALL/kernels
+url = https://raw.githubusercontent.com/apiwo/arctic-linux-pkgs/main/ALL/kernels
+mirror = https://raw.githubusercontent.com/apiwo/arctic-linux-pkgs/main/ALL/kernels
+mirror = https://pkg-arctic.apiwow.net/ALL/kernels
 enabled = yes
 priority = 15

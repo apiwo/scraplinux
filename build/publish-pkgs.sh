@@ -29,7 +29,7 @@ ARCH=x86_64
 # downloaded.
 MAXSIZE=104857600
 
-REPOS="main extra base kernels profile nonfree alt-nonfree multilib"
+REPOS="main extra base kernels profile nonfree alt-nonfree multilib fix"
 
 [ -d "$SITE/ALL" ] || { echo "publish-pkgs: no checkout at $SITE" >&2; exit 1; }
 
@@ -68,6 +68,12 @@ for r in $REPOS; do
 		cmp -s "$f" "$dst/$(basename "$f")" 2>/dev/null || cp -f "$f" "$dst/"
 		n=$((n+1))
 	done
+	# The fix repository carries one file that is not a package and not an
+	# index: without FIXES beside them, its .alpmz files are just two ordinary
+	# packages and "alpm system fix" has nothing to read.
+	if [ -f "$src/FIXES" ]; then
+		cmp -s "$src/FIXES" "$dst/FIXES" 2>/dev/null || cp -f "$src/FIXES" "$dst/"
+	fi
 	printf '   %-12s %s package(s)%s\n' "$r" "$n" \
 		"$( [ "$big" -gt 0 ] && printf ', %s skipped' "$big" )"
 done

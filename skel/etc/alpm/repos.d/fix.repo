@@ -1,0 +1,10 @@
+# Arctic Linux - fix repository
+# Corrections that no version bump would carry on its own: a wrong default, a
+# broken service file, a script that failed on some machines. Applied with
+# "alpm system fix" and listed one by one before anything is installed.
+name = fix
+url = https://raw.githubusercontent.com/apiwo/arctic-linux-pkgs/main/ALL/fix
+mirror = https://raw.githubusercontent.com/apiwo/arctic-linux-pkgs/main/ALL/fix
+mirror = https://pkg-arctic.apiwow.net/ALL/fix
+enabled = yes
+priority = 5

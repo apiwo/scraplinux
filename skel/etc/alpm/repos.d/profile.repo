@@ -2,6 +2,8 @@
 # Profile packages install a whole working setup and configure it, rather than
 # being a plain package. alpm warns before installing one.
 name = profile
-url = https://pkg-arctic.apiwow.net/ALL/profile
+url = https://raw.githubusercontent.com/apiwo/arctic-linux-pkgs/main/ALL/profile
+mirror = https://raw.githubusercontent.com/apiwo/arctic-linux-pkgs/main/ALL/profile
+mirror = https://pkg-arctic.apiwow.net/ALL/profile
 enabled = yes
 priority = 35

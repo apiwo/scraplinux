@@ -33,12 +33,22 @@ BUILD_ID=$(date '+%Y.%m.%d')
 # the ISO filename and volume id, /etc/arctic-release, the boot menu,
 # arcticfetch's "os" line - reads it from here rather than spelling out its
 # own variation of it.
-VERSION="Arctic Linux - Alpha v.1"
-VERSION_TAG="alpha-v1"
+#
+# The tag counts in three places, left to right, and never carries a dot into
+# the filename beyond the first:
+#
+#   a1     the main version - Alpha 1
+#   a1.1   still Alpha 1, but a build with substantial changes in it
+#   a1.11  the same build plus a small fix or a quality-of-life change
+#
+# So a1.11 follows a1.1, and a1.2 is the next substantial build after it - the
+# digits after the dot are read one at a time, not as a decimal number.
+VERSION_TAG="a1.1"
+VERSION="Arctic Linux - Alpha 1.1"
 LABEL="ARCTIC"
 
 case "$PROFILE" in
-minimal) ISONAME="Arctic-$VERSION_TAG-x86_64.iso"; LABEL="ARCTIC_MIN" ;;
+minimal) ISONAME="Arctic-linux-$VERSION_TAG.iso"; LABEL="ARCTIC_MIN" ;;
 *) echo "mkiso: unknown profile '$PROFILE' (only 'minimal' exists)" >&2; exit 1 ;;
 esac
 

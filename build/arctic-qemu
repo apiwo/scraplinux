@@ -35,8 +35,8 @@ done
 OVMF_VARS_SRC=$(printf '%s' "$OVMF_CODE" | sed 's/CODE/VARS/')
 
 # Newest Arctic-*.iso, whatever the release is called - the name carries the
-# version tag now (Arctic-alpha-v1-x86_64.iso), so a glob pinned to one past
-# name silently kept booting an older image after a rebuild.
+# version tag now (Arctic-linux-a1.1.iso), so a glob pinned to one past name
+# silently kept booting an older image after a rebuild.
 ISO=${ARCTIC_ISO:-$(ls -t "$B"/iso/Arctic-*.iso 2>/dev/null | head -1)}
 [ -n "$ISO" ] && [ -f "$ISO" ] || {
 	echo "arctic-qemu: no ISO found. Build one first:" >&2
