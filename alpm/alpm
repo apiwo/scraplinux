@@ -32,6 +32,12 @@ trap 'alpm_cleanup; exit 143' TERM
 ARCH=${ALPM_ARCH:-x86_64}
 NOMOD=0
 SOURCE=0
+# run_hooks reads this, and every command that reaches it has to have set it
+# first. "alpm commit" did not, so with set -u it died on "HOOK_KERNEL:
+# unbound variable" *after* activating the package - the work was done and the
+# command still reported failure. Declared once here so no path can miss it.
+HOOK_KERNEL=""
+REASON=explicit
 
 # ------------------------------------------------------------------------ usage
 
@@ -1311,7 +1317,14 @@ cmd_owns() {
 			hit=1
 		fi
 	done
-	[ "$hit" = "0" ] && { err "no package owns $path"; return 1; }
+	# Not a bare "[ ... ] && { ... }" as the last command: when the file *was*
+	# found the test is false, so the function returned 1 and `alpm owns`
+	# exited non-zero having just printed the right answer.
+	if [ "$hit" = "0" ]; then
+		err "no package owns $path"
+		return 1
+	fi
+	return 0
 }
 
 _dt_seen=""
