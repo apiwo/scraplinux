@@ -22,11 +22,38 @@ pick_iface() {
 
 start() {
 	ip link set lo up 2>/dev/null
+
+	# The network card's driver is loaded by the coldplug pass, which runs in
+	# the background - so at the moment this service starts, /sys/class/net
+	# can still hold nothing but lo. Deciding on the first look meant the live
+	# session sometimes came up with no networking at all and nothing to retry
+	# it, and the symptom was not "no network": it was every repository
+	# reported unreachable and an install that died at the first fetch, which
+	# reads as a broken mirror. Wait for an interface to turn up.
 	iface=$(pick_iface)
+	_n=0
+	while [ -z "$iface" ] && [ "$_n" -lt 15 ]; do
+		sleep 1
+		_n=$((_n + 1))
+		iface=$(pick_iface)
+	done
 	[ -n "$iface" ] || return 0
+
 	ip link set "$iface" up 2>/dev/null
 	udhcpc -b -i "$iface" -p "/run/udhcpc.$iface.pid" \
 		-s /usr/share/udhcpc/default.script >/dev/null 2>&1
+
+	# udhcpc -b returns as soon as it has forked, so without this the service
+	# reports success while the interface is still addressless and anything
+	# run immediately after boot - which on the live image means the
+	# installer - finds no network. Wait for the lease to actually land.
+	_n=0
+	while [ "$_n" -lt 12 ]; do
+		ip -4 addr show dev "$iface" 2>/dev/null | grep -q 'inet ' && return 0
+		sleep 1
+		_n=$((_n + 1))
+	done
+	return 0
 }
 
 stop() {

@@ -34,7 +34,15 @@ _rc_msg=""
 # being seconds with two decimals - "12.34" becomes 1234, and the arithmetic
 # stays integer, which is all POSIX sh has.
 _rc_cs() {
-	read -r _c_up _c_rest </proc/uptime 2>/dev/null || { printf '0'; return; }
+	# rc.boot times its first step - mounting the pseudo-filesystems - which
+	# means this runs before /proc exists. A failed input redirection is the
+	# shell's own error and it is written before "2>/dev/null" is in effect,
+	# so redirecting stderr never silenced it: every boot opened with
+	# "can't open /proc/uptime" and then an arithmetic error, because the
+	# empty result was subtracted from a moment later. Test first.
+	[ -r /proc/uptime ] || { printf '0'; return; }
+	read -r _c_up _c_rest </proc/uptime || { printf '0'; return; }
+	[ -n "${_c_up:-}" ] || { printf '0'; return; }
 	case "$_c_up" in
 	*.*) printf '%s%s' "${_c_up%.*}" "${_c_up#*.}" ;;
 	*)   printf '%s00' "$_c_up" ;;
@@ -71,7 +79,7 @@ _rc_pad() {
 }
 
 good() {
-	_rc_el=$(( $(_rc_cs) - _rc_step_start ))
+	_rc_el=$(( $(_rc_cs) - ${_rc_step_start:-0} ))
 	[ "$_rc_el" -lt 0 ] && _rc_el=0
 	[ "${QUIET:-0}" = "1" ] && return 0
 	printf '%s%s[%s  ok  %s]%s %st=%s%s\n' "$(_rc_pad)" "$_GREY" "$_MINT$_B" \
@@ -83,7 +91,7 @@ bad() {
 	if [ "${QUIET:-0}" = "1" ]; then
 		printf '%s  ::%s %s' "$_RED$_B" "$_R" "$_rc_msg"
 	fi
-	_rc_el=$(( $(_rc_cs) - _rc_step_start ))
+	_rc_el=$(( $(_rc_cs) - ${_rc_step_start:-0} ))
 	[ "$_rc_el" -lt 0 ] && _rc_el=0
 	printf '%s%s[%sfailed%s]%s %st=%s%s\n' "$(_rc_pad)" "$_GREY" "$_RED$_B" \
 		"$_R$_GREY" "$_R" "$_GREY" "$(_rc_secs "$_rc_el")" "$_R"
@@ -123,6 +131,6 @@ rc_done() {
 			"$_AMB" "$(wc -l </run/arctic/boot.errors | tr -d ' ')" "$_R"
 	else
 		printf '\n  %sInit done%s %s%s%s\n\n' "$_MINT$_B" "$_R" "$_GREY" \
-			"$(_rc_secs $(( $(_rc_cs) - _rc_boot_start )))" "$_R"
+			"$(_rc_secs $(( $(_rc_cs) - ${_rc_boot_start:-0} )))" "$_R"
 	fi
 }

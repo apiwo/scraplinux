@@ -63,12 +63,16 @@ if [ -x /sbin/udevd ] && [ -f /etc/arctic/services/udev ]; then
 	udevadm settle --timeout=30 2>/dev/null
 else
 	begin "Starting mdev"
-	# Only if the kernel actually exposes it. Writing the hotplug helper
-	# unconditionally printed "can't create /proc/sys/kernel/hotplug:
-	# nonexistent directory" across the boot on any kernel without
-	# CONFIG_UEVENT_HELPER - the coldplug pass below is what populates /dev
-	# either way, so this is an optimisation, not a requirement.
-	[ -d /proc/sys/kernel ] && printf '/sbin/mdev\n' >/proc/sys/kernel/hotplug 2>/dev/null
+	# Only if the kernel actually exposes it. A kernel built without
+	# CONFIG_UEVENT_HELPER still has /proc/sys/kernel - it is the hotplug
+	# entry inside it that is absent, and procfs will not let one be created -
+	# so testing the directory guarded nothing and the boot still printed
+	# "can't create /proc/sys/kernel/hotplug". Redirecting stderr does not
+	# help either: a failed output redirection is reported before 2>/dev/null
+	# takes effect. Test the file itself. The coldplug pass below is what
+	# populates /dev either way, so this is an optimisation, not a
+	# requirement.
+	[ -w /proc/sys/kernel/hotplug ] && printf '/sbin/mdev\n' >/proc/sys/kernel/hotplug
 	mdev -s
 	[ -x /sbin/mdev ] && mdev -df & 2>/dev/null
 fi
