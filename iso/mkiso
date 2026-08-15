@@ -415,6 +415,86 @@ done
 WELCOME
 chmod 755 "$S/usr/bin/arctic-welcome"
 
+# ------------------------------------------------- shared-library closure
+# Pull in whatever the installed binaries actually link against.
+#
+# A package's recorded dependencies are what the manifest says, and that is
+# not always what the compiler produced: curl's entry lists libressl, zlib,
+# nghttp2, brotli and zstd, while the binary that got built also needs
+# libidn2 and libpsl. Trusting the metadata put curl on the image twice with
+# a different missing library each time - "libnghttp2.so.14: cannot open
+# shared object file", then "libidn2.so.0" - and since curl is what fetches
+# every https repository, the whole network side of the image was dead both
+# times with a message that pointed nowhere near the cause.
+#
+# So this asks the ELF headers instead: collect every DT_NEEDED under the
+# image, drop the ones already present, and find the package that ships each
+# one that is missing. Repeats until nothing is missing, because a library
+# pulled in this way brings its own.
+close_libs() {
+	# One pass over the repository builds a soname -> package map; the rounds
+	# below look libraries up in it. Scanning every .alpmz once per missing
+	# library instead meant decompressing 200-odd archives for each one,
+	# which took longer than the rest of the image build put together.
+	if [ ! -s "$WORK/sonames" ]; then
+		printf '   indexing what each package provides\n'
+		for pkg in "$B"/repo/*/x86_64/*.alpmz; do
+			[ -f "$pkg" ] || continue
+			_cl_n=$(basename "$pkg" | sed 's/-[^-]*-[0-9]*\.[^.]*\.alpmz$//')
+			tar -xOf "$pkg" .FILES 2>/dev/null | \
+				sed -n 's|.*/\([^/]*\.so[^/]*\)$|\1|p' | \
+				while read -r so; do printf '%s\t%s\t%s\n' "$so" "$_cl_n" "$pkg"; done
+		done >"$WORK/sonames"
+	fi
+
+	_cl_round=0
+	while [ "$_cl_round" -lt 8 ]; do
+		_cl_round=$((_cl_round+1))
+		find "$S/usr/bin" "$S/usr/lib" "$S/usr/libexec" -type f 2>/dev/null | \
+		while read -r f; do
+			case "$f" in *.so|*.so.*|*/bin/*|*/libexec/*) ;; *) continue ;; esac
+			readelf -d "$f" 2>/dev/null | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p'
+		done | sort -u >"$WORK/needed"
+		find "$S/usr/lib" -name '*.so*' 2>/dev/null | \
+			while read -r l; do basename "$l"; done | sort -u >"$WORK/have"
+		comm -23 "$WORK/needed" "$WORK/have" >"$WORK/missing"
+		if [ ! -s "$WORK/missing" ]; then
+			printf '   every linked library is present\n'
+			return 0
+		fi
+
+		_cl_added=""
+		while read -r lib; do
+			[ -n "$lib" ] || continue
+			_cl_hit=$(awk -F'\t' -v l="$lib" '$1==l{print $2"\t"$3; exit}' "$WORK/sonames")
+			[ -n "$_cl_hit" ] || continue
+			_cl_n=$(printf '%s' "$_cl_hit" | cut -f1)
+			pkg=$(printf '%s' "$_cl_hit" | cut -f2)
+			case " $_cl_added " in *" $_cl_n "*) continue ;; esac
+			_cl_added="$_cl_added $_cl_n"
+			printf '   %s -> %s\n' "$lib" "$_cl_n"
+			tar -xf "$pkg" -C "$S" --keep-directory-symlink \
+				--exclude=.PKGINFO --exclude=.FILES --exclude=.INSTALL 2>/dev/null || :
+			d="$S/var/lib/alpm/local/$_cl_n"
+			mkdir -p "$d"
+			tar -xOf "$pkg" .PKGINFO >"$d/PKGINFO" 2>/dev/null || :
+			tar -xOf "$pkg" .FILES   >"$d/FILES"   2>/dev/null || :
+			sed -n 's/^depend = //p' "$d/PKGINFO" >"$d/DEPS" 2>/dev/null || : >"$d/DEPS"
+			printf 'dep\n' >"$d/REASON"
+			printf 'activated = yes\n' >"$d/STATE"
+		done <"$WORK/missing"
+
+		if [ -z "$_cl_added" ]; then
+			printf '   no package provides these, and the image needs them:\n'
+			sed 's/^/     /' "$WORK/missing"
+			return 1
+		fi
+	done
+	return 0
+}
+step "resolving shared libraries"
+close_libs || printf '   the image has unresolved libraries - see above\n' >&2
+
 ok "image configured"
 
 # ------------------------------------------------------- 3. depmod the modules

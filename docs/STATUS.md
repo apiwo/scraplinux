@@ -126,6 +126,63 @@ paths point into the sysroot rather than at `/usr` on the build host.
 
 ## Known-fixed bugs worth remembering
 
+- **The live image had no network at all.** Only `lo` came up, and every
+  network repository was "unreachable". Nothing loaded a driver for hardware
+  that was already present at boot: mdev only fires for devices that appear
+  afterwards, and udev - which coldplugs on other systems - is not what
+  Arctic runs, so e1000, virtio_net and r8169 sat unused in
+  `/usr/lib/modules`. rc.boot walks every modalias under `/sys` now.
+  Verified in QEMU: `e1000: eth0 NIC Link is Up`, DHCP lease, default route
+  and a nameserver, where before there was nothing but `lo`.
+- **curl on the live image could not start.** First
+  `libnghttp2.so.14: cannot open shared object file`, then after fixing the
+  recorded dependencies, `libidn2.so.0`. A package's recorded dependency
+  list is what the manifest says, not what the compiler actually linked.
+  mkiso resolves the recorded dependencies *and* then closes over real
+  linkage - every DT_NEEDED under the image, against a soname-to-package
+  index built from the repository - so a library the metadata never
+  mentioned still lands on the image. curl is what fetches every https
+  repository, so both times the whole network side of the image was dead.
+- **The initramfs was 4 KB and could not boot anything.**
+  `find -print0 | cpio --null` - `--null` is GNU cpio only, the cpio an
+  Arctic system has rejects it, and with its error discarded xz happily
+  compressed an empty stream. Newline-separated names now, and it refuses
+  to leave an implausibly small image behind rather than discovering it at
+  the next boot.
+- **Every transaction ended by printing an error after its success line.**
+  `head -n -20`, used to prune old transactions, is a GNU extension; toybox
+  answers `head: -n < 0`. Counted first, then asked for a positive number.
+- **An upgrade could strand itself halfway.** Fetch and install were
+  interleaved, so a transaction upgrading a library the downloader links
+  against - libressl, say - left the curl on disk missing the soname it was
+  built for, and every package still to come failed to download. Everything
+  is fetched first now, then installed.
+- **`alpm ins -s` built the package and threw it away.** It looked for the
+  result under `$ALPM_CACHE/build/out` while alpm-build writes to
+  `$ALPM_BUILDROOT/out` - the same path only when `ALPM_BUILDROOT` is unset.
+  Any scratch root or batch build ended in "build produced no package"
+  immediately after a successful compile.
+- **`fix_usrmerge` overwrote its caller's loop variable.** It used a bare
+  `p` for the path it was repairing, and it is called from `install_one`,
+  which runs inside a `for p in ...` loop over package names. A single
+  install only showed it in the closing line ("/usr/sbin built from source
+  and installed"); installing several from source in one command operated on
+  the wrong name from the second onwards.
+- **`alpm owns` exited 1 after printing the right answer**, because the
+  function ended on a test that is false when the file *was* found.
+- **`alpm commit` activated the package and then reported failure**, dying
+  under `set -u` on `HOOK_KERNEL: unbound variable` - `run_hooks` reads it
+  and only some commands set it first.
+- **A dependency-free package was permanently unsatisfied.** The index's `-`
+  placeholder for "no dependencies" was written through to DEPS as though it
+  were a package name, so `doctor` reported an unsatisfied dependency named
+  `-` on a healthy system.
+- **The resolver printed a shell error over its own progress bar.**
+  `can't open .../DEPS: no such file` - a failed input redirection is the
+  shell's own error, which `2>/dev/null` on the command does not silence.
+  The entries with no DEPS were the live image's, which wrote PKGINFO and
+  FILES but never DEPS.
+
 - **A directory under `local/` counted as an installed package.**
   `is_installed()` tested `[ -d "$ALPM_DB/local/$1" ]`, and `install_one`
   wrote PKGINFO *first*, so an install that died or was interrupted anywhere
