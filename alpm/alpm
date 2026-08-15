@@ -615,13 +615,14 @@ cmd_ins() {
 		return 0
 	fi
 
-	n=0; total=0
+	n=0; total=0; isize=0
 	for p in $todo; do
 		e=$(idx_lookup "$p") || continue
 		total=$(( total + $(printf '%s' "$e" | cut -f6) ))
+		isize=$(( isize + $(printf '%s' "$e" | cut -f7) ))
 		n=$((n+1))
 	done
-	ui_summary "$todo" "$met" "$total" "$n"
+	ui_summary "$todo" "$met" "$total" "$n" "$isize"
 	[ "$NOMOD" = "1" ] && printf '  %sMode:%s           staged (-nomod, not put into place)\n' "$A_AMB" "$C_R"
 
 	# Profile packages are not ordinary packages: they pull in a whole set and
@@ -673,6 +674,7 @@ cmd_ins() {
 	done
 
 	ui_phase_install
+	insn=0
 	for p in $todo; do
 		case " $requested " in
 		*" $p "*) role=package; REASON=explicit ;;
@@ -680,8 +682,10 @@ cmd_ins() {
 		esac
 		eval "_f=\$_file_$(printf '%s' "$p" | tr -c 'a-zA-Z0-9' '_')"
 		e=$(idx_lookup "$p") || e=""
+		insn=$((insn+1))
 		ui_install "$role" "$p" \
-			"$(printf '%s' "$e" | cut -f3)-$(printf '%s' "$e" | cut -f4)"
+			"$(printf '%s' "$e" | cut -f3)-$(printf '%s' "$e" | cut -f4)" \
+			"$insn" "$n"
 		install_one "$_f"
 	done
 

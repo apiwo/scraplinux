@@ -35,12 +35,12 @@ ALPM_FORMAT="2"
 # same resolver, same fetch, same progress driven by real byte counts - only
 # the wording and layout change.
 #
-#   arctic  the default: ":: " headings, per-dependency lines
-#   apt     Debian's shape: "Reading package lists...", a "The following NEW
-#           packages will be installed" block, "Get:1 <url> ... [size]",
-#           "Setting up <pkg> (<version>) ..."
-#   aeryn   Aeryn OS's shape: a boxed, columnar transaction summary and
-#           status glyphs rather than prose
+#   arctic  the default - apt's wording inside aeryn's frame
+#   apt     Debian's shape
+#   aeryn   Aeryn OS's shape: a boxed summary, fetch and install phases
+#   pacman  Arch's shape
+#   void    XBPS's shape: a columnar table and "[*]" phase markers
+#   solus   eopkg's shape
 : "${ALPM_STYLE:=arctic}"
 
 # ---------------------------------------------------------------- presentation
@@ -65,23 +65,27 @@ fi
 # from every helper that had not been converted.
 msg() {
 	case "$ALPM_STYLE" in
-	apt)   printf '%s\n' "$*" ;;
-	aeryn) printf '  %s%s%s\n' "$A_TEAL$C_B" "$*" "$C_R" ;;
-	*)     printf '%s::%s %s%s\n' "$A_TEAL$C_B" "$C_R$C_B" "$*" "$C_R" ;;
+	apt|solus) printf '%s\n' "$*" ;;
+	void)      printf '%s[*]%s %s\n' "$A_TEAL$C_B" "$C_R" "$*" ;;
+	aeryn)     printf '  %s%s%s\n' "$A_TEAL$C_B" "$*" "$C_R" ;;
+	*)         printf '%s::%s %s%s\n' "$A_TEAL$C_B" "$C_R$C_B" "$*" "$C_R" ;;
 	esac
 }
 msg2() {
 	case "$ALPM_STYLE" in
-	apt)   printf '%s\n' "$*" ;;
-	aeryn) printf '  %s·%s %s%s%s\n' "$A_GREY" "$C_R" "$A_GREY" "$*" "$C_R" ;;
-	*)     printf '  %s->%s %s\n' "$A_ICE$C_B" "$C_R" "$*" ;;
+	apt|solus) printf '%s\n' "$*" ;;
+	pacman)    printf '%s...\n' "$*" ;;
+	void)      printf '%s[*]%s %s\n' "$A_TEAL$C_B" "$C_R" "$*" ;;
+	aeryn)     printf '  %s·%s %s%s%s\n' "$A_GREY" "$C_R" "$A_GREY" "$*" "$C_R" ;;
+	*)         printf '  %s->%s %s\n' "$A_ICE$C_B" "$C_R" "$*" ;;
 	esac
 }
 info() {
 	case "$ALPM_STYLE" in
-	apt)   printf '%s\n' "$*" ;;
-	aeryn) printf '  %s%s%s\n' "$A_GREY" "$*" "$C_R" ;;
-	*)     printf '  %s*%s  %s\n' "$A_IND" "$C_R" "$*" ;;
+	apt|solus|pacman) printf '%s\n' "$*" ;;
+	void)             printf '%s[*]%s %s\n' "$A_TEAL$C_B" "$C_R" "$*" ;;
+	aeryn)            printf '  %s%s%s\n' "$A_GREY" "$*" "$C_R" ;;
+	*)                printf '  %s*%s  %s\n' "$A_IND" "$C_R" "$*" ;;
 	esac
 }
 warn()  { printf '%s::%s %s%s\n' "$A_AMB$C_B" "$C_B" "$*" "$C_R" >&2; }
@@ -89,9 +93,10 @@ err()   { printf '%sE:%s %s\n' "$A_RED$C_B" "$C_R" "$*" >&2; }
 die()   { err "$*"; exit 1; }
 ok() {
 	case "$ALPM_STYLE" in
-	apt)   printf '%s\n' "$*" ;;
-	aeryn) printf '  %s✓%s %s\n' "$A_MINT" "$C_R" "$*" ;;
-	*)     printf '  %sok%s  %s\n' "$A_MINT$C_B" "$C_R" "$*" ;;
+	apt|solus|pacman) printf '%s\n' "$*" ;;
+	void)             printf '%s[*]%s %s\n' "$A_MINT$C_B" "$C_R" "$*" ;;
+	aeryn)            printf '  %s✓%s %s\n' "$A_MINT" "$C_R" "$*" ;;
+	*)                printf '  %s✓%s  %s\n' "$A_MINT$C_B" "$C_R" "$*" ;;
 	esac
 }
 
@@ -316,22 +321,26 @@ dl_bar() {
 
 ui_reading() {
 	case "$ALPM_STYLE" in
-	apt)   printf 'Reading package lists... Done\n'
-	       printf 'Building dependency tree... ' ;;
-	aeryn) printf '\n  %s%s%s\n' "$A_TEAL$C_B" "Resolving transaction" "$C_R" ;;
-	*)     msg "Reading package lists" ;;
+	apt)    printf 'Reading package lists... Done\n'
+	        printf 'Building dependency tree... ' ;;
+	pacman) msg "Synchronising package databases" ;;
+	void)   printf '%s[*]%s Collecting packages\n' "$A_TEAL$C_B" "$C_R" ;;
+	solus)  printf 'Reading repository index\n' ;;
+	aeryn)  printf '\n  %s%s%s\n' "$A_TEAL$C_B" "Resolving transaction" "$C_R" ;;
+	*)      msg "Reading package lists" ;;
 	esac
 }
 
 ui_reading_done() {
 	case "$ALPM_STYLE" in
-	apt)   printf 'Done\n' ;;
+	apt) printf 'Done\n' ;;
 	esac
 }
 
-# $1 packages to install  $2 already satisfied  $3 download bytes  $4 count
+# The transaction summary. $1 packages to install, $2 already satisfied,
+# $3 download bytes, $4 count, $5 installed bytes.
 ui_summary() {
-	_ui_todo=$1 _ui_met=$2 _ui_bytes=$3 _ui_n=$4
+	_ui_todo=$1 _ui_met=$2 _ui_bytes=$3 _ui_n=$4 _ui_isize=${5:-0}
 	_ui_nmet=0
 	for _u in $_ui_met; do _ui_nmet=$((_ui_nmet+1)); done
 	case "$ALPM_STYLE" in
@@ -342,13 +351,48 @@ ui_summary() {
 		printf '%s upgraded, %s newly installed, 0 to remove and 0 not upgraded.\n' \
 			0 "$_ui_n"
 		printf 'Need to get %s of archives.\n' "$(human "$_ui_bytes")"
+		printf 'After this operation, %s of additional disk space will be used.\n' \
+			"$(human "$_ui_isize")"
 		[ "$_ui_nmet" -gt 0 ] && \
 			printf '%s package(s) are already the newest version.\n' "$_ui_nmet"
 		;;
-	aeryn)
-		# The frame is drawn to a fixed interior width rather than typed out
-		# as a literal run of box characters, so the summary line at the
-		# bottom lines up with the package rows above it whatever it says.
+	pacman)
+		printf '\nPackages (%s)' "$_ui_n"
+		for _u in $_ui_todo; do
+			_ue=$(idx_lookup "$_u") || continue
+			printf ' %s-%s-%s' "$_u" \
+				"$(printf '%s' "$_ue" | cut -f3)" "$(printf '%s' "$_ue" | cut -f4)"
+		done
+		printf '\n\n'
+		printf 'Total Download Size:   %s\n' "$(human "$_ui_bytes")"
+		printf 'Total Installed Size:  %s\n' "$(human "$_ui_isize")"
+		[ "$_ui_nmet" -gt 0 ] && \
+			printf 'Already satisfied:     %s package(s)\n' "$_ui_nmet"
+		printf '\n'
+		;;
+	void)
+		printf '\n%-24s %-9s %-16s %s\n' "Name" "Action" "Version" "Download size"
+		for _u in $_ui_todo; do
+			_ue=$(idx_lookup "$_u") || continue
+			printf '%-24s %-9s %-16s %s\n' "$_u" "install" \
+				"$(printf '%s' "$_ue" | cut -f3)_$(printf '%s' "$_ue" | cut -f4)" \
+				"$(human "$(printf '%s' "$_ue" | cut -f6)")"
+		done
+		for _u in $_ui_met; do
+			printf '%-24s %-9s %-16s %s\n' "$_u" "hold" "$(installed_version "$_u")" "-"
+		done
+		printf '\nSize to download:       %s\n' "$(human "$_ui_bytes")"
+		printf 'Size required on disk:  %s\n\n' "$(human "$_ui_isize")"
+		;;
+	solus)
+		printf '\nFollowing packages will be installed:\n'
+		for _u in $_ui_todo; do printf ' %s' "$_u"; done
+		printf '\n\nTotal size of package(s): %s\n' "$(human "$_ui_bytes")"
+		printf 'Total size on disk:       %s\n\n' "$(human "$_ui_isize")"
+		;;
+	aeryn|arctic|*)
+		# arctic is apt's wording inside aeryn's frame: the box says what is
+		# about to happen at a glance, the lines below it read as prose.
 		_ui_w=57
 		_ui_bar=""; _ui_i=0
 		while [ "$_ui_i" -lt "$_ui_w" ]; do _ui_bar="$_ui_bar─"; _ui_i=$((_ui_i+1)); done
@@ -375,36 +419,38 @@ ui_summary() {
 		while [ "$_ui_i" -lt "$_ui_w" ]; do _ui_sum="$_ui_sum "; _ui_i=$((_ui_i+1)); done
 		printf '  %s│%s%s%s│%s\n' "$A_TEAL" "$C_R" "$_ui_sum" "$A_TEAL" "$C_R"
 		printf '  %s└%s┘%s\n' "$A_TEAL" "$_ui_bar" "$C_R"
-		;;
-	*)
-		printf '\n'
-		printf '  %sPackages (%s)%s\n  ' "$C_B" "$_ui_n" "$C_R"
-		for _u in $_ui_todo; do
-			_ue=$(idx_lookup "$_u") || continue
-			printf '%s-%s ' "$_u" "$(printf '%s' "$_ue" | cut -f3)"
-		done
-		printf '\n'
-		[ "$_ui_nmet" -gt 0 ] && \
-			printf '\n  %s%s dependency(s) already met and left alone%s\n' \
-				"$A_GREY" "$_ui_nmet" "$C_R"
-		printf '\n  %sDownload size:%s  %s\n' "$A_GREY" "$C_R" "$(human "$_ui_bytes")"
+		if [ "$ALPM_STYLE" != aeryn ]; then
+			printf '\n  %safter this, %s of disk space will be used%s\n' \
+				"$A_GREY" "$(human "$_ui_isize")" "$C_R"
+		fi
 		;;
 	esac
 }
 
 ui_confirm_text() {
 	case "$ALPM_STYLE" in
-	apt)   printf 'Do you want to continue?' ;;
-	aeryn) printf 'Apply this transaction?' ;;
-	*)     printf 'Proceed with installation?' ;;
+	apt)    printf 'Do you want to continue?' ;;
+	pacman) printf 'Proceed with installation?' ;;
+	void)   printf 'Do you want to continue?' ;;
+	solus)  printf 'Would you like to continue?' ;;
+	aeryn)  printf 'Apply this transaction?' ;;
+	*)      printf 'Proceed with installation?' ;;
 	esac
 }
 
 # $1 role (package|dependency)  $2 name  $3 url  $4 size  $5 index
 ui_fetch() {
 	case "$ALPM_STYLE" in
-	apt)   printf 'Get:%s %s [%s]\n' "$5" "$3" "$(human "$4")" ;;
-	aeryn) printf '  %s%s%s %-28s %sfetching%s\n' "$A_ICE" "◈" "$C_R" "$2" "$A_GREY" "$C_R" ;;
+	apt|arctic)
+		printf 'Get:%s %s [%s]\n' "$5" "$3" "$(human "$4")" ;;
+	pacman)
+		printf ' %s...\n' "$2" ;;
+	void)
+		printf '%s[*]%s Downloading %s %s\n' "$A_TEAL$C_B" "$C_R" "$2" "$(human "$4")" ;;
+	solus)
+		printf 'Downloading %s\n' "$2" ;;
+	aeryn)
+		printf '  %s◈%s %-28s %sfetching%s\n' "$A_ICE" "$C_R" "$2" "$A_GREY" "$C_R" ;;
 	*)
 		if [ "$1" = dependency ]; then printf '  Fetching dependency %s\n' "$3"
 		else printf "  Fetching package '%s'\n" "$2"; fi ;;
@@ -413,19 +459,35 @@ ui_fetch() {
 
 ui_cached() {
 	case "$ALPM_STYLE" in
-	apt)   printf 'Get:%s %s [cached]\n' "${3:-1}" "$2" ;;
-	aeryn) printf '  %s◈%s %-28s %scached%s\n' "$A_GREY" "$C_R" "$2" "$A_GREY" "$C_R" ;;
+	apt|arctic) printf 'Get:%s %s [cached]\n' "${3:-1}" "$2" ;;
+	pacman)     printf ' %s is up to date\n' "$2" ;;
+	void)       printf '%s[*]%s %s (cached)\n' "$A_TEAL$C_B" "$C_R" "$2" ;;
+	solus)      printf '%s [cached]\n' "$2" ;;
+	aeryn)      printf '  %s◈%s %-28s %scached%s\n' "$A_GREY" "$C_R" "$2" "$A_GREY" "$C_R" ;;
 	*)
 		if [ "$1" = dependency ]; then printf "  Dependency '%s' is already in the cache\n" "$2"
 		else printf "  Package '%s' is already in the cache\n" "$2"; fi ;;
 	esac
 }
 
-# $1 role  $2 name  $3 version-release
+ui_phase_install() {
+	case "$ALPM_STYLE" in
+	apt)    : ;;
+	pacman) printf '\n'; msg "Processing package changes" ;;
+	void)   printf '\n%s[*]%s Unpacking packages\n' "$A_TEAL$C_B" "$C_R" ;;
+	solus)  printf '\n' ;;
+	*)      printf '\n' ;;
+	esac
+}
+
+# $1 role  $2 name  $3 version-release  $4 index  $5 total
 ui_install() {
 	case "$ALPM_STYLE" in
-	apt)   printf 'Setting up %s (%s) ...\n' "$2" "$3" ;;
-	aeryn) printf '  %s✓%s %-28s %s%s%s\n' "$A_MINT" "$C_R" "$2" "$A_GREY" "$3" "$C_R" ;;
+	apt|arctic) printf 'Setting up %s (%s)\n' "$2" "$3" ;;
+	pacman)     printf '(%s/%s) installing %s\n' "${4:-1}" "${5:-1}" "$2" ;;
+	void)       printf '%s: unpacking ...\n' "$2-$3" ;;
+	solus)      printf 'Installing %s, version %s\n' "$2" "$3" ;;
+	aeryn)      printf '  %s✓%s %-28s %s%s%s\n' "$A_MINT" "$C_R" "$2" "$A_GREY" "$3" "$C_R" ;;
 	*)
 		if [ "$1" = dependency ]; then printf "  Installing dependency '%s'\n" "$2"
 		else printf "  Installing package '%s'\n" "$2"; fi ;;
@@ -434,17 +496,11 @@ ui_install() {
 
 ui_met() {
 	case "$ALPM_STYLE" in
-	apt)   printf '%s is already the newest version.\n' "$1" ;;
-	aeryn) : ;;
-	*)     printf "  Dependency met '%s', skipping...\n" "$1" ;;
-	esac
-}
-
-ui_phase_install() {
-	case "$ALPM_STYLE" in
-	apt)   : ;;
-	aeryn) printf '\n' ;;
-	*)     printf '\n' ;;
+	apt)        printf '%s is already the newest version.\n' "$1" ;;
+	pacman)     printf ' %s is up to date -- skipping\n' "$1" ;;
+	void|solus) : ;;
+	aeryn)      : ;;
+	*)          printf "  Dependency met '%s', skipping...\n" "$1" ;;
 	esac
 }
 
@@ -454,6 +510,14 @@ ui_done() {
 	apt)
 		printf 'Processing triggers ...\n'
 		printf "Done. Undo with 'alpm rollback %s'.\n" "$3" ;;
+	pacman)
+		printf '\n'
+		msg "Done. Undo with 'alpm rollback $3'" ;;
+	void)
+		printf '\n%s[*]%s Done - undo with: alpm rollback %s\n' \
+			"$A_TEAL$C_B" "$C_R" "$3" ;;
+	solus)
+		printf '\nInstall completed. Undo with: alpm rollback %s\n' "$3" ;;
 	aeryn)
 		printf '\n  %s%s applied%s  %s\n' "$A_MINT$C_B" "Transaction" "$C_R" "$3"
 		printf '  %sundo with: alpm rollback %s%s\n' "$A_GREY" "$3" "$C_R" ;;
@@ -467,9 +531,12 @@ ui_done() {
 }
 
 case "$ALPM_STYLE" in
-apt)   CALC_LABEL="Building dependency tree..." ;;
-aeryn) CALC_LABEL="Resolving..." ;;
-*)     CALC_LABEL="Calculating dependencies..." ;;
+apt)    CALC_LABEL="Building dependency tree..." ;;
+pacman) CALC_LABEL="resolving dependencies..." ;;
+void)   CALC_LABEL="[*] Resolving dependencies..." ;;
+solus)  CALC_LABEL="Resolving dependencies..." ;;
+aeryn)  CALC_LABEL="Resolving..." ;;
+*)      CALC_LABEL="Calculating dependencies..." ;;
 esac
 
 calc_begin() { _calc_last=-1; [ -t 1 ] && printf '  %s' "$CALC_LABEL"; return 0; }
@@ -784,9 +851,10 @@ human() {
 confirm() {
 	[ "${ALPM_YES:-0}" = "1" ] && return 0
 	case "$ALPM_STYLE" in
-	apt)   printf '%s [Y/n] ' "$1" ;;
-	aeryn) printf '\n  %s?%s %s %s[Y/n]%s ' "$A_ICE$C_B" "$C_R" "$1" "$A_GREY" "$C_R" ;;
-	*)     printf '%s::%s %s %s[Y/n]%s ' "$A_TEAL$C_B" "$C_R$C_B" "$1$C_R" "$A_GREY" "$C_R" ;;
+	apt|void) printf '%s [Y/n] ' "$1" ;;
+	solus)    printf '%s [yes/no] ' "$1" ;;
+	aeryn)    printf '\n  %s?%s %s %s[Y/n]%s ' "$A_ICE$C_B" "$C_R" "$1" "$A_GREY" "$C_R" ;;
+	*)        printf '%s::%s %s %s[Y/n]%s ' "$A_TEAL$C_B" "$C_R$C_B" "$1$C_R" "$A_GREY" "$C_R" ;;
 	esac
 	read -r a || { printf '\n'; return 1; }
 	# Without this the answer and whatever is printed next share a line -

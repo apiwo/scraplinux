@@ -1100,6 +1100,27 @@ EOF
 		[ -f "$f" ] && sed -i 's/^enabled = no$/enabled = yes/' "$f"
 	done
 
+	# The medium's packages are as old as the medium. Now that the network
+	# repositories are the ones configured, bring the new system up to date
+	# before it is ever booted - otherwise the first thing a fresh install
+	# does is run an upgrade of everything the ISO happened to be built with,
+	# including alpm itself.
+	#
+	# Never fatal: an install that is complete and slightly behind is a
+	# working system, and this runs at a point where there may well be no
+	# network at all (A_NET=offline, or a wifi link that only existed in the
+	# live session).
+	step "Updating the new system" "fetching what has changed since the medium was built"
+	if target_alpm fetch all >>"$LOGF" 2>&1; then
+		if target_alpm update >>"$LOGF" 2>&1; then
+			logit "system updated from the network"
+		else
+			warn_soft "the post-install update did not finish - run 'alpm update' after booting"
+		fi
+	else
+		logit "no network at install time; skipping the post-install update"
+	fi
+
 	step "Finishing up" "cleaning the cache"
 	rm -rf "$TARGET/var/cache/alpm/build"/* 2>/dev/null || :
 	# The first boot of a finished install shows the Arctic greeting.
