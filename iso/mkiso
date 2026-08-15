@@ -302,6 +302,11 @@ for p in $LIVE_SET; do
 	mkdir -p "$d"
 	tar -xOf "$pkg" .PKGINFO >"$d/PKGINFO" 2>/dev/null || :
 	tar -xOf "$pkg" .FILES   >"$d/FILES"   2>/dev/null || :
+	# DEPS as well, from the package's own depend lines. Without it these
+	# entries look installed but have no recorded dependencies, and the
+	# resolver printed "can't open /var/lib/alpm/local/<pkg>/DEPS: no such
+	# file" straight over its own progress bar for every one of them.
+	sed -n 's/^depend = //p' "$d/PKGINFO" >"$d/DEPS" 2>/dev/null || : >"$d/DEPS"
 	printf 'explicit\n' >"$d/REASON"
 	printf 'activated = yes\n' >"$d/STATE"
 	ok "$(basename "$pkg")"

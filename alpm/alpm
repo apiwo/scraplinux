@@ -148,7 +148,14 @@ resolve_targets() {
 				# Already on the system and no longer in any index (a repo
 				# it came from is gone, or it was built from source). Its own
 				# recorded dependencies are still the truth for it.
-				_rt_deps=$(tr '\n' ' ' <"$ALPM_DB/local/$_rt_p/DEPS" 2>/dev/null)
+				# Braces around the redirect: a failed input redirection is
+				# reported by the shell itself, so "2>/dev/null" on tr alone
+				# still printed "can't open .../DEPS: no such file" across the
+				# resolver's progress bar. An entry with no DEPS at all is a
+				# package installed by something that did not write one (the
+				# live image used to do exactly that) - no dependencies
+				# recorded is not an error.
+				_rt_deps=$({ tr '\n' ' ' <"$ALPM_DB/local/$_rt_p/DEPS"; } 2>/dev/null || :)
 			else
 				printf '%s\n' "$_rt_p" >>"$RES_DIR/missing"
 			fi
@@ -261,8 +268,19 @@ tx_end() {
 	printf 'finished = %s\nstatus = %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "${1:-ok}" \
 		>>"$TX_DIR/TXINFO"
 	# Keep the last 20 transactions; older ones are pruned.
-	ls -1d "$ALPM_DB"/snapshots/*/ 2>/dev/null | sort | head -n -20 | \
-		while read -r old; do rm -rf "$old"; done
+	#
+	# "head -n -20" is a GNU extension. toybox - which is what an Arctic
+	# system actually runs - rejects it outright with "head: -n < 0", and
+	# since this runs at the end of every single transaction, every install
+	# ended with that error printed after its own success line. Count first,
+	# then ask for a positive number of lines.
+	_tx_keep=20
+	_tx_n=$(ls -1d "$ALPM_DB"/snapshots/*/ 2>/dev/null | wc -l | tr -d ' ')
+	if [ "${_tx_n:-0}" -gt "$_tx_keep" ]; then
+		ls -1d "$ALPM_DB"/snapshots/*/ 2>/dev/null | sort | \
+			head -n "$(( _tx_n - _tx_keep ))" | \
+			while read -r old; do rm -rf "$old"; done
+	fi
 }
 
 # ----------------------------------------------------------------------- hooks
@@ -626,19 +644,38 @@ cmd_ins() {
 
 	for p in $met; do ui_met "$p"; done
 
+	# Everything is downloaded before anything is installed.
+	#
+	# Interleaving the two means a transaction that upgrades a library the
+	# downloader itself links against strands halfway: upgrade libressl and
+	# the curl still on disk is the old one, now missing the soname it was
+	# built against, so every remaining package in the same transaction
+	# fails to download and the system is left with some of an upgrade
+	# applied. Fetching first also means a mirror going away mid-transaction
+	# costs nothing - nothing has been touched yet.
 	getn=0
 	for p in $todo; do
 		case " $requested " in
-		*" $p "*) role=package; REASON=explicit ;;
-		*)        role=dependency; REASON=dep; ndeps=$((ndeps+1)) ;;
+		*" $p "*) role=package ;;
+		*)        role=dependency; ndeps=$((ndeps+1)) ;;
 		esac
 		getn=$((getn+1))
 		FETCH_INDEX=$getn
 		fetch_pkg "$p" "$role"
+		eval "_file_$(printf '%s' "$p" | tr -c 'a-zA-Z0-9' '_')=\$FETCH_FILE"
+	done
+
+	ui_phase_install
+	for p in $todo; do
+		case " $requested " in
+		*" $p "*) role=package; REASON=explicit ;;
+		*)        role=dependency; REASON=dep ;;
+		esac
+		eval "_f=\$_file_$(printf '%s' "$p" | tr -c 'a-zA-Z0-9' '_')"
 		e=$(idx_lookup "$p") || e=""
 		ui_install "$role" "$p" \
 			"$(printf '%s' "$e" | cut -f3)-$(printf '%s' "$e" | cut -f4)"
-		install_one "$FETCH_FILE"
+		install_one "$_f"
 	done
 
 	run_hooks
@@ -1290,7 +1327,7 @@ _deptree() {
 	is_installed "$p" && st=" ${A_MINT}*${C_R}"
 	printf '%s%s%s%s\n' "$ind" "$A_SNOW" "$p" "$C_R$st"
 	deps=""
-	if is_installed "$p"; then deps=$(tr '\n' ' ' <"$ALPM_DB/local/$p/DEPS" 2>/dev/null)
+	if is_installed "$p"; then deps=$({ tr '\n' ' ' <"$ALPM_DB/local/$p/DEPS"; } 2>/dev/null || :)
 	else e=$(idx_lookup "$p") 2>/dev/null && deps=$(printf '%s' "$e" | cut -f9); fi
 	for d in $deps; do
 		[ "$d" = "-" ] && continue

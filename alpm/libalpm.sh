@@ -59,13 +59,41 @@ else
 	A_VIO= ; A_IND= ; A_ICE= ; A_TEAL= ; A_MINT= ; A_SNOW= ; A_GREY= ; A_RED= ; A_AMB=
 fi
 
-msg()   { printf '%s::%s %s%s%s\n' "$A_TEAL$C_B" "$C_R$C_B" "$*" "$C_R" ""; }
-msg2()  { printf '  %s->%s %s\n' "$A_ICE$C_B" "$C_R" "$*"; }
-info()  { printf '  %s*%s  %s\n' "$A_IND" "$C_R" "$*"; }
+# The four everyday output levels. Each knows all three styles, so a style is
+# not something the install path has to remember to honour - "::" and "->" are
+# the default style's markers, and they used to leak into apt and aeryn output
+# from every helper that had not been converted.
+msg() {
+	case "$ALPM_STYLE" in
+	apt)   printf '%s\n' "$*" ;;
+	aeryn) printf '  %s%s%s\n' "$A_TEAL$C_B" "$*" "$C_R" ;;
+	*)     printf '%s::%s %s%s\n' "$A_TEAL$C_B" "$C_R$C_B" "$*" "$C_R" ;;
+	esac
+}
+msg2() {
+	case "$ALPM_STYLE" in
+	apt)   printf '%s\n' "$*" ;;
+	aeryn) printf '  %s·%s %s%s%s\n' "$A_GREY" "$C_R" "$A_GREY" "$*" "$C_R" ;;
+	*)     printf '  %s->%s %s\n' "$A_ICE$C_B" "$C_R" "$*" ;;
+	esac
+}
+info() {
+	case "$ALPM_STYLE" in
+	apt)   printf '%s\n' "$*" ;;
+	aeryn) printf '  %s%s%s\n' "$A_GREY" "$*" "$C_R" ;;
+	*)     printf '  %s*%s  %s\n' "$A_IND" "$C_R" "$*" ;;
+	esac
+}
 warn()  { printf '%s::%s %s%s\n' "$A_AMB$C_B" "$C_B" "$*" "$C_R" >&2; }
 err()   { printf '%sE:%s %s\n' "$A_RED$C_B" "$C_R" "$*" >&2; }
 die()   { err "$*"; exit 1; }
-ok()    { printf '  %sok%s  %s\n' "$A_MINT$C_B" "$C_R" "$*"; }
+ok() {
+	case "$ALPM_STYLE" in
+	apt)   printf '%s\n' "$*" ;;
+	aeryn) printf '  %s✓%s %s\n' "$A_MINT" "$C_R" "$*" ;;
+	*)     printf '  %sok%s  %s\n' "$A_MINT$C_B" "$C_R" "$*" ;;
+	esac
+}
 
 # Every privileged entry point funnels through here. The wording is deliberate:
 # it never names a specific privilege tool.
@@ -376,7 +404,7 @@ ui_confirm_text() {
 ui_fetch() {
 	case "$ALPM_STYLE" in
 	apt)   printf 'Get:%s %s [%s]\n' "$5" "$3" "$(human "$4")" ;;
-	aeryn) printf '  %s↓%s %s\n' "$A_ICE" "$C_R" "$2" ;;
+	aeryn) printf '  %s%s%s %-28s %sfetching%s\n' "$A_ICE" "◈" "$C_R" "$2" "$A_GREY" "$C_R" ;;
 	*)
 		if [ "$1" = dependency ]; then printf '  Fetching dependency %s\n' "$3"
 		else printf "  Fetching package '%s'\n" "$2"; fi ;;
@@ -386,7 +414,7 @@ ui_fetch() {
 ui_cached() {
 	case "$ALPM_STYLE" in
 	apt)   printf 'Get:%s %s [cached]\n' "${3:-1}" "$2" ;;
-	aeryn) printf '  %s=%s %s (cached)\n' "$A_GREY" "$C_R" "$2" ;;
+	aeryn) printf '  %s◈%s %-28s %scached%s\n' "$A_GREY" "$C_R" "$2" "$A_GREY" "$C_R" ;;
 	*)
 		if [ "$1" = dependency ]; then printf "  Dependency '%s' is already in the cache\n" "$2"
 		else printf "  Package '%s' is already in the cache\n" "$2"; fi ;;
@@ -397,7 +425,7 @@ ui_cached() {
 ui_install() {
 	case "$ALPM_STYLE" in
 	apt)   printf 'Setting up %s (%s) ...\n' "$2" "$3" ;;
-	aeryn) printf '  %s✓%s %-24s %s\n' "$A_MINT" "$C_R" "$2" "$3" ;;
+	aeryn) printf '  %s✓%s %-28s %s%s%s\n' "$A_MINT" "$C_R" "$2" "$A_GREY" "$3" "$C_R" ;;
 	*)
 		if [ "$1" = dependency ]; then printf "  Installing dependency '%s'\n" "$2"
 		else printf "  Installing package '%s'\n" "$2"; fi ;;
@@ -409,6 +437,14 @@ ui_met() {
 	apt)   printf '%s is already the newest version.\n' "$1" ;;
 	aeryn) : ;;
 	*)     printf "  Dependency met '%s', skipping...\n" "$1" ;;
+	esac
+}
+
+ui_phase_install() {
+	case "$ALPM_STYLE" in
+	apt)   : ;;
+	aeryn) printf '\n' ;;
+	*)     printf '\n' ;;
 	esac
 }
 
@@ -744,6 +780,11 @@ confirm() {
 	aeryn) printf '\n  %s?%s %s %s[Y/n]%s ' "$A_ICE$C_B" "$C_R" "$1" "$A_GREY" "$C_R" ;;
 	*)     printf '%s::%s %s %s[Y/n]%s ' "$A_TEAL$C_B" "$C_R$C_B" "$1$C_R" "$A_GREY" "$C_R" ;;
 	esac
-	read -r a || return 1
+	read -r a || { printf '\n'; return 1; }
+	# Without this the answer and whatever is printed next share a line -
+	# ":: Proceed with installation? [Y/n] :: aborted" - whenever the reply
+	# came from a pipe rather than a terminal, where the user's own Enter
+	# would have supplied the newline.
+	[ -t 0 ] || printf '\n'
 	case "$a" in n|N|no|NO|No) return 1 ;; *) return 0 ;; esac
 }
