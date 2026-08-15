@@ -1,0 +1,36 @@
+# An alpm theme. Copy it to /etc/alpm/themes/<name>.theme (or
+# ~/.config/alpm/themes/<name>.theme, which wins), then set
+# ALPM_STYLE=<name> in /etc/alpm/alpm.conf.
+#
+# Everything here is optional - anything left out keeps alpm's default, so a
+# theme that only changes the accent colour is one line long.
+#
+# Fonts are deliberately absent: alpm writes text and escape sequences into
+# whatever terminal it was started from, and cannot choose a typeface. Set
+# the font in the terminal.
+
+# Colours, as 256-colour SGR numbers. An empty value means "no colour here".
+T_ACCENT=44      # headings, the progress bar, the frame
+T_OK=49          # success
+T_WARN=215       # warnings
+T_ERR=203        # errors
+T_DIM=245        # secondary text
+T_TEXT=231       # package names
+
+# Glyphs.
+T_MARK_INFO='*'
+T_MARK_OK='✓'
+T_MARK_FETCH='◈'
+T_MARK_ADD='+'
+T_MARK_HELD='='
+
+# Wording. These are what the custom style prints; change any of them.
+T_READING='Reading package lists'
+T_CALC='Calculating dependencies...'
+T_CALC_DONE='Done!'
+T_CONFIRM='Proceed with installation?'
+T_FETCHING='Fetching'
+T_INSTALLING='Installing'
+T_MET='already satisfied, skipping'
+T_DONE='installed'
+T_SYNCING='Synchronizing repositories'

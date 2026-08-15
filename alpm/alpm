@@ -8,7 +8,13 @@
 
 set -u
 
-for p in /usr/lib/alpm/libalpm.sh ./libalpm.sh "$(dirname "$0")/libalpm.sh"; do
+# Where this copy of alpm lives, so its companions can be run without
+# depending on PATH. `alpm ins -s` used to run "alpm build ..." by name: fine
+# for an installed system, and a flat "alpm: command not found" for anyone
+# running it out of a checkout or from an absolute path - which is every
+# source build during development, and the installer's own target_alpm.
+ALPM_SELFDIR=$(cd "$(dirname "$0")" 2>/dev/null && pwd) || ALPM_SELFDIR=/usr/bin
+for p in /usr/lib/alpm/libalpm.sh ./libalpm.sh "$ALPM_SELFDIR/libalpm.sh"; do
 	[ -f "$p" ] && { . "$p"; break; }
 done
 [ -n "${ALPM_VERSION:-}" ] || { echo "alpm: cannot locate libalpm.sh" >&2; exit 1; }
@@ -111,6 +117,16 @@ ${C_B}MAINTENANCE${C_R}
 Run as root for anything that changes the system.
 EOF
 }
+
+# alpm-build, found the same way libalpm.sh is: beside this script first,
+# then the installed location, then PATH.
+alpm_build_path() {
+	if [ -x "$ALPM_SELFDIR/alpm-build" ]; then printf '%s\n' "$ALPM_SELFDIR/alpm-build"
+	elif [ -x /usr/bin/alpm-build ]; then printf '%s\n' /usr/bin/alpm-build
+	else printf 'alpm-build\n'; fi
+}
+
+alpm_build_tool() { sh "$(alpm_build_path)" "$@"; }
 
 # ------------------------------------------------------------- dependency logic
 
@@ -401,6 +417,7 @@ install_one() {
 	# File-conflict check against other packages' manifests.
 	( cd "$tmp" && find . -type f -o -type l ) | sed 's|^\.||' | \
 		grep -v '^/\.\(PKGINFO\|INSTALL\|FILES\)$' >"$tmp.files"
+	: >"$tmp.takeover"
 	while read -r f; do
 		[ -n "$f" ] || continue
 		[ -e "$ALPM_ROOT$f" ] || continue
@@ -408,12 +425,31 @@ install_one() {
 		if [ -n "$owner" ]; then
 			o=$(basename "$(dirname "$owner")")
 			[ "$o" = "$name" ] && continue
-			die "file conflict: $f is owned by $o"
+			# Identical content is not a conflict worth refusing over. Two
+			# packages shipping the same file byte-for-byte - libressl and
+			# ca-certificates both installing /etc/ssl/cert.pem, which
+			# stopped any transaction containing ca-certificates - leaves
+			# nothing to disagree about: hand the path to the incoming
+			# package and take it off the old owner's manifest, so exactly
+			# one package still owns it and removing the other does not take
+			# the file with it.
+			if same_file "$tmp$f" "$ALPM_ROOT$f"; then
+				printf '%s\t%s\n' "$o" "$f" >>"$tmp.takeover"
+				continue
+			fi
+			die "file conflict: $f is owned by $o
+  both would install a different $f - remove $o first, or report it if
+  they are meant to coexist"
 		fi
 	done <"$tmp.files"
 
 	old=""
-	is_installed "$name" && old=$(installed_version "$name")
+	if is_installed "$name"; then
+		old=$(installed_version "$name")
+		# Kept aside because the database entry is replaced below, and the
+		# old manifest is what says which files this upgrade drops.
+		cp -f "$ALPM_DB/local/$name/FILES" "$tmp.oldfiles" 2>/dev/null || :
+	fi
 
 	kind=$(meta "$tmp/.PKGINFO" kind)
 	if [ "$kind" = "profile" ]; then
@@ -495,6 +531,36 @@ install_one() {
 	rm -rf "$db"
 	mv "$dbnew" "$db"
 
+	# On an upgrade, remove what the old version owned and the new one does
+	# not. Nothing did this before, so a package that stopped shipping a file
+	# left it on disk owned by nobody - libressl dropping /etc/ssl/cert.pem
+	# would otherwise leave the stale bundle sitting there, still shadowing
+	# the one ca-certificates installs. Saved to the transaction first, so
+	# rollback puts them back.
+	if [ -n "$old" ] && [ -s "$tmp.oldfiles" ]; then
+		while read -r _st_f; do
+			[ -n "$_st_f" ] || continue
+			grep -qxF "$_st_f" "$db/FILES" 2>/dev/null && continue
+			[ -e "$ALPM_ROOT$_st_f" ] || [ -L "$ALPM_ROOT$_st_f" ] || continue
+			tx_save "$_st_f"
+			rm -f "$ALPM_ROOT$_st_f"
+			info "removed $_st_f (no longer in $name $ver-$rel)"
+		done <"$tmp.oldfiles"
+	fi
+	rm -f "$tmp.oldfiles"
+
+	# Ownership of any identical file handed over above.
+	if [ -s "$tmp.takeover" ]; then
+		while IFS='	' read -r _to_o _to_f; do
+			[ -n "$_to_o" ] || continue
+			_to_m="$ALPM_DB/local/$_to_o/FILES"
+			[ -f "$_to_m" ] || continue
+			grep -vxF "$_to_f" "$_to_m" >"$_to_m.new" 2>/dev/null && \
+				mv -f "$_to_m.new" "$_to_m"
+			info "$_to_f: now owned by $name, was $_to_o"
+		done <"$tmp.takeover"
+	fi
+
 	if [ -n "$old" ]; then pkg_script "$db" post_upgrade "$name"
 	else pkg_script "$db" post_install "$name"; fi
 
@@ -502,7 +568,7 @@ install_one() {
 	printf '%s %s-%s\n' "$name" "$ver" "$rel" >>"$TX_DIR/packages"
 	alpm_log "install $name $ver-$rel nomod=$NOMOD"
 
-	rm -rf "$tmp" "$tmp.files" "$tmp.PKGINFO" "$tmp.INSTALL"
+	rm -rf "$tmp" "$tmp.files" "$tmp.PKGINFO" "$tmp.INSTALL" "$tmp.takeover" "$tmp.oldfiles"
 }
 
 cmd_ins() {
@@ -554,7 +620,7 @@ cmd_ins() {
 			esac
 			continue
 		fi
-		die "package not found: $p (try 'alpm fetch all')"
+		die "package not found: $p$(not_found_hint)"
 	done
 
 	# Anything with only a recipe goes through the source path.
@@ -580,7 +646,7 @@ cmd_ins() {
 			if [ -n "$by" ] && [ "$by" != "$m" ]; then
 				err "$by needs $m, and no synced repository has it"
 			else
-				err "package not found: $m"
+				err "package not found: $m$(not_found_hint)"
 			fi
 			if ports_have "$m"; then
 				printf "  %sthere is a recipe for it: alpm ins -s %s%s\n" "$A_GREY" "$m" "$C_R" >&2
@@ -731,7 +797,7 @@ cmd_ins_source() {
 			recipe="$ALPM_CACHE/src/$p/recipe"
 		fi
 		msg2 "building $p from $recipe"
-		alpm build "$recipe" || die "build of $p failed"
+		alpm_build_tool "$recipe" || die "build of $p failed"
 		# The same directory alpm-build writes to. Hardcoding
 		# $ALPM_CACHE/build/out meant that whenever ALPM_BUILDROOT pointed
 		# anywhere else - which is exactly what the batch builds and any
@@ -1030,7 +1096,7 @@ sync_repo() {
 cmd_fetch() {
 	need_root; alpm_init_db
 	which=${1:-all}
-	msg "Synchronising repositories"
+	msg "${T_SYNCING:-Synchronizing repositories}"
 
 	# Count what actually succeeded. Reporting "554 packages available" after
 	# every repository failed is worse than useless - it reads as success when
@@ -1792,7 +1858,7 @@ mark)               cmd_mark "$@" ;;
 snapshot|snap)      cmd_snapshot "$@" ;;
 rollback|undo)      cmd_rollback "$@" ;;
 log|history)        cmd_log "$@" ;;
-build|mkpkg)        exec alpm-build "$@" ;;
+build|mkpkg)        exec $(alpm_build_path) "$@" ;;
 version|--version|-V) printf 'alpm %s (format %s) - Arctic Linux\n' "$ALPM_VERSION" "$ALPM_FORMAT" ;;
 help|--help|-h|"")  usage ;;
 *)                  err "unknown command: $cmd"; printf '\n'; usage; exit 1 ;;

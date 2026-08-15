@@ -143,6 +143,19 @@ pkgdir="$ALPM_BUILDROOT/$name/pkg"
 # stop seeing it, which is exactly the point.
 export pkgdir
 
+# A source build needs a compiler and a make. Checked here, by name, with
+# the package that provides each - rather than letting the recipe fail
+# somewhere in its build() with "make: not found" and no indication that the
+# toolchain is simply not installed.
+_missing=""
+have "$CC" || command -v cc >/dev/null 2>&1 || _missing="$_missing clang(or gcc)"
+have make || have bmake || have gmake || _missing="$_missing bmake"
+if [ -n "$_missing" ]; then
+	err "this system cannot build from source yet - missing:$_missing"
+	printf '  %sinstall the toolchain first:  alpm ins base-devel%s\n' "$A_GREY" "$C_R" >&2
+	exit 1
+fi
+
 printf '\n'
 msg "Building $name $version-$release"
 info "compiler   $CC / $LD"
@@ -212,7 +225,48 @@ if [ -n "$source" ]; then
 	done
 fi
 
+# What a tarball actually unpacked into, whatever the recipe expected.
+#
+# A recipe says `cd "foo-1.2.3"` because that is what the filename implies,
+# and upstreams disagree constantly: a GitHub tag archive unpacks as
+# <repo>-<tag>, a Forgejo one as a bare <repo>, and some tarballs use a
+# different case or a suffix entirely. Guessing wrong gave "cd: foo-1.2.3:
+# No such file or directory" after a successful download, which reads like a
+# broken recipe rather than a naming mismatch.
+#
+# So: if the directory the recipe asks for is not there and exactly one
+# directory was unpacked, use that one. Exactly one - with several, there is
+# no safe guess and the original error is the honest answer.
+srcdir_fix() {
+	[ -d "$srcdir/$1" ] && return 0
+	_sf_n=0 _sf_d=""
+	for _sf_e in "$srcdir"/*/; do
+		[ -d "$_sf_e" ] || continue
+		_sf_n=$((_sf_n+1)); _sf_d=${_sf_e%/}
+	done
+	[ "$_sf_n" = 1 ] || return 1
+	ln -sfn "$(basename "$_sf_d")" "$srcdir/$1" 2>/dev/null || return 1
+	info "sources unpacked into $(basename "$_sf_d"), not $1 - linked"
+	return 0
+}
+
 # ---------------------------------------------------------------- build phases
+#
+# The recipe's own `cd` is what needs rescuing, and the recipe is already
+# sourced - so make `cd` inside a phase fall back to srcdir_fix when the
+# directory it names is missing. A recipe that cds somewhere legitimately
+# absent still fails, exactly as before; it just no longer fails because an
+# upstream renamed its tarball's top directory.
+cd() {
+	if [ $# -eq 1 ] && [ ! -d "$1" ] && [ ! -d "$srcdir/$1" ]; then
+		case "$1" in
+		/*|.|..|-) ;;
+		*) srcdir_fix "$1" || : ;;
+		esac
+	fi
+	command cd "$@"
+}
+
 cd "$srcdir"
 if command -v prepare >/dev/null 2>&1; then msg2 "prepare()"; prepare; fi
 cd "$srcdir"

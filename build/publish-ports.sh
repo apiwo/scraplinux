@@ -129,6 +129,30 @@ EOF
 	} >"$dir/index.html"
 }
 
+# The landing page's category list is generated from the categories that
+# actually exist. Hand-maintained, it drifted: it still offered a musl area
+# long after musl was removed - a dead link on the front page - and an
+# "everything" entry that was just /ALL/ under another name.
+step "updating the landing page"
+if [ -f "$SITE/index.html" ]; then
+	{
+		for r in $REPOS; do
+			[ -d "$SITE/ALL/$r" ] || continue
+			printf '        <li><a href="/ALL/%s/">%s</a></li>\n' "$r" "$r"
+		done
+		printf '        <li><a href="/ALL/">browse all</a></li>\n'
+	} >"$SITE/.repolist"
+	awk -v list="$SITE/.repolist" '
+		/<p>Repos<\/p>/ { print; inlist=1; next }
+		inlist && /<ul>/  { print; while ((getline l < list) > 0) print l; skip=1; next }
+		skip && /<\/ul>/  { print; skip=0; inlist=0; next }
+		skip { next }
+		{ print }
+	' "$SITE/index.html" >"$SITE/index.html.new" && mv -f "$SITE/index.html.new" "$SITE/index.html"
+	rm -f "$SITE/.repolist"
+	note "front page lists $(printf '%s' "$REPOS" | wc -w) categories"
+fi
+
 step "writing directory listings"
 listing "$SITE/ALL" "arctic-linux/ALL/"
 for r in $REPOS; do

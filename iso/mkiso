@@ -239,7 +239,11 @@ fi
 # (built into the rootfs already); wireless is wpa_supplicant + wifi-connect,
 # both staged straight into the rootfs by build-usable.sh - neither needs
 # installing here as a separate live-only package the way dhcpcd used to.
-LIVE_EXTRAS="curl ca-certificates nano vim ttf-jetbrains-mono ttf-nerd-fonts-symbols"
+# bmake is what provides /usr/bin/make. build-rootfs copies the bmake and
+# gmake binaries into the image but not that symlink, so the live session had
+# no `make` at all and every source build died on "make: not found" - dwm's
+# among them. Installing the package puts the symlink where it belongs.
+LIVE_EXTRAS="curl ca-certificates nano vim bmake ttf-jetbrains-mono ttf-nerd-fonts-symbols"
 
 # Dependencies are resolved, not assumed. Unpacking only the named packages
 # put curl on the image without libnghttp2 or brotli, so it died at startup

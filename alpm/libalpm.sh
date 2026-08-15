@@ -43,26 +43,102 @@ ALPM_FORMAT="2"
 #   solus   eopkg's shape
 : "${ALPM_STYLE:=arctic}"
 
+# ------------------------------------------------------------------- theming
+#
+# ALPM_STYLE names either one of the built-in styles or a theme file. A theme
+# is a POSIX sh fragment in /etc/alpm/themes/<name>.theme (or
+# ~/.config/alpm/themes/<name>.theme, which wins) that sets any of the T_*
+# variables below. Everything it does not set keeps the default, so a theme
+# can be three lines long.
+#
+# What a theme controls: the palette, the glyphs, and the wording. Fonts are
+# the terminal's business, not the package manager's - alpm writes text and
+# escape sequences, and has no way to choose a typeface.
+#
+#   colours   T_ACCENT T_OK T_WARN T_ERR T_DIM T_TEXT   (bare SGR numbers,
+#             e.g. T_ACCENT=44, or an empty string for no colour)
+#   glyphs    T_MARK_INFO T_MARK_OK T_MARK_FETCH T_MARK_ADD T_MARK_HELD
+#   wording   T_READING T_CALC T_CALC_DONE T_CONFIRM T_FETCHING T_INSTALLING
+#             T_MET T_DONE T_SYNCING
+#
+# A theme file is sourced, so it can also set ALPM_JOBS or anything else -
+# it runs as whoever runs alpm, and lives under /etc like the rest of alpm's
+# configuration.
+alpm_theme_defaults() {
+	: "${T_ACCENT:=44}" ; : "${T_OK:=49}"  ; : "${T_WARN:=215}"
+	: "${T_ERR:=203}"   ; : "${T_DIM:=245}"; : "${T_TEXT:=231}"
+	: "${T_MARK_INFO:=*}"  ; : "${T_MARK_OK:=✓}" ; : "${T_MARK_FETCH:=◈}"
+	: "${T_MARK_ADD:=+}"   ; : "${T_MARK_HELD:==}"
+	: "${T_READING:=Reading package lists}"
+	: "${T_CALC:=Calculating dependencies...}"
+	: "${T_CALC_DONE:=Done!}"
+	: "${T_CONFIRM:=Proceed with installation?}"
+	: "${T_FETCHING:=Fetching}"
+	: "${T_INSTALLING:=Installing}"
+	: "${T_MET:=already satisfied, skipping}"
+	: "${T_DONE:=installed}"
+	: "${T_SYNCING:=Synchronizing repositories}"
+}
+
+alpm_load_theme() {
+	case "$ALPM_STYLE" in
+	arctic|apt|aeryn|pacman|void|solus) alpm_theme_defaults; return 0 ;;
+	esac
+	# Not a built-in: it names a theme file.
+	case "$ALPM_STYLE" in
+	""|.|..|*/*) ALPM_STYLE=arctic; alpm_theme_defaults; return 0 ;;
+	esac
+	for _t in "${XDG_CONFIG_HOME:-$HOME/.config}/alpm/themes/$ALPM_STYLE.theme" \
+	          "/etc/alpm/themes/$ALPM_STYLE.theme"; do
+		if [ -r "$_t" ]; then
+			# shellcheck disable=SC1090
+			. "$_t"
+			ALPM_THEME_NAME=$ALPM_STYLE
+			ALPM_STYLE=custom
+			alpm_theme_defaults
+			return 0
+		fi
+	done
+	printf 'alpm: no theme named %s - using the default\n' "$ALPM_STYLE" >&2
+	ALPM_STYLE=arctic
+	alpm_theme_defaults
+}
+
 # ---------------------------------------------------------------- presentation
 
 # Arctic palette, lifted from the logo gradient: violet -> ice -> teal.
-if [ -t 1 ] && [ "${ALPM_COLOR:-auto}" != "never" ]; then
-	C_R=$(printf '\033[0m')      ; C_B=$(printf '\033[1m')
-	C_DIM=$(printf '\033[2m')    ; C_IT=$(printf '\033[3m')
-	A_VIO=$(printf '\033[38;5;99m')  ; A_IND=$(printf '\033[38;5;69m')
-	A_ICE=$(printf '\033[38;5;81m')  ; A_TEAL=$(printf '\033[38;5;44m')
-	A_MINT=$(printf '\033[38;5;49m') ; A_SNOW=$(printf '\033[38;5;231m')
-	A_GREY=$(printf '\033[38;5;245m'); A_RED=$(printf '\033[38;5;203m')
-	A_AMB=$(printf '\033[38;5;215m')
-else
-	C_R= ; C_B= ; C_DIM= ; C_IT=
-	A_VIO= ; A_IND= ; A_ICE= ; A_TEAL= ; A_MINT= ; A_SNOW= ; A_GREY= ; A_RED= ; A_AMB=
-fi
+#
+# A function, not a straight-line block: ALPM_STYLE (and any theme it names)
+# is only known after alpm.conf has been read, which happens well after this
+# file is sourced. Computed once at the bottom of this file for tools that
+# never load a config, and again by alpm_load_conf once a theme has had its
+# say.
+alpm_palette() {
+	# Arctic palette, lifted from the logo gradient: violet -> ice -> teal.
+	if [ -t 1 ] && [ "${ALPM_COLOR:-auto}" != "never" ]; then
+		C_R=$(printf '\033[0m')      ; C_B=$(printf '\033[1m')
+		C_DIM=$(printf '\033[2m')    ; C_IT=$(printf '\033[3m')
+		# A theme sets the numbers; these are the Arctic palette by default,
+		# lifted from the logo gradient: violet -> ice -> teal.
+		_sgr() { [ -n "$1" ] && printf '\033[38;5;%sm' "$1" || printf ''; }
+		A_VIO=$(_sgr 99)          ; A_IND=$(_sgr 69)
+		A_ICE=$(_sgr 81)          ; A_TEAL=$(_sgr "$T_ACCENT")
+		A_MINT=$(_sgr "$T_OK")    ; A_SNOW=$(_sgr "$T_TEXT")
+		A_GREY=$(_sgr "$T_DIM")   ; A_RED=$(_sgr "$T_ERR")
+		A_AMB=$(_sgr "$T_WARN")
+	else
+		C_R= ; C_B= ; C_DIM= ; C_IT=
+		A_VIO= ; A_IND= ; A_ICE= ; A_TEAL= ; A_MINT= ; A_SNOW= ; A_GREY= ; A_RED= ; A_AMB=
+	fi
 
-# The four everyday output levels. Each knows all three styles, so a style is
-# not something the install path has to remember to honour - "::" and "->" are
-# the default style's markers, and they used to leak into apt and aeryn output
-# from every helper that had not been converted.
+	# The four everyday output levels. Each knows all three styles, so a style is
+	# not something the install path has to remember to honour - "::" and "->" are
+	# the default style's markers, and they used to leak into apt and aeryn output
+	# from every helper that had not been converted.
+}
+alpm_theme_defaults
+alpm_palette
+
 msg() {
 	case "$ALPM_STYLE" in
 	apt|solus) printf '%s\n' "$*" ;;
@@ -130,6 +206,19 @@ safe_component() {
 	*/*) return 1 ;;
 	esac
 	return 0
+}
+
+# Are two paths the same file as far as a package is concerned? Symlinks
+# compare by target, everything else by content. Used to tell a real file
+# conflict from two packages shipping identical bytes at the same path.
+same_file() {
+	if [ -L "$1" ] || [ -L "$2" ]; then
+		[ -L "$1" ] && [ -L "$2" ] || return 1
+		[ "$(readlink "$1")" = "$(readlink "$2")" ]
+		return $?
+	fi
+	[ -f "$1" ] && [ -f "$2" ] || return 1
+	[ "$(sha256 "$1")" = "$(sha256 "$2")" ]
 }
 
 sha256() {
@@ -323,9 +412,10 @@ ui_reading() {
 	case "$ALPM_STYLE" in
 	apt)    printf 'Reading package lists... Done\n'
 	        printf 'Building dependency tree... ' ;;
-	pacman) msg "Synchronising package databases" ;;
+	pacman) msg "Synchronizing package databases" ;;
 	void)   printf '%s[*]%s Collecting packages\n' "$A_TEAL$C_B" "$C_R" ;;
 	solus)  printf 'Reading repository index\n' ;;
+	custom) msg "$T_READING" ;;
 	aeryn)  printf '\n  %s%s%s\n' "$A_TEAL$C_B" "Resolving transaction" "$C_R" ;;
 	*)      msg "Reading package lists" ;;
 	esac
@@ -434,6 +524,7 @@ ui_confirm_text() {
 	void)   printf 'Do you want to continue?' ;;
 	solus)  printf 'Would you like to continue?' ;;
 	aeryn)  printf 'Apply this transaction?' ;;
+	custom) printf '%s' "$T_CONFIRM" ;;
 	*)      printf 'Proceed with installation?' ;;
 	esac
 }
@@ -449,6 +540,9 @@ ui_fetch() {
 		printf '%s[*]%s Downloading %s %s\n' "$A_TEAL$C_B" "$C_R" "$2" "$(human "$4")" ;;
 	solus)
 		printf 'Downloading %s\n' "$2" ;;
+	custom)
+		printf '  %s%s%s %-28s %s%s%s\n' "$A_ICE" "$T_MARK_FETCH" "$C_R" "$2" \
+			"$A_GREY" "$T_FETCHING" "$C_R" ;;
 	aeryn)
 		printf '  %s◈%s %-28s %sfetching%s\n' "$A_ICE" "$C_R" "$2" "$A_GREY" "$C_R" ;;
 	*)
@@ -487,6 +581,8 @@ ui_install() {
 	pacman)     printf '(%s/%s) installing %s\n' "${4:-1}" "${5:-1}" "$2" ;;
 	void)       printf '%s: unpacking ...\n' "$2-$3" ;;
 	solus)      printf 'Installing %s, version %s\n' "$2" "$3" ;;
+	custom)     printf '  %s%s%s %-28s %s%s %s%s\n' "$A_MINT" "$T_MARK_OK" "$C_R" "$2" \
+			"$A_GREY" "$T_INSTALLING" "$3" "$C_R" ;;
 	aeryn)      printf '  %s✓%s %-28s %s%s%s\n' "$A_MINT" "$C_R" "$2" "$A_GREY" "$3" "$C_R" ;;
 	*)
 		if [ "$1" = dependency ]; then printf "  Installing dependency '%s'\n" "$2"
@@ -499,6 +595,7 @@ ui_met() {
 	apt)        printf '%s is already the newest version.\n' "$1" ;;
 	pacman)     printf ' %s is up to date -- skipping\n' "$1" ;;
 	void|solus) : ;;
+	custom)     printf '  %s%s: %s%s\n' "$A_GREY" "$1" "$T_MET" "$C_R" ;;
 	aeryn)      : ;;
 	*)          printf "  Dependency met '%s', skipping...\n" "$1" ;;
 	esac
@@ -518,6 +615,9 @@ ui_done() {
 			"$A_TEAL$C_B" "$C_R" "$3" ;;
 	solus)
 		printf '\nInstall completed. Undo with: alpm rollback %s\n' "$3" ;;
+	custom)
+		printf '\n  %s%s%s %s '"'"'%s'"'"' %s\n' "$A_MINT" "$T_MARK_OK" "$C_R" "Package" "$1" "$T_DONE"
+		printf '  %sundo with: alpm rollback %s%s\n' "$A_GREY" "$3" "$C_R" ;;
 	aeryn)
 		printf '\n  %s%s applied%s  %s\n' "$A_MINT$C_B" "Transaction" "$C_R" "$3"
 		printf '  %sundo with: alpm rollback %s%s\n' "$A_GREY" "$3" "$C_R" ;;
@@ -532,6 +632,7 @@ ui_done() {
 
 case "$ALPM_STYLE" in
 apt)    CALC_LABEL="Building dependency tree..." ;;
+custom) CALC_LABEL="$T_CALC" ;;
 pacman) CALC_LABEL="resolving dependencies..." ;;
 void)   CALC_LABEL="[*] Resolving dependencies..." ;;
 solus)  CALC_LABEL="Resolving dependencies..." ;;
@@ -559,7 +660,8 @@ calc_done() {
 	[ -t 1 ] || return 0
 	# The trailing run of spaces is what wipes the bar this replaces - there
 	# is deliberately no clear-line escape anywhere in here.
-	printf '\r  %s %sDone!%s                    \n' "$CALC_LABEL" "$A_MINT" "$C_R"
+	printf '\r  %s %s%s%s                    \n' "$CALC_LABEL" "$A_MINT" \
+		"${T_CALC_DONE:-Done!}" "$C_R"
 }
 
 # .alpmz is a plain tar.xz, so bsdtar or busybox tar both work.
@@ -703,6 +805,11 @@ alpm_load_conf() {
 	for _v in ALPM_ROOT ALPM_DB ALPM_CACHE ALPM_BUILDROOT ALPM_REPOD; do
 		eval "[ \"\$_was_${_v}\" = set ] && ${_v}=\$_val_${_v}"
 	done
+	# ALPM_STYLE may have just been set (or changed) by the config, and a
+	# theme file can replace the whole palette - so the colours are worked
+	# out here rather than when this file was sourced.
+	alpm_load_theme
+	alpm_palette
 	:
 }
 
@@ -783,6 +890,32 @@ ports_have() { ports_repo_of "$1" >/dev/null 2>&1; }
 looks_like_recipe() {
 	[ -s "$1" ] || return 1
 	grep -q '^name=' "$1" 2>/dev/null
+}
+
+# How stale the repository indexes are, in days, or 999 when there are none.
+# Used to decide whether "package not found" is worth blaming on an old
+# index: telling someone to run 'alpm fetch all' when they synced ten minutes
+# ago sends them to do it again for nothing, and the real answer is that the
+# package does not exist.
+idx_age_days() {
+	_ia_new=""
+	for _ia_f in "$ALPM_DB"/sync/*.idx; do
+		[ -f "$_ia_f" ] || continue
+		if [ -z "$_ia_new" ] || [ "$_ia_f" -nt "$_ia_new" ]; then _ia_new=$_ia_f; fi
+	done
+	[ -n "$_ia_new" ] || { echo 999; return; }
+	_ia_now=$(date '+%s' 2>/dev/null || echo 0)
+	_ia_then=$(date -r "$_ia_new" '+%s' 2>/dev/null || \
+		stat -c %Y "$_ia_new" 2>/dev/null || echo "$_ia_now")
+	echo $(( (_ia_now - _ia_then) / 86400 ))
+}
+
+# "not found", plus the sync hint only when a sync could plausibly help.
+not_found_hint() {
+	_nf_age=$(idx_age_days)
+	if [ "${_nf_age:-999}" -ge 1 ]; then
+		printf " - the package lists are %s day(s) old, try 'alpm fetch all'" "$_nf_age"
+	fi
 }
 
 idx_field() { printf '%s' "$1" | cut -f"$2"; }
