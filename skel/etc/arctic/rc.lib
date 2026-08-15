@@ -44,9 +44,26 @@ _rc_cs() {
 	read -r _c_up _c_rest </proc/uptime || { printf '0'; return; }
 	[ -n "${_c_up:-}" ] || { printf '0'; return; }
 	case "$_c_up" in
-	*.*) printf '%s%s' "${_c_up%.*}" "${_c_up#*.}" ;;
-	*)   printf '%s00' "$_c_up" ;;
+	*.*) _c_i=${_c_up%.*}; _c_f=${_c_up#*.} ;;
+	*)   _c_i=$_c_up;      _c_f=00 ;;
 	esac
+	# Exactly two digits of hundredths, whatever the kernel chose to print.
+	case "$_c_f" in
+	?)  _c_f="${_c_f}0" ;;
+	??) ;;
+	*)  _c_f=$(printf '%.2s' "$_c_f") ;;
+	esac
+	_c_v="$_c_i$_c_f"
+	# A leading zero makes the shell read the number as octal, and "086" is
+	# not a valid octal number: the arithmetic that subtracts these values
+	# then failed with a syntax error and took rc.boot down with it, part way
+	# through the boot, before any service had started. Under ten seconds of
+	# uptime - which is every step of an ordinary boot - most values have that
+	# leading zero, and whether a given boot survived came down to which
+	# hundredth it happened to be timed at. That is what made a live session
+	# come up with no network "sometimes".
+	while [ -n "$_c_v" ] && [ "$_c_v" != "${_c_v#0}" ]; do _c_v=${_c_v#0}; done
+	printf '%s' "${_c_v:-0}"
 }
 
 # Hundredths to "1.3s".
