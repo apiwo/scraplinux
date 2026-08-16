@@ -4,10 +4,12 @@ What's built and working, what's known-broken, what's still source-only.
 Full docs live at arctic-docs.apiwow.net — this file is the terse engineering
 log, not a tutorial.
 
-Release label: **Arctic Linux - Alpha 1.2** (`a1.2`). The tag counts in three
-positions: `a1` is the release, the second moves for a major bugfix, the third
-for minor fixes and quality-of-life changes. They are positions, not a decimal
-number - `a1.2` is later than `a1.1.9`.
+Release label: **Arctic Linux - Alpha 2** (`a2`). The main line is a whole
+number - Alpha 1 ran from `a1` to `a1.24`. One dot at most, and the digits
+after it are read one at a time, not as a decimal and not as further dotted
+fields: the first digit after the dot moves for a major bugfix and the second
+for minor fixes, so `a2.12` follows `a2.11` and `a2.2` is the next major
+bugfix after `a2.19`.
 
 Whatever the label is, one string is what the ISO filename, the volume id,
 `/etc/arctic-release`, the boot banner and `arcticfetch` all show - nothing
@@ -205,6 +207,97 @@ produces is unpacked there and later builds compile and link against it
 paths point into the sysroot rather than at `/usr` on the build host.
 
 ## Known-fixed bugs worth remembering
+
+- **No installed system could boot.** The installer wrote `root=PARTUUID=` on
+  the kernel command line and into fstab, on the reasoning that the kernel
+  resolves a partition-table UUID immediately with no filesystem probing.
+  That is true, and it never applied: Arctic always boots through an
+  initramfs, and the initramfs resolves `root=` with busybox `findfs`, which
+  implements `LABEL=` and `UUID=` and nothing else.
+
+      # findfs UUID=f1832033-6264-4f35-8f81-43170e93a396
+      /dev/vda3
+      # findfs PARTUUID=9813faed-6c1b-4e86-808b-61e6498d25db
+      Usage: findfs LABEL=label | UUID=uuid
+
+  Every install finished cleanly, reported success, and then stopped at
+  `no device matches PARTUUID=...` and dropped to the initramfs shell with
+  the disk sitting right there - `/dev/vda3` was in `/dev` and `blkid` named
+  it. busybox `blkid` does not report PARTUUID either, so nothing on the
+  machine could have resolved that spec. fstab has the same problem, which
+  is the same reason `/boot` would not mount. Both are written as `UUID=`
+  now, falling back to `PARTUUID=` and then to the device path, and
+  `arctic-boot-strap` re-derives the spec rather than copying a PARTUUID out
+  of an older fstab. The initramfs also falls back to `LABEL=arctic-root` -
+  every filesystem the installer makes carries that label - so a machine
+  installed by an older version still comes up.
+- **The firewall had no package.** `A_FIREWALL=y` is the default, nftables
+  had no binary in any repository, and the installer fell back to compiling
+  it inside the target, where it failed with "C compiler cannot create
+  executables". The install reported success anyway. nftables would not build
+  on the host either: its configure probes for the symbol `readline` inside
+  `-ledit` and Arctic's libedit does not ship that compatibility name, so it
+  stopped with "No suitable version of libedit found". Built `--with-cli=no`,
+  which drops `nft -i` and nothing else, and packaged along with libnftnl.
+
+- **Wireless could never have worked, on any network.** `wifi-connect` built
+  its `wpa_supplicant.conf` by piping the passphrase into `wpa_passphrase`,
+  to keep it out of argv where every process on the machine could read it.
+  `wpa_passphrase` turns terminal echo off before reading, so it calls
+  `tcgetattr` on its stdin - and on a pipe that fails with ENOTTY and it exits
+  1 having written nothing. Its stderr went to `/dev/null` and its exit status
+  was never checked, so what landed on disk was a config file with no
+  `network=` block in it at all. wpa_supplicant then started cleanly,
+  associated with nothing, and the wait loop blamed the passphrase 30 seconds
+  later. The block is written directly now - wpa_supplicant derives the key
+  from a quoted passphrase itself, and `wpa_passphrase`'s own output carries
+  the plaintext in a `#psk=` comment beside the hash anyway, so there was
+  never anything to protect. The file is 0600 either way, and the recipe
+  refuses to continue if no network block landed.
+- **Nothing wrote a `ctrl_interface`, so `wpa_cli` could not connect.**
+  `wpa_passphrase` emits a network block and no header, so wpa_supplicant
+  opened no control socket. Every `wpa_cli` call in `wifi-connect` failed
+  silently, including the association check in its wait loop - and the error
+  message told you to run `wpa_cli -i wlan0 status`, which answered "Could not
+  connect to wpa_supplicant: wlan0". The failure path prints the actual state
+  and the last lines of the supplicant log now instead of naming a command.
+- **The installer dropped the wireless key it was carrying across.** It read
+  the psk out of `wifi-connect`'s config with `grep -v '^"'`, taking the
+  unquoted hex derivation and deliberately skipping a quoted passphrase. Once
+  `wifi-connect` wrote the quoted form that match came up empty, and the
+  profile was written with no `[wifi-security]` section - an open-network
+  profile for a WPA network. Both spellings are accepted now.
+- **The live image had no regulatory database.** With none the kernel stays in
+  world domain `00`, where most 5 GHz channels are receive-only: an access
+  point turns up in a scan and the card is then forbidden to transmit to it,
+  which is indistinguishable from a wrong passphrase. `wireless-regdb` is 5 KB
+  and is on the image now, and `wifi-connect` says so when the domain is still
+  `00`. Its recipe installs the signed database upstream ships rather than
+  running the default make target, which regenerates it with python and a
+  private key that is not distributed.
+- **The whole boot was right-aligned against column 80 of a 240-column
+  console.** `rc.lib` measured the console once, when it was sourced - which
+  is the first thing rc.boot does, before it has mounted `/dev`. There was no
+  `/dev/console` to ask yet, so every boot took the 80-column fallback. The
+  width is worked out at first use now, and cached.
+- **Every service reported `t=0.0s`.** The elapsed time was printed to one
+  decimal place and almost everything starts in under a tenth of a second, so
+  the timing column said nothing at all on nearly every line. Two digits is
+  what `/proc/uptime` actually offers.
+- **`bad()` printed a shell error on top of the failure it was recording.**
+  It appended to `/run/arctic/boot.errors` with `2>/dev/null`, and a
+  redirection that cannot be opened is reported by the shell itself before
+  that redirection is in effect - so any failure before `/run/arctic` existed
+  put "can't create ..." on the console mid-boot. Tested first now.
+- **`arcticfetch` reported the wrong shell.** It read `$SHELL` and fell back
+  to the passwd entry; the live session exports neither and root's entry still
+  says `/bin/sh`, so a session demonstrably running zsh was reported as `sh`.
+  It reads what is actually running it now.
+- **The live image greeted an operator with a hardware inventory.**
+  `arctic-welcome` ran `arcticfetch`, which answers "what is this machine" -
+  not the question someone who has just booted an installer has. It prints
+  the three steps to install, the four alpm commands worth knowing, where the
+  configuration lives, and how to chroot back in to repair one.
 
 - **A new install had an address, a route, and no resolver.** Nothing wrote
   `/etc/resolv.conf`: NetworkManager writes one once it is managing a link,

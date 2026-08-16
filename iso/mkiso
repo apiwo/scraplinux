@@ -34,17 +34,18 @@ BUILD_ID=$(date '+%Y.%m.%d')
 # arcticfetch's "os" line - reads it from here rather than spelling out its
 # own variation of it.
 #
-# One dot, and the digits after it are read one at a time - not as a decimal
-# number and not as further dotted fields:
+# The main line is a whole number. Alpha 1 ran from a1 to a1.24; a2 is the
+# next one, and the release after it is a3.
 #
-#   a1     the main release - Alpha 1
-#   a1.2   the first digit moves for a major bugfix
-#   a1.23  the second moves for minor fixes and quality-of-life changes
+#   a2     the main release - Alpha 2
+#   a2.1   the first digit moves for a major bugfix
+#   a2.12  the second moves for minor fixes and quality-of-life changes
 #
-# So a1.23 follows a1.22, a1.3 is the next major bugfix after a1.29, and
-# there is never a second dot.
-VERSION_TAG="a1.23"
-VERSION="Arctic Linux - Alpha 1.23"
+# One dot at most, and the digits after it are read one at a time - not as a
+# decimal number and not as further dotted fields, so a2.12 follows a2.11 and
+# a2.2 is the next major bugfix after a2.19.
+VERSION_TAG="a2"
+VERSION="Arctic Linux - Alpha 2"
 LABEL="ARCTIC"
 
 case "$PROFILE" in
@@ -236,7 +237,12 @@ cp -f "$SRCTREE/skel/etc/alpm/repos.d/"*.repo "$S/etc/alpm/repos.d/"
 #               a long way - the alternative is an installer that cannot
 #               build anything until it has downloaded a compiler, on a
 #               machine whose network may be the thing being repaired.
-LIVE_EXTRAS="curl ca-certificates iw nano vim bmake llvm ttf-jetbrains-mono ttf-nerd-fonts-symbols"
+# wireless-regdb is 5 KB and it is the difference between a 5 GHz network
+# associating and timing out. With no database the kernel stays in world
+# domain "00", where most 5 GHz channels are receive-only: the access point
+# shows up in a scan and the card is then forbidden to transmit to it, which
+# reads as a wrong passphrase and is not one.
+LIVE_EXTRAS="curl ca-certificates iw wireless-regdb nano vim bmake llvm ttf-jetbrains-mono ttf-nerd-fonts-symbols"
 
 # Dependencies are resolved, not assumed. Unpacking only the named packages
 # put curl on the image without libnghttp2 or brotli, so it died at startup
@@ -356,6 +362,10 @@ export HOME=/root
 export TERM=${TERM:-linux}
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export ARCTIC_GREETED=1
+# getty -l exports no SHELL, and the live image's root entry still reads
+# /bin/sh, so anything asking what shell this is got the wrong answer for a
+# session that runs zsh a few lines below.
+export SHELL=/bin/zsh
 
 R=$(printf '\033[0m'); B=$(printf '\033[1m')
 TEAL=$(printf '\033[38;5;44m'); SNOW=$(printf '\033[38;5;231m')
@@ -393,8 +403,29 @@ ARCTIC
 	printf '%s\n' "$R"
 	printf '  %sArctic Linux is already installed on %s.%s\n\n' "$GREY" "$found" "$R"
 else
-	arcticfetch 2>/dev/null || true
-	printf '\n'
+	# Not arcticfetch. That is a thing to run when you want to look at the
+	# machine, not the first thing a person who has just booted an installer
+	# needs - which is how to install it.
+	v=$(sed -n 's/^VERSION=//p' /etc/arctic-release 2>/dev/null | tr -d '"' | head -1)
+	[ -n "$v" ] || v="Arctic Linux"
+	printf '\n  %s%s%s  %slive session%s\n\n' "$SNOW$B" "$v" "$R" "$GREY" "$R"
+
+	printf '  %sInstalling%s\n' "$TEAL$B" "$R"
+	printf '    %s1.%s  Network. Ethernet comes up on its own; for wireless run %swifi-connect%s\n' "$B" "$R" "$B" "$R"
+	printf '        and pick a network from the list.\n'
+	printf '    %s2.%s  Configure. Edit %s/etc/arctic/install.conf%s - it is the whole\n' "$B" "$R" "$B" "$R"
+	printf '        install: disk, filesystem, user, password, init, desktop.\n'
+	printf '    %s3.%s  Install. Run %sarctic-install%s. It partitions, installs and sets up\n' "$B" "$R" "$B" "$R"
+	printf '        the bootloader in one pass, after asking once.\n\n'
+
+	printf '  %sAfterwards%s\n' "$TEAL$B" "$R"
+	printf '    %salpm add <pkg>%s installs, %salpm rem <pkg>%s removes, %salpm search <text>%s finds.\n' "$B" "$R" "$B" "$R" "$B" "$R"
+	printf '    %s/etc/alpm/alpm.conf%s sets the colours and %sALPM_STYLE%s how it reports itself.\n' "$B" "$R" "$B" "$R"
+	printf '    To repair an installed system from here: mount it and %sarctic-chroot /mnt%s.\n\n' "$B" "$R"
+
+	printf '  %sArctic is alpha. Expect rough edges, and keep a copy of anything%s\n' "$AMB" "$R"
+	printf '  %sthat matters on the disk you point it at.%s\n' "$AMB" "$R"
+	printf '  %sarctic-docs.apiwow.net  -  arcticfetch for what this machine is%s\n\n' "$GREY" "$R"
 fi
 
 # Ctrl-D at the prompt ends the shell, which hands tty1 back to init to

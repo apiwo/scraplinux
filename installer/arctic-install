@@ -1344,17 +1344,25 @@ chroot_run() {
 # single-partition ext4 install all produce a correct fstab without this
 # needing to know which of them happened.
 #
-# Devices are written as PARTUUID= (falling back to filesystem UUID= for
-# anything that is not an actual partition, like a LUKS/device-mapper root)
-# so nothing breaks when the kernel enumerates disks in a different order on
-# the next boot. PARTUUID specifically, not filesystem UUID: arctic-boot-strap
-# reads the root line straight back out of this fstab for the kernel's own
-# root= parameter, and testing found the kernel's built-in root=UUID=
-# resolution does not reliably find a match that early in boot (no initramfs
-# tooling has run yet to help it) - it panics with "VFS: Unable to mount root
-# fs on unknown-block(0,0)" even though the partition is right there. PARTUUID
-# comes straight from the partition table itself, no filesystem probing
-# needed, so the kernel resolves it immediately.
+# Devices are written as UUID= (falling back to PARTUUID=, then to the device
+# path) so nothing breaks when the kernel enumerates disks in a different
+# order on the next boot.
+#
+# UUID first, and it has to be: this used to write PARTUUID= on the reasoning
+# that the kernel resolves it out of the partition table with no filesystem
+# probing, which is true, and irrelevant, because the kernel never sees it.
+# Arctic always boots through an initramfs, and the initramfs resolves root=
+# with busybox findfs - which implements LABEL= and UUID= and nothing else:
+#
+#     # findfs UUID=f1832033-6264-4f35-8f81-43170e93a396
+#     /dev/vda3
+#     # findfs PARTUUID=9813faed-6c1b-4e86-808b-61e6498d25db
+#     Usage: findfs LABEL=label | UUID=uuid
+#
+# So every install wrote a root= its own initramfs could not resolve, and
+# every installed system stopped at "no device matches PARTUUID=..." and
+# dropped to the initramfs shell. The same applies to /boot: this fstab is
+# replayed by busybox mount, which looks devices up the same way.
 genfstab() {
 	_t=${1:-$TARGET}
 	printf '# Arctic Linux - /etc/fstab\n'
@@ -1374,12 +1382,12 @@ genfstab() {
 		esac
 		case "$dev" in /dev/*) ;; *) continue ;; esac
 
-		partuuid=$(blkid -s PARTUUID -o value "$dev" 2>/dev/null)
-		if [ -n "$partuuid" ]; then
-			spec="PARTUUID=$partuuid"
+		uuid=$(blkid -s UUID -o value "$dev" 2>/dev/null)
+		if [ -n "$uuid" ]; then
+			spec="UUID=$uuid"
 		else
-			uuid=$(blkid -s UUID -o value "$dev" 2>/dev/null)
-			spec=${uuid:+UUID=$uuid}; spec=${spec:-$dev}
+			partuuid=$(blkid -s PARTUUID -o value "$dev" 2>/dev/null)
+			spec=${partuuid:+PARTUUID=$partuuid}; spec=${spec:-$dev}
 		fi
 
 		# Keep only the mount options worth persisting. The kernel reports
@@ -1681,15 +1689,27 @@ EOF
 	#
 	# wifi-connect leaves its configuration behind, so the credentials come
 	# from there rather than being asked for a second time.
+	# The inverse of the escaping wifi-connect applies when it writes the
+	# quoted forms - a backslash or a double quote in an SSID or a passphrase
+	# is stored escaped and has to come back out as it was typed.
+	_wpa_unescape() { sed -e 's/\\"/"/g' -e 's/\\\\/\\/g'; }
 	if [ -z "$A_WIFI_SSID" ]; then
 		for _wc in /etc/wpa_supplicant-*.conf; do
 			[ -f "$_wc" ] || continue
-			_ws=$(sed -n 's/^[[:space:]]*ssid="\(.*\)"$/\1/p' "$_wc" | head -1)
-			# The unquoted psk line is the 256-bit derivation wpa_passphrase
-			# produced. NetworkManager takes it under psk= exactly as it takes
-			# a passphrase, and it means the passphrase itself is not written
-			# out a second time.
-			_wp=$(sed -n 's/^[[:space:]]*psk=\(.*\)$/\1/p' "$_wc" | grep -v '^"' | head -1)
+			_ws=$(sed -n 's/^[[:space:]]*ssid="\(.*\)"$/\1/p' "$_wc" | head -1 | _wpa_unescape)
+			# Two spellings, because two things write this file.
+			#
+			# An unquoted psk is the 64-hex-digit derivation wpa_passphrase
+			# produces; a quoted one is the passphrase itself, which is what
+			# wifi-connect writes now that wpa_passphrase has turned out to
+			# be unusable without a terminal. NetworkManager accepts either
+			# under psk=, so both are carried across - but only the hex form
+			# used to be looked for, and after the change that left every
+			# installed profile with no [wifi-security] section at all and a
+			# laptop that installed over wifi and rebooted onto nothing.
+			_wp=$(sed -n 's/^[[:space:]]*psk=\([0-9a-fA-F]\{64\}\)[[:space:]]*$/\1/p' "$_wc" | head -1)
+			[ -n "$_wp" ] || \
+				_wp=$(sed -n 's/^[[:space:]]*psk="\(.*\)"[[:space:]]*$/\1/p' "$_wc" | head -1 | _wpa_unescape)
 			[ -n "$_ws" ] || continue
 			mkdir -p "$TARGET/etc/NetworkManager/system-connections"
 			_wf="$TARGET/etc/NetworkManager/system-connections/arctic-wifi.nmconnection"

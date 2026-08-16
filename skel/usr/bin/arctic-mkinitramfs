@@ -148,6 +148,19 @@ UUID=*|PARTUUID=*|LABEL=*|PARTLABEL=*)
 		_dev=\$(findfs "\$ROOT" 2>/dev/null) && [ -n "\$_dev" ] && break
 		sleep 1; n=\$((n+1))
 	done
+	# findfs implements LABEL= and UUID= and nothing else, so a PARTUUID=
+	# spec - which is what every install before this wrote - never resolves
+	# and the machine stops here. arctic-install writes the root filesystem
+	# with the label below, so there is one more thing worth trying before
+	# giving up on a system that is otherwise perfectly installed.
+	if [ -z "\$_dev" ]; then
+		case "\$ROOT" in
+		PARTUUID=*|PARTLABEL=*)
+			_dev=\$(findfs LABEL=arctic-root 2>/dev/null) || :
+			[ -n "\$_dev" ] && say "\$ROOT is not resolvable here - fell back to LABEL=arctic-root"
+			;;
+		esac
+	fi
 	[ -n "\$_dev" ] || oops "no device matches \$ROOT"
 	say "\$ROOT is \$_dev"
 	ROOT=\$_dev ;;

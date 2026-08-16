@@ -130,9 +130,19 @@ info_disk() {
 }
 
 info_shell() {
-	s=${SHELL:-}
-	[ -n "$s" ] || s=$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f7)
-	b=$(basename "${s:-sh}")
+	# The shell actually running this, before the one the account is
+	# configured with. On the live image root's passwd entry still says
+	# /bin/sh and getty exports no SHELL, so both of the fallbacks below
+	# answered "sh" while the session was demonstrably zsh.
+	b=$(cat "/proc/$PPID/comm" 2>/dev/null)
+	case "$b" in
+	''|*[!a-z0-9._-]*) b="" ;;
+	esac
+	if [ -z "$b" ]; then
+		s=${SHELL:-}
+		[ -n "$s" ] || s=$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f7)
+		b=$(basename "${s:-sh}")
+	fi
 	case "$b" in
 	zsh) v=$(zsh --version 2>/dev/null | cut -d' ' -f2) ;;
 	*) v="" ;;

@@ -138,6 +138,17 @@ fi
 #
 # So the host's 64-bit directory goes on the line first - after the sysroot,
 # which still takes precedence over both.
+# The same trap, closed at the other end. Putting -L/usr/lib64 on the line
+# only helps while nothing gets in front of it, and libtool's own -L/usr/lib
+# does exactly that in some packages - libfm links, or rather does not, that
+# way. The sysroot is searched before any of them, so a libc.so *there*
+# settles it whatever order the rest arrives in. It is the host's own 64-bit
+# script, which is what these builds link against anyway.
+if [ -d "$ALPM_SYSROOT/usr/lib" ] && [ ! -e "$ALPM_SYSROOT/usr/lib/libc.so" ] && \
+   [ -e /usr/lib64/libc.so ] && grep -qs 'OUTPUT_FORMAT(elf32' /usr/lib/libc.so; then
+	cp -f /usr/lib64/libc.so "$ALPM_SYSROOT/usr/lib/libc.so" 2>/dev/null || :
+fi
+
 if [ -e /usr/lib64/libc.so ] && grep -qs 'OUTPUT_FORMAT(elf32' /usr/lib/libc.so; then
 	if [ -d "$ALPM_SYSROOT/usr" ]; then
 		# Behind the sysroot, which still answers first for anything Arctic

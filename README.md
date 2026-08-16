@@ -71,8 +71,8 @@ passphrase with the characters masked. An installed system uses NetworkManager
 
 ```sh
 alpm fetch all          # sync the repositories
-alpm ins vim            # install
-alpm ins -s helix       # build from source instead
+alpm add vim            # install
+alpm add -s helix       # build from source instead
 alpm rollback           # undo the last transaction
 alpm system fix         # corrections that do not change a version
 ```
@@ -82,7 +82,7 @@ Binaries come from
 served over `raw.githubusercontent.com`; recipes from
 **[ports-arctic.apiwow.net](https://ports-arctic.apiwow.net)**. The two never
 mix: a repository in `/etc/alpm/repos.d` serves `.alpmz` binaries and nothing
-else, and `alpm ins -s` is the only thing that reaches the ports host.
+else, and `alpm add -s` is the only thing that reaches the ports host.
 
 Packages too large for a git mirror — the toolchain at 148 MiB, firmware at
 162 MiB — are release assets instead. The `big` repository keeps its index

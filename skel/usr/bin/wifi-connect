@@ -33,6 +33,60 @@ say()  { printf '%s::%s %s\n' "$TEAL$BOLD" "$R" "$*"; }
 ok()   { printf '  %s✓%s  %s\n' "$MINT$BOLD" "$R" "$*"; }
 oops() { printf '%s!!%s %s\n' "$RED$BOLD" "$R" "$*" >&2; }
 
+# Where wpa_supplicant opens its control socket, and where wpa_cli looks for
+# it by default. Kept in one place so the two can never disagree.
+CTRL_DIR=/run/wpa_supplicant
+
+# A double quote or a backslash in an SSID or a passphrase ends the quoted
+# string early in wpa_supplicant's config format, so both are escaped. Neither
+# is common and both are legal, and a passphrase silently truncated at a
+# backslash fails to associate with nothing to show why.
+conf_escape() {
+	printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+}
+
+# 5 GHz is why a scan can show a network the card then refuses to talk to.
+#
+# With no regulatory database the kernel falls back to world domain "00", in
+# which almost every 5 GHz channel is marked no-IR: the card may listen, so the
+# access point turns up in a scan, and it may not transmit, so association
+# never starts. It looks exactly like a wrong passphrase from the outside.
+#
+# The database is a firmware file the kernel loads on its own. If it is not
+# installed there is nothing to set, and saying so is more use than a 30-second
+# timeout.
+check_regdomain() {
+	command -v iw >/dev/null 2>&1 || return 0
+	_reg=$(iw reg get 2>/dev/null | awk -F': ' '/^country/{print $1; exit}' | awk '{print $2}')
+	case "${_reg:-00}" in
+	00|'')
+		if [ -e /usr/lib/firmware/regulatory.db ] || [ -e /lib/firmware/regulatory.db ]; then
+			# There is a database and the domain is still world, which
+			# means nothing has selected a country yet.
+			if [ -n "${WIFI_COUNTRY:-}" ]; then
+				# iw wants the alpha-2 code in capitals and rejects
+				# anything else outright with "not a valid ISO/IEC
+				# 3166-1 alpha2" - so WIFI_COUNTRY=us failed and,
+				# with the error discarded, failed silently.
+				_cc=$(printf '%s' "$WIFI_COUNTRY" | tr '[:lower:]' '[:upper:]')
+				if iw reg set "$_cc" 2>/dev/null; then
+					say "regulatory domain $_cc"
+				else
+					oops "iw rejected the country code '$WIFI_COUNTRY'"
+				fi
+				sleep 1
+			else
+				printf '     %sregulatory domain is 00 (world) - 5 GHz may not associate.\n' "$GREY"
+				printf '     set one with: WIFI_COUNTRY=US wifi-connect%s\n' "$R"
+			fi
+		else
+			printf '     %sno regulatory database installed - 5 GHz may not associate.\n' "$GREY"
+			printf '     alpm add wireless-regdb, or use the 2.4 GHz network%s\n' "$R"
+		fi
+		;;
+	esac
+}
+
 wireless_ifaces() {
 	for i in /sys/class/net/*; do
 		[ -d "$i/wireless" ] || continue
@@ -112,29 +166,79 @@ connect() {
 	# passphrase readable for the window before a later chmod.
 	: >"$conf"
 	chmod 600 "$conf"
+	# wpa_passphrase writes a network block and nothing else - no
+	# ctrl_interface line. Without one wpa_supplicant opens no control
+	# socket at all, so every wpa_cli in here failed with "Could not connect
+	# to wpa_supplicant: wlan0", the status check in the wait loop below
+	# silently answered "not connected" on every pass, and the one command
+	# the error message tells you to run could not work either. The header
+	# goes in first and the network block is appended to it.
+	mkdir -p "$CTRL_DIR" 2>/dev/null
+	{
+		printf 'ctrl_interface=%s\n' "$CTRL_DIR"
+		printf 'ctrl_interface_group=0\n'
+		printf 'update_config=1\n'
+	} >"$conf"
 	if [ -z "$_psk" ]; then
 		{
 			printf 'network={\n'
-			printf '\tssid="%s"\n' "$_ssid"
+			printf '\tssid="%s"\n' "$(conf_escape "$_ssid")"
 			printf '\tkey_mgmt=NONE\n'
 			printf '}\n'
-		} >"$conf"
+		} >>"$conf"
 	else
-		# Over stdin, not argv: wpa_passphrase would otherwise put the
-		# passphrase in its own command line, readable from /proc while
-		# it runs.
-		printf '%s\n' "$_psk" | wpa_passphrase "$_ssid" >"$conf" 2>/dev/null
+		# The network block is written here rather than by wpa_passphrase.
+		#
+		# wpa_passphrase turns the terminal's echo off before it reads, so
+		# it calls tcgetattr on its stdin - and when stdin is a pipe, which
+		# is the only way to hand it a passphrase without putting it in
+		# argv for every process on the machine to read, tcgetattr fails
+		# with ENOTTY and it exits 1 having written nothing at all. Its
+		# stderr went to /dev/null and its exit status was not checked, so
+		# the config ended up with a ctrl_interface header and no network
+		# in it. wpa_supplicant then started perfectly, associated with
+		# nothing, and the wait loop timed out at 30s blaming the
+		# passphrase. That is the whole of "wifi does not work".
+		#
+		# There is nothing to lose by not using it: wpa_supplicant derives
+		# the PSK from a quoted passphrase itself, and wpa_passphrase's own
+		# output carries the plaintext in a #psk= comment beside the hash
+		# anyway. The file is 0600 either way.
+		{
+			printf 'network={\n'
+			printf '\tssid="%s"\n' "$(conf_escape "$_ssid")"
+			printf '\tpsk="%s"\n' "$(conf_escape "$_psk")"
+			printf '}\n'
+		} >>"$conf"
+	fi
+	# Nothing below can work if the block above did not land.
+	if ! grep -q '^network=' "$conf"; then
+		oops "could not write a network block to $conf"
+		exit 1
 	fi
 
 	# Replace any previous run for this interface rather than stacking a
 	# second wpa_supplicant fighting the first over the same nl80211 device.
-	pkill -f "wpa_supplicant .*-i$_if" 2>/dev/null
+	# The pattern has to match the command line actually used: "-i wlan0" is
+	# written with a space, and "-i$_if" only ever matched the joined spelling
+	# this script does not use, so the old process was never killed.
+	pkill -f "wpa_supplicant.*-i *$_if" 2>/dev/null
 	sleep 1
 
 	ip link set "$_if" up 2>/dev/null
+	check_regdomain "$_ssid"
 	say "associating with $_ssid"
-	if ! wpa_supplicant -B -i "$_if" -c "$conf" >/dev/null 2>&1; then
-		oops "wpa_supplicant could not associate with $_ssid on $_if"
+	# Not /dev/null. When association fails this log is the only account of
+	# why - "did not come up after 30s" on its own sends you looking at the
+	# passphrase when the driver may have refused the channel outright.
+	mkdir -p /run/arctic 2>/dev/null
+	_wpalog="/run/arctic/wpa_supplicant-$_if.log"
+	# Truncated per attempt, then appended to by both -f and the redirect, so
+	# what it holds is this attempt and not the last one as well.
+	: >"$_wpalog" 2>/dev/null
+	if ! wpa_supplicant -B -i "$_if" -c "$conf" -f "$_wpalog" >>"$_wpalog" 2>&1; then
+		oops "wpa_supplicant could not start on $_if"
+		[ -s "$_wpalog" ] && sed 's/^/     /' "$_wpalog" >&2
 		exit 1
 	fi
 	# wpa_supplicant -B returns as soon as it has forked, which is before it
@@ -160,9 +264,23 @@ connect() {
 	if [ "$(cat "/sys/class/net/$_if/carrier" 2>/dev/null)" != 1 ] && \
 	   ! { command -v wpa_cli >/dev/null 2>&1 && \
 	       wpa_cli -i "$_if" status 2>/dev/null | grep -q '^wpa_state=COMPLETED'; }; then
-		oops "$_ssid did not come up after ${_n}s - the passphrase is the usual reason"
-		printf '     %swpa_cli -i %s status%s says what it is actually doing\n' \
-			"$GREY" "$_if" "$R"
+		oops "$_ssid did not come up after ${_n}s"
+		# Print the state rather than naming a command to go and run. The
+		# suggestion used to be "wpa_cli -i wlan0 status", which could not
+		# work at all while no control socket was being opened.
+		_st=$(wpa_cli -i "$_if" status 2>/dev/null | \
+			awk -F= '/^wpa_state=|^ssid=|^bssid=|^freq=/{print "     " $0}')
+		if [ -n "$_st" ]; then
+			printf '%s%s%s\n' "$GREY" "$_st" "$R"
+		else
+			printf '     %sno control socket - wpa_supplicant is not running%s\n' "$GREY" "$R"
+		fi
+		if [ -s "$_wpalog" ]; then
+			printf '     %slast lines of %s:%s\n' "$GREY" "$_wpalog" "$R"
+			tail -n 8 "$_wpalog" 2>/dev/null | sed "s/^/       $GREY/;s/\$/$R/"
+		fi
+		printf '     %sa wrong passphrase, or a 5 GHz channel the regulatory\n' "$GREY"
+		printf '     domain forbids, are the two usual causes.%s\n' "$R"
 		exit 1
 	fi
 	ok "associated"

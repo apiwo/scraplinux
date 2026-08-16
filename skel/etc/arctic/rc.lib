@@ -3,14 +3,41 @@
 # service. Sourced, never executed.
 # shellcheck shell=sh disable=SC2039
 
-# Console width. stty only answers when stdin is the terminal, which it is not
-# during early boot, so fall back to a safe 80 rather than an empty value.
-_rc_cols=$(stty size 2>/dev/null </dev/console | cut -d" " -f2)
-case "$_rc_cols" in
-''|*[!0-9]*) _rc_cols=80 ;;
-esac
-[ "$_rc_cols" -ge 40 ] || _rc_cols=80
-[ "$_rc_cols" -le 300 ] || _rc_cols=80
+# Console width, worked out on first use and remembered.
+#
+# It used to be measured once, when this file was sourced - which is the first
+# thing rc.boot does, before it has mounted /dev. There was no /dev/console to
+# ask yet, so every boot fell back to 80 columns and then right-aligned the
+# whole boot against column 80 of a console that is usually far wider. On a
+# 1080p framebuffer that is 240 columns: the status sat a third of the way
+# across and the rest of the line was empty.
+#
+# Asking at first use instead means /dev is mounted by the time the question
+# is put, and the answer is cached so it is still only asked once.
+_rc_cols=""
+_rc_width() {
+	if [ -z "$_rc_cols" ]; then
+		_rc_cols=$(stty size 2>/dev/null </dev/console | cut -d" " -f2)
+		case "$_rc_cols" in
+		''|*[!0-9]*) _rc_cols="" ;;
+		esac
+		# The framebuffer knows even when there is no controlling terminal
+		# to ask. 8 pixels per column is the built-in console font.
+		if [ -z "$_rc_cols" ] && [ -r /sys/class/graphics/fb0/virtual_size ]; then
+			_rc_fbw=$(cut -d, -f1 /sys/class/graphics/fb0/virtual_size 2>/dev/null)
+			case "$_rc_fbw" in
+			''|*[!0-9]*) ;;
+			*) _rc_cols=$(( _rc_fbw / 8 )) ;;
+			esac
+		fi
+		case "$_rc_cols" in
+		''|*[!0-9]*) _rc_cols=80 ;;
+		esac
+		[ "$_rc_cols" -ge 40 ] || _rc_cols=80
+		[ "$_rc_cols" -le 300 ] || _rc_cols=300
+	fi
+	printf '%s' "$_rc_cols"
+}
 
 if [ -t 1 ] && [ "${TERM:-linux}" != "dumb" ]; then
 	_R=$(printf '\033[0m');   _B=$(printf '\033[1m')
@@ -66,8 +93,11 @@ _rc_cs() {
 	printf '%s' "${_c_v:-0}"
 }
 
-# Hundredths to "1.3s".
-_rc_secs() { printf '%s.%ss' $(( ${1:-0} / 100 )) $(( (${1:-0} % 100) / 10 )); }
+# Hundredths to "1.32s". Both digits, not one: almost every service starts in
+# well under a tenth of a second, so a single decimal place printed "t=0.0s"
+# against nearly every line of the boot and the timing column said nothing at
+# all. Two digits is the full resolution /proc/uptime offers.
+_rc_secs() { printf '%s.%02ds' $(( ${1:-0} / 100 )) $(( ${1:-0} % 100 )); }
 
 _rc_boot_start=$(_rc_cs)
 _rc_step_start=$_rc_boot_start
@@ -81,14 +111,14 @@ begin() {
 
 # Width of the status field "[  ok  ]" plus the " t=1.3s" that follows it, and
 # of the "  :: " prefix begin() writes.
-_RC_STATUS_W=17
+_RC_STATUS_W=18
 _RC_PREFIX_W=5
 
 # Pad so the status sits flush right without ever reaching the last column - one
 # character too many wraps the closing bracket onto the next line, which is what
 # made the boot read as "[ OK" on one line and "]" on the next.
 _rc_pad() {
-	_p=$(( _rc_cols - ${#_rc_msg} - _RC_PREFIX_W - _RC_STATUS_W - 1 ))
+	_p=$(( $(_rc_width) - ${#_rc_msg} - _RC_PREFIX_W - _RC_STATUS_W - 1 ))
 	[ "$_p" -lt 1 ] && _p=1
 	_i=0; _sp=""
 	while [ "$_i" -lt "$_p" ]; do _sp="$_sp "; _i=$((_i+1)); done
@@ -113,7 +143,14 @@ bad() {
 	printf '%s%s[%sfailed%s]%s %st=%s%s\n' "$(_rc_pad)" "$_GREY" "$_RED$_B" \
 		"$_R$_GREY" "$_R" "$_GREY" "$(_rc_secs "$_rc_el")" "$_R"
 	[ -n "${1:-}" ] && printf '%s     %s%s\n' "$_GREY" "$*" "$_R"
-	printf '%s\n' "rc: failed: $_rc_msg ${*:-}" >>/run/arctic/boot.errors 2>/dev/null || :
+	# Tested, not redirected-and-hoped. A redirection that cannot be opened is
+	# reported by the shell itself, before the command's own "2>/dev/null" is
+	# in effect - so a failure before /run/arctic exists printed
+	# "can't create /run/arctic/boot.errors" onto the console in the middle of
+	# the boot, on top of the failure it was trying to record.
+	if [ -d /run/arctic ] || mkdir -p /run/arctic 2>/dev/null; then
+		printf '%s\n' "rc: failed: $_rc_msg ${*:-}" >>/run/arctic/boot.errors 2>/dev/null || :
+	fi
 }
 
 skip() {
@@ -129,7 +166,7 @@ skip() {
 # screen is a solid band of punctuation with the title floating under it -
 # the wider the display, the worse it looked.
 _rc_rule() {
-	seg=$(( _rc_cols / 7 ))
+	seg=$(( $(_rc_width) / 7 ))
 	[ "$seg" -lt 1 ] && seg=1
 	for n in 99 63 69 75 81 44 49; do
 		printf '\033[38;5;%sm' "$n"
@@ -150,7 +187,7 @@ banner() {
 	# The kernel sits at the right margin. Width is counted from the plain
 	# text, never from the escape sequences around it, which is how a line
 	# like this ends up wrapping on a narrow console.
-	_pad=$(( _rc_cols - 4 - ${#v} - ${#k} ))
+	_pad=$(( $(_rc_width) - 4 - ${#v} - ${#k} ))
 	[ "$_pad" -lt 2 ] && _pad=2
 	_sp=$(printf "%${_pad}s" '')
 
