@@ -4,7 +4,7 @@ What's built and working, what's known-broken, what's still source-only.
 Full docs live at arctic-docs.apiwow.net — this file is the terse engineering
 log, not a tutorial.
 
-Release label: **Arctic Linux - Alpha 2** (`a2`). The main line is a whole
+Release label: **Arctic Linux - Alpha 2.1** (`a2.1`). The main line is a whole
 number - Alpha 1 ran from `a1` to `a1.24`. One dot at most, and the digits
 after it are read one at a time, not as a decimal and not as further dotted
 fields: the first digit after the dot moves for a major bugfix and the second
@@ -207,6 +207,28 @@ produces is unpacked there and later builds compile and link against it
 paths point into the sysroot rather than at `/usr` on the build host.
 
 ## Known-fixed bugs worth remembering
+
+- **`-f` is not an option Arctic's wpa_supplicant has, and passing it stopped
+  wireless dead.** a2 added `-f "$log"` to the supplicant invocation so a
+  failed association would leave something to read. `-f` is compiled in by
+  `CONFIG_DEBUG_FILE`, which this build does not set, so wpa_supplicant
+  printed its usage and exited without ever touching the radio - and the
+  "log" the failure path then showed was that usage text, which is what the
+  screenshot of a2 failing actually contained. Redirection does the same job
+  and cannot be refused.
+
+  The option was checked with `wpa_supplicant -h` **on the build host**,
+  whose wpa_supplicant is built with `CONFIG_DEBUG_FILE` and accepts `-f`
+  perfectly. Check flags against the binary Arctic ships:
+
+      $ strings squash/usr/sbin/wpa_supplicant | grep -E '^  -[fBc] '
+        -B = run daemon in the background
+        -c = Configuration file
+
+- **A supplicant that never started still counted as started.** `-B` forks,
+  so the exit status says nothing about whether the daemon survived, and a
+  build that refuses an option can exit 0 having printed usage. The control
+  socket and the process are what get checked now.
 
 - **No installed system could boot.** The installer wrote `root=PARTUUID=` on
   the kernel command line and into fstab, on the reasoning that the kernel

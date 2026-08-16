@@ -236,9 +236,29 @@ connect() {
 	# Truncated per attempt, then appended to by both -f and the redirect, so
 	# what it holds is this attempt and not the last one as well.
 	: >"$_wpalog" 2>/dev/null
-	if ! wpa_supplicant -B -i "$_if" -c "$conf" -f "$_wpalog" >>"$_wpalog" 2>&1; then
-		oops "wpa_supplicant could not start on $_if"
-		[ -s "$_wpalog" ] && sed 's/^/     /' "$_wpalog" >&2
+	# No -f. It looks like the obvious way to get a log out of a daemon that
+	# has already forked, and Arctic's wpa_supplicant does not have it:
+	# -f is compiled in by CONFIG_DEBUG_FILE and this build does not set it.
+	# An unknown option makes wpa_supplicant print its usage and exit without
+	# ever starting, so the "log" this then showed was that usage text and the
+	# radio was never touched at all. Redirection does the same job and cannot
+	# be refused. Checked against the wpa_supplicant Arctic ships, not the
+	# one on the build host - the host's is built with CONFIG_DEBUG_FILE and
+	# accepts -f perfectly, which is exactly how this got shipped.
+	wpa_supplicant -B -i "$_if" -c "$conf" >>"$_wpalog" 2>&1
+	# Not the exit status. -B forks, and a supplicant that dies immediately
+	# afterwards still leaves a 0 behind; one that refuses an option prints
+	# usage and can exit 0 too. Ask whether the thing is actually running.
+	_n=0
+	while [ "$_n" -lt 5 ]; do
+		[ -e "$CTRL_DIR/$_if" ] && break
+		pgrep -f "wpa_supplicant.*$_if" >/dev/null 2>&1 && break
+		sleep 1
+		_n=$((_n + 1))
+	done
+	if [ ! -e "$CTRL_DIR/$_if" ] && ! pgrep -f "wpa_supplicant.*$_if" >/dev/null 2>&1; then
+		oops "wpa_supplicant did not start on $_if"
+		[ -s "$_wpalog" ] && tail -n 12 "$_wpalog" | sed 's/^/     /' >&2
 		exit 1
 	fi
 	# wpa_supplicant -B returns as soon as it has forked, which is before it
@@ -288,9 +308,20 @@ connect() {
 	say "requesting an address"
 	# One attempt used to be the whole story. A lease can take longer than
 	# udhcpc's own default patience on a busy access point.
+	# -s explicitly. busybox's compiled-in default is this same path and it is
+	# on the image, so leaving it off worked - but a lease that is obtained
+	# and never applied looks exactly like no lease at all, and that is not a
+	# thing worth leaving to a compiled-in default. rc.d/network already names
+	# it; these two now agree.
+	_dhcpscript=/usr/share/udhcpc/default.script
+	_dhcplog=/run/arctic/udhcpc-$_if.log
+	: >"$_dhcplog" 2>/dev/null
 	_got=0
 	for _try in 1 2 3; do
-		if udhcpc -i "$_if" -n -q -t 5 -T 3 >/dev/null 2>&1; then _got=1; break; fi
+		if udhcpc -i "$_if" -n -q -t 5 -T 3 \
+			${_dhcpscript:+-s "$_dhcpscript"} >>"$_dhcplog" 2>&1; then
+			_got=1; break
+		fi
 		[ "$_try" = 3 ] || say "no lease yet - asking again"
 	done
 	if [ "$_got" = 1 ]; then
@@ -304,7 +335,9 @@ connect() {
 		printf '\n  %sReady. Edit /etc/arctic/install.conf, then run arctic-install.%s\n' \
 			"$GREY" "$R"
 	else
-		oops "associated, but DHCP failed - check 'ip addr' and the network"
+		oops "associated, but DHCP failed"
+		[ -s "$_dhcplog" ] && tail -n 8 "$_dhcplog" | sed 's/^/     /' >&2
+		printf '     %sthe link is up - this is the address, not the wireless.%s\n' "$GREY" "$R"
 		exit 1
 	fi
 }
