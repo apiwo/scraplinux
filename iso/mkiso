@@ -42,8 +42,8 @@ BUILD_ID=$(date '+%Y.%m.%d')
 #
 # They are positions, not a decimal number: a1.2 is a later release than
 # a1.1.9, and a1.1.10 is a later one than a1.1.9 as well.
-VERSION_TAG="a1.2.1"
-VERSION="Arctic Linux - Alpha 1.2.1"
+VERSION_TAG="a1.2.2"
+VERSION="Arctic Linux - Alpha 1.2.2"
 LABEL="ARCTIC"
 
 case "$PROFILE" in
@@ -230,7 +230,12 @@ cp -f "$SRCTREE/skel/etc/alpm/repos.d/"*.repo "$S/etc/alpm/repos.d/"
 #               one, so "wifi-connect scan" answered "iw is not installed"
 #               and the documented way onto a network was to type an SSID
 #               exactly right from memory.
-LIVE_EXTRAS="curl ca-certificates iw nano vim bmake ttf-jetbrains-mono ttf-nerd-fonts-symbols"
+#   llvm        clang and lld, so the medium can compile. It is 1 GiB
+#               installed and it is the single largest thing on the image by
+#               a long way - the alternative is an installer that cannot
+#               build anything until it has downloaded a compiler, on a
+#               machine whose network may be the thing being repaired.
+LIVE_EXTRAS="curl ca-certificates iw nano vim bmake llvm ttf-jetbrains-mono ttf-nerd-fonts-symbols"
 
 # Dependencies are resolved, not assumed. Unpacking only the named packages
 # put curl on the image without libnghttp2 or brotli, so it died at startup

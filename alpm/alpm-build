@@ -215,9 +215,14 @@ have "$LD" || _missing="$_missing $LD"
 have make || have bmake || _missing="$_missing bmake"
 if [ -n "$_missing" ]; then
 	err "this system cannot build from source yet - missing:$_missing"
-	printf '  %sArctic builds with clang, lld and bmake - install them with:%s\n' \
+	# It used to say "alpm ins base-devel". There is no base-devel package,
+	# so following the advice failed and left someone no better off. clang
+	# and lld come from llvm, which is a release asset in the big repository
+	# and wants about 1.2 GiB free to unpack.
+	printf '  %sArctic builds with clang, lld and bmake. clang and lld are in llvm:%s\n' \
 		"$A_GREY" "$C_R" >&2
-	printf '  %s  alpm ins base-devel%s\n' "$A_GREY" "$C_R" >&2
+	printf '  %s  alpm add llvm%s\n' "$A_GREY" "$C_R" >&2
+	printf '  %s  (about 1.2 GiB free is needed to unpack it)%s\n' "$A_GREY" "$C_R" >&2
 	exit 1
 fi
 

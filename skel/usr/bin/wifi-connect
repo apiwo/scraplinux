@@ -137,10 +137,45 @@ connect() {
 		oops "wpa_supplicant could not associate with $_ssid on $_if"
 		exit 1
 	fi
+	# wpa_supplicant -B returns as soon as it has forked, which is before it
+	# has associated and long before the four-way handshake has finished. Ask
+	# for a lease at that moment and it goes out of an interface still
+	# reporting NO-CARRIER, fails, and reads as a network fault - the
+	# passphrase was fine and the association did complete, a second later.
+	say "waiting for the link"
+	_n=0
+	while [ "$_n" -lt 30 ]; do
+		if [ "$(cat "/sys/class/net/$_if/carrier" 2>/dev/null)" = 1 ]; then
+			break
+		fi
+		# wpa_cli is the authority when it is there: carrier can lag the
+		# handshake on some drivers.
+		if command -v wpa_cli >/dev/null 2>&1 && \
+		   wpa_cli -i "$_if" status 2>/dev/null | grep -q '^wpa_state=COMPLETED'; then
+			break
+		fi
+		sleep 1
+		_n=$((_n + 1))
+	done
+	if [ "$(cat "/sys/class/net/$_if/carrier" 2>/dev/null)" != 1 ] && \
+	   ! { command -v wpa_cli >/dev/null 2>&1 && \
+	       wpa_cli -i "$_if" status 2>/dev/null | grep -q '^wpa_state=COMPLETED'; }; then
+		oops "$_ssid did not come up after ${_n}s - the passphrase is the usual reason"
+		printf '     %swpa_cli -i %s status%s says what it is actually doing\n' \
+			"$GREY" "$_if" "$R"
+		exit 1
+	fi
 	ok "associated"
 
 	say "requesting an address"
-	if udhcpc -i "$_if" -n -q >/dev/null 2>&1; then
+	# One attempt used to be the whole story. A lease can take longer than
+	# udhcpc's own default patience on a busy access point.
+	_got=0
+	for _try in 1 2 3; do
+		if udhcpc -i "$_if" -n -q -t 5 -T 3 >/dev/null 2>&1; then _got=1; break; fi
+		[ "$_try" = 3 ] || say "no lease yet - asking again"
+	done
+	if [ "$_got" = 1 ]; then
 		addr=$(ip -4 addr show "$_if" 2>/dev/null | \
 			awk '/inet /{print $2; exit}')
 		gw=$(ip route 2>/dev/null | awk '/^default/{print $3; exit}')

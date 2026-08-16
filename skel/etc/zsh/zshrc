@@ -184,13 +184,13 @@ ports() { doas netstat -tulpn 2>/dev/null || doas ss -tulpn; }
 whopkg() { alpm owns "$(command -v "$1")"; }
 
 # ---------------------------------------------------------------------- extras
-# Syntax highlighting and autosuggestions if the packages are installed.
-for p in \
-	/usr/share/zsh/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh \
-	/usr/share/zsh/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
-do
-	[[ -r $p ]] && source $p
-done
+# Autosuggestions, and nothing else. Syntax highlighting recolours the line
+# as you type it, which fights with the prompt and with anything that writes
+# to the terminal while a command is being edited. One plugin that completes
+# what you have typed before is worth having; a shell that decorates itself
+# is not.
+p=/usr/share/zsh/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh
+[[ -r $p ]] && source $p
 ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=238'
 
 # Anything dropped in here is picked up automatically.
@@ -206,6 +206,9 @@ if [[ -o interactive ]] && [[ -z $ARCTIC_GREETED ]] && [[ -z $ARCTIC_CHROOT ]] \
    && [[ $SHLVL -eq 1 ]] \
    && ! grep -q '^INSTALLED=' /etc/arctic-release 2>/dev/null; then
 	export ARCTIC_GREETED=1
-	[[ -x /usr/bin/arcticfetch ]] && arcticfetch
+	# No arcticfetch here. It is a thing to run when you want to look at it -
+	# printing a logo and a hardware summary over the top of every login is
+	# noise, and on the live image it pushed the one line that matters (how
+	# to get onto a network) off the top of a small screen.
 	print -P "%F{245}Wireless? Run %F{44}wifi-connect%F{245} - it scans, lists what is in range and asks for the passphrase. Or plug in Ethernet. Then edit %F{44}/etc/arctic/install.conf%F{245} and run %F{44}arctic-install%F{245}.%f"
 fi

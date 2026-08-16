@@ -312,7 +312,10 @@ check_config() {
 	cfg_enum A_BOOT_FW "$A_BOOT_FW" "efi bios"
 	cfg_enum A_BOOTLOADER "$A_BOOTLOADER" "limine grub"
 	cfg_enum A_MICROCODE "$A_MICROCODE" "auto intel amd none"
-	cfg_enum A_INIT "$A_INIT" "initialization busybox openrc sysvinit runit dinit nitro systemd-libre"
+	# systemd-libre is not in this list because it is not packaged. Offering a
+	# choice that can only fall back to something else is worse than not
+	# offering it - it comes back when there is a package behind it.
+	cfg_enum A_INIT "$A_INIT" "initialization busybox openrc sysvinit runit dinit nitro"
 	cfg_enum A_PKGIT "$A_PKGIT" "y n"
 	cfg_enum A_NET "$A_NET" "offline dhcp wifi static"
 	cfg_enum A_DESKTOP "$A_DESKTOP" "none xfce kde niri dwm"
@@ -1642,6 +1645,53 @@ rpc:        files
 EOF
 		chmod 644 "$TARGET/etc/nsswitch.conf"
 	fi
+	# If the install itself happened over wireless, that connection is the one
+	# the machine needs after the reboot - and nothing was carrying it across.
+	# A_NET defaults to dhcp, which writes a *wired* profile, so a laptop
+	# installed over wifi came up with a NetworkManager that had never heard
+	# of the network it had just used. It looked like wireless was broken; it
+	# was never configured.
+	#
+	# This adds the wireless profile rather than replacing anything: a machine
+	# with both keeps its wired configuration exactly as it was, and
+	# NetworkManager picks whichever is actually plugged in or in range.
+	#
+	# wifi-connect leaves its configuration behind, so the credentials come
+	# from there rather than being asked for a second time.
+	if [ -z "$A_WIFI_SSID" ]; then
+		for _wc in /etc/wpa_supplicant-*.conf; do
+			[ -f "$_wc" ] || continue
+			_ws=$(sed -n 's/^[[:space:]]*ssid="\(.*\)"$/\1/p' "$_wc" | head -1)
+			# The unquoted psk line is the 256-bit derivation wpa_passphrase
+			# produced. NetworkManager takes it under psk= exactly as it takes
+			# a passphrase, and it means the passphrase itself is not written
+			# out a second time.
+			_wp=$(sed -n 's/^[[:space:]]*psk=\(.*\)$/\1/p' "$_wc" | grep -v '^"' | head -1)
+			[ -n "$_ws" ] || continue
+			mkdir -p "$TARGET/etc/NetworkManager/system-connections"
+			_wf="$TARGET/etc/NetworkManager/system-connections/arctic-wifi.nmconnection"
+			{
+				printf '[connection]\n'
+				printf 'id=%s\n' "$_ws"
+				printf 'uuid=%s\n' "$(gen_uuid)"
+				printf 'type=wifi\n'
+				printf 'autoconnect=true\n\n'
+				printf '[wifi]\nmode=infrastructure\nssid=%s\n\n' "$_ws"
+				if [ -n "$_wp" ]; then
+					printf '[wifi-security]\nkey-mgmt=wpa-psk\npsk=%s\n\n' "$_wp"
+				fi
+				printf '[ipv4]\nmethod=auto\n\n'
+				printf '[ipv6]\nmethod=auto\n'
+			} >"$_wf"
+			# NetworkManager refuses to load a world-readable profile - the
+			# key is in it in plain text.
+			chmod 600 "$_wf"
+			logit "carried the wireless connection '$_ws' into the installed system"
+			step "Wireless" "carried '$_ws' across from the installer"
+			break
+		done
+	fi
+
 	case "$A_NET" in
 	wifi)
 		# NetworkManager's keyfile plugin: one file per connection, mode 600
