@@ -946,6 +946,30 @@ do_install() {
 		target_alpm ins gcc-libs libglvnd gmake || :
 		target_alpm ins nvidia-drivers nvidia-utils || : ;;
 	nouveau) target_alpm ins mesa nouveau-drivers || : ;;
+	esac
+
+	# Installing the driver is not the same as using it. The running kernel
+	# has whatever it bound at boot - nouveau, usually, because it needs no
+	# firmware and binds first - and a module cannot replace one that is
+	# already driving the card. So the configuration is written now and takes
+	# effect at the next boot, which is worth saying out loud rather than
+	# leaving someone to wonder why the new driver made no difference.
+	case "$g" in
+	nvidia)
+		chroot_run alpm-nvidia-configure >/dev/null 2>&1 && 			logit "nvidia: modprobe and initramfs configuration written" || 			logit "nvidia: alpm-nvidia-configure did not run"
+		GPU_REBOOT=1 ;;
+	nouveau)
+		# The other direction: nothing to blacklist, but make sure an
+		# earlier nvidia configuration is not still pinning the card.
+		chroot_run alpm-nvidia-configure --undo >/dev/null 2>&1 || :
+		mkdir -p "$TARGET/etc/modules-load.d"
+		printf '# Arctic: load the free NVIDIA driver at boot.\nnouveau\n' \
+			>"$TARGET/etc/modules-load.d/nouveau.conf"
+		GPU_REBOOT=1 ;;
+	esac
+	[ "${GPU_REBOOT:-0}" = 1 ] && \
+		printf '    %sReboot is needed to apply changes.%s\n' "$c_amb" "$t_reset"
+	case "$g" in
 	amd) target_alpm ins mesa vulkan-radeon libva-mesa-driver || : ;;
 	intel) target_alpm ins mesa vulkan-intel intel-media-driver || : ;;
 	*) target_alpm ins mesa || : ;;
@@ -1200,7 +1224,24 @@ run_install() {
 			# short of them adding a real /boot fixes that case.
 			bootdir="$TARGET"; bootflag="--bios"
 		fi
-		step "Installing the bootloader" "$A_BOOT_FW"
+		# Which partition is actually being written to, not which directory
+		# it is mounted on - that is what someone needs to recognise before
+		# saying yes, and "the bootloader goes on /mnt/boot" tells them
+		# nothing about their disk.
+		bootpart=$A_ESP
+		[ -n "$bootpart" ] || bootpart=$A_BIOS_BOOTPART
+		[ -n "$bootpart" ] || bootpart=$A_ROOTDEV
+		if [ -z "$FORCE" ] && [ -t 0 ]; then
+			printf '\n%sInstall bootloader to partition "%s"?%s [Y/n] ' \
+				"$t_bold" "$bootpart" "$t_reset"
+			read -r _bl
+			case "$_bl" in
+			n|N|no|NO)
+				warn_soft "bootloader skipped - this system will not boot until one is installed"
+				return 0 ;;
+			esac
+		fi
+		step "Installing the bootloader" "$bootpart"
 		if [ -n "$A_BOOTLOADER" ] && [ "$A_BOOT_FW" = bios ]; then
 			set -- "$bootdir" "$bootflag" "--loader=$A_BOOTLOADER"
 		else
@@ -1749,10 +1790,7 @@ EOF
 
 $(printf '%s' "$c_teal$t_bold")  Arctic Linux is installed.$(printf '%s' "$t_reset")
 
-  Next: mount the boot partition and install the bootloader.
-
-      $(printf '%s' "$c_snow")mount /dev/nvme0n1p2 $TARGET/boot$(printf '%s' "$t_reset")
-      $(printf '%s' "$c_snow")arctic-boot-strap $TARGET/boot --efi$(printf '%s' "$t_reset")   (or --bios)
+  The bootloader is installed. Reboot and take the medium out.
 
   To change anything inside the new system first:
 
