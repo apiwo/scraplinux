@@ -207,5 +207,5 @@ if [[ -o interactive ]] && [[ -z $ARCTIC_GREETED ]] && [[ -z $ARCTIC_CHROOT ]] \
    && ! grep -q '^INSTALLED=' /etc/arctic-release 2>/dev/null; then
 	export ARCTIC_GREETED=1
 	[[ -x /usr/bin/arcticfetch ]] && arcticfetch
-	print -P "%F{245}Connect with %F{44}wifi-connect <ssid> <psk>%F{245} or plug in Ethernet, edit %F{44}/etc/arctic/install.conf%F{245}, then run %F{44}arctic-install%F{245} to install.%f"
+	print -P "%F{245}Wireless? Run %F{44}wifi-connect%F{245} - it scans, lists what is in range and asks for the passphrase. Or plug in Ethernet. Then edit %F{44}/etc/arctic/install.conf%F{245} and run %F{44}arctic-install%F{245}.%f"
 fi

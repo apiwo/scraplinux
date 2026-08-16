@@ -340,6 +340,22 @@ cd() {
 cd "$srcdir"
 if command -v prepare >/dev/null 2>&1; then msg2 "prepare()"; prepare; fi
 cd "$srcdir"
+# Some builds do not just link against the sysroot, they *run* what they just
+# linked. gobject-introspection is the common one: g-ir-scanner compiles a
+# small program against the library being built and executes it to read the
+# types out. -rpath-link is a link-time answer and does nothing for that -
+# libxfce4ui stopped with "libstartup-notification-1.so.0: cannot open shared
+# object file" while the library sat in the sysroot the whole time.
+#
+# It goes on here rather than with the other environment settings because it
+# must not be in effect while sources are being fetched. Exported that early
+# it reaches curl, which then loads the sysroot's libressl against the host's
+# openssl.cnf and dies on "unknown module name: providers" - every download
+# failed with nothing to say why.
+if [ -d "$ALPM_SYSROOT/usr/lib" ]; then
+	export LD_LIBRARY_PATH="$ALPM_SYSROOT/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+
 if command -v build >/dev/null 2>&1; then msg2 "build()"; build; fi
 cd "$srcdir"
 if command -v check >/dev/null 2>&1 && [ "${ALPM_CHECK:-0}" = "1" ]; then

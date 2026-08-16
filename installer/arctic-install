@@ -81,7 +81,7 @@ A_BOOT_FS="vfat"
 A_BOOT_TIMEOUT="3"
 A_KERNEL_ARGS=""
 A_GENERATIONS="5"
-A_INIT="busybox"
+A_INIT="initialization"
 A_PKGIT="n"
 A_KERNEL="arctic-base-kernel"
 A_MICROCODE="auto"
@@ -312,7 +312,7 @@ check_config() {
 	cfg_enum A_BOOT_FW "$A_BOOT_FW" "efi bios"
 	cfg_enum A_BOOTLOADER "$A_BOOTLOADER" "limine grub"
 	cfg_enum A_MICROCODE "$A_MICROCODE" "auto intel amd none"
-	cfg_enum A_INIT "$A_INIT" "busybox openrc sysvinit runit dinit nitro systemd-libre"
+	cfg_enum A_INIT "$A_INIT" "initialization busybox openrc sysvinit runit dinit nitro systemd-libre"
 	cfg_enum A_PKGIT "$A_PKGIT" "y n"
 	cfg_enum A_NET "$A_NET" "offline dhcp wifi static"
 	cfg_enum A_DESKTOP "$A_DESKTOP" "none xfce kde niri dwm"
@@ -723,6 +723,7 @@ mount_existing() {
 
 init_packages() {
 	case "$1" in
+	initialization) echo "initialization" ;;
 	busybox)       echo "" ;;
 	openrc)        echo "openrc" ;;
 	sysvinit)      echo "sysvinit" ;;
@@ -736,6 +737,7 @@ init_packages() {
 # What PID 1 actually is, for the kernel command line.
 init_path() {
 	case "$1" in
+	initialization) echo "/usr/bin/initialization" ;;
 	busybox)       echo "" ;;                       # kernel default, /sbin/init
 	openrc)        echo "/sbin/openrc-init" ;;
 	sysvinit)      echo "/sbin/init" ;;
@@ -1543,6 +1545,53 @@ gen_uuid() { cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "00000000-0000
 
 configure_network() {
 	mkdir -p "$TARGET/etc/NetworkManager/system-connections"
+
+	# A resolver, before anything else. NetworkManager writes
+	# /etc/resolv.conf once it is managing a link, but nothing writes one
+	# before that and nothing writes one at all if NetworkManager has not
+	# started yet - so a freshly installed machine came up with a working
+	# route, a working address, and no way to turn a name into one:
+	#
+	#     ping google.com
+	#     ping: bad address 'google.com'
+	#
+	# which reads like no network at all and is not. These are a floor, not
+	# a policy: NetworkManager replaces the file the moment it has DNS of
+	# its own from the lease.
+	if [ ! -s "$TARGET/etc/resolv.conf" ]; then
+		{
+			printf '# Written by arctic-install as a starting point.\n'
+			printf '# NetworkManager replaces this once it has DNS from the network.\n'
+			if [ "$A_NET" = static ] && [ -n "${A_DNS:-}" ]; then
+				for _ns in $A_DNS; do printf 'nameserver %s\n' "$_ns"; done
+			else
+				printf 'nameserver 1.1.1.1\n'
+				printf 'nameserver 9.9.9.9\n'
+			fi
+		} >"$TARGET/etc/resolv.conf"
+		chmod 644 "$TARGET/etc/resolv.conf"
+		logit "wrote /etc/resolv.conf"
+	fi
+
+	# glibc looks names up through nsswitch.conf. Without the file it falls
+	# back to a built-in order, which has worked so far and is not something
+	# to rely on - and a machine with no nsswitch.conf also has no hosts
+	# entry, so /etc/hosts is consulted by luck rather than by configuration.
+	if [ ! -s "$TARGET/etc/nsswitch.conf" ]; then
+		cat >"$TARGET/etc/nsswitch.conf" <<'EOF'
+# Arctic Linux - name service switch
+passwd:     files
+group:      files
+shadow:     files
+hosts:      files dns
+networks:   files
+protocols:  files
+services:   files
+ethers:     files
+rpc:        files
+EOF
+		chmod 644 "$TARGET/etc/nsswitch.conf"
+	fi
 	case "$A_NET" in
 	wifi)
 		# NetworkManager's keyfile plugin: one file per connection, mode 600

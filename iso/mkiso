@@ -34,17 +34,16 @@ BUILD_ID=$(date '+%Y.%m.%d')
 # arcticfetch's "os" line - reads it from here rather than spelling out its
 # own variation of it.
 #
-# The tag counts in three places, left to right, and never carries a dot into
-# the filename beyond the first:
+# The tag counts in three positions, left to right:
 #
-#   a1     the main version - Alpha 1
-#   a1.1   still Alpha 1, but a build with substantial changes in it
-#   a1.11  the same build plus a small fix or a quality-of-life change
+#   a1       the main release - Alpha 1
+#   a1.2     the second position moves for a major bugfix
+#   a1.2.1   the third moves for minor fixes and quality-of-life changes
 #
-# So a1.11 follows a1.1, and a1.2 is the next substantial build after it - the
-# digits after the dot are read one at a time, not as a decimal number.
-VERSION_TAG="a1.1"
-VERSION="Arctic Linux - Alpha 1.1"
+# They are positions, not a decimal number: a1.2 is a later release than
+# a1.1.9, and a1.1.10 is a later one than a1.1.9 as well.
+VERSION_TAG="a1.2"
+VERSION="Arctic Linux - Alpha 1.2"
 LABEL="ARCTIC"
 
 case "$PROFILE" in
@@ -225,7 +224,13 @@ cp -f "$SRCTREE/skel/etc/alpm/repos.d/"*.repo "$S/etc/alpm/repos.d/"
 # gmake binaries into the image but not that symlink, so the live session had
 # no `make` at all and every source build died on "make: not found" - dwm's
 # among them. Installing the package puts the symlink where it belongs.
-LIVE_EXTRAS="curl ca-certificates nano vim bmake ttf-jetbrains-mono ttf-nerd-fonts-symbols"
+#   iw          the only way to find out what wireless networks are in range.
+#               wpa_supplicant can associate with a network whose name you
+#               already know and nothing else on the image could tell you
+#               one, so "wifi-connect scan" answered "iw is not installed"
+#               and the documented way onto a network was to type an SSID
+#               exactly right from memory.
+LIVE_EXTRAS="curl ca-certificates iw nano vim bmake ttf-jetbrains-mono ttf-nerd-fonts-symbols"
 
 # Dependencies are resolved, not assumed. Unpacking only the named packages
 # put curl on the image without libnghttp2 or brotli, so it died at startup

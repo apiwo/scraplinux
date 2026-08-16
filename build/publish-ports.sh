@@ -89,11 +89,12 @@ listing() {
 <body>
 <nav class="topbar">
   <div class="wrap" style="padding:0;">
-    <a href="/">ports-arctic</a>
-    <a href="/ALL/">browse</a>
-    <a href="https://pkg-arctic.apiwow.net">packages</a>
+    <a href="https://arctic-linux.apiwow.net">main page</a>
+    <a href="https://github.com/apiwo/arctic-linux-pkgs">pkg</a>
+    <a href="https://ports-arctic.apiwow.net">ports</a>
     <a href="https://arctic-docs.apiwow.net">docs</a>
     <a href="https://github.com/apiwo/arctic-linux">github</a>
+    <a href="https://codeberg.org/apiwo/arctic-linux">codeberg</a>
   </div>
 </nav>
 <div class="wrap">

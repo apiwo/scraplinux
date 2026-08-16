@@ -1,0 +1,256 @@
+#!/bin/sh
+# kernelswitcher - choose which installed kernel this machine boots.
+#
+#   kernelswitcher list                     installed kernels, and which one is running
+#   kernelswitcher current                  the running kernel, and the one set to boot
+#   kernelswitcher <kernel>                 boot <kernel> from now on
+#   kernelswitcher add <kernel> bootentry   give <kernel> an entry of its own in the menu
+#   kernelswitcher upgrade                  upgrade every installed kernel
+#
+# A kernel is named the way the boot directory names it: `arctic-base` is
+# /boot/vmlinuz-arctic-base, whichever package installed it. The package name
+# is not the kernel name - arctic-kernel installs vmlinuz-arctic-zen - so
+# both are accepted and both are shown.
+#
+# Only installed kernels are ever listed. A menu offering to boot something
+# that is not on the disk is worse than no menu: it fails at the one moment
+# the machine has nothing else to fall back on.
+#
+# What it edits, and what it does not: the entries this tool adds live
+# between its own two marker comments in limine.conf, so anything else in
+# there - other operating systems, hand-written entries, the generation
+# entries arctic-boot-generations writes - is left exactly as it was.
+#
+# shellcheck shell=sh disable=SC2039
+
+set -u
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+DB=${ALPM_DB:-/var/lib/alpm}
+BEGIN="### kernelswitcher begin"
+END="### kernelswitcher end"
+
+TEAL='' MINT='' RED='' GREY='' R=''
+if [ -t 1 ]; then
+	TEAL=$(printf '\033[38;5;44m'); MINT=$(printf '\033[38;5;49m')
+	RED=$(printf '\033[38;5;203m'); GREY=$(printf '\033[38;5;245m')
+	R=$(printf '\033[0m')
+fi
+say() { printf '%s::%s %s\n' "$TEAL" "$R" "$*"; }
+die() { printf '%s!!%s %s\n' "$RED" "$R" "$*" >&2; exit 1; }
+
+usage() { sed -n '2,9p' "$0" | sed 's/^# \?//'; }
+
+find_bootdir() {
+	for d in /boot/efi /boot/EFI /boot; do
+		[ -f "$d/limine.conf" ] && { echo "$d"; return 0; }
+	done
+	for d in /boot/efi /boot; do
+		[ -d "$d" ] && { echo "$d"; return 0; }
+	done
+	return 1
+}
+
+BOOTDIR=$(find_bootdir) || die "no boot directory found"
+CONF=$BOOTDIR/limine.conf
+
+# Every kernel actually on the disk, by the name the boot directory uses.
+installed() {
+	for f in "$BOOTDIR"/vmlinuz-*; do
+		[ -f "$f" ] || continue
+		printf '%s\n' "${f##*/vmlinuz-}"
+	done
+}
+
+# The running kernel's name. `uname -r` is <version>-<name>, the same shape
+# the kernel packages are built with.
+running() { printf '%s\n' "$(uname -r)" | cut -d- -f2-; }
+
+# Which package owns a kernel. Read out of the package database's own file
+# lists rather than by guessing from the name: arctic-kernel installs
+# vmlinuz-arctic-zen, and nothing about the one implies the other.
+pkg_of() {
+	_p=$(grep -lx "/boot/vmlinuz-$1" "$DB"/local/*/FILES 2>/dev/null | head -1) || :
+	[ -n "$_p" ] || return 1
+	_p=${_p%/FILES}
+	printf '%s\n' "${_p##*/}"
+}
+
+# The module directory version that goes with a kernel, which is what its
+# initramfs is named after.
+release_of() {
+	_f=$(grep -lx "/boot/vmlinuz-$1" "$DB"/local/*/FILES 2>/dev/null | head -1) || :
+	if [ -n "$_f" ]; then
+		_r=$(sed -n 's|^/usr/lib/modules/\([^/]*\)/.*|\1|p' "$_f" 2>/dev/null | head -1)
+		[ -n "$_r" ] && { printf '%s\n' "$_r"; return 0; }
+	fi
+	# Not in the database (installed by hand, or the database is being
+	# rebuilt): the modules directory ending in this kernel's name is still
+	# a straight answer.
+	for d in /usr/lib/modules/*-"$1"; do
+		[ -d "$d" ] && { printf '%s\n' "${d##*/}"; return 0; }
+	done
+	return 1
+}
+
+initrd_of() {
+	_r=$(release_of "$1") || return 1
+	[ -f "$BOOTDIR/initramfs-$_r.img" ] || return 1
+	printf 'initramfs-%s.img\n' "$_r"
+}
+
+# A name the user typed: either the kernel's own name, or the package that
+# installs it.
+resolve() {
+	_want=$1
+	for k in $(installed); do
+		[ "$k" = "$_want" ] && { printf '%s\n' "$k"; return 0; }
+	done
+	for k in $(installed); do
+		[ "$(pkg_of "$k" 2>/dev/null)" = "$_want" ] && { printf '%s\n' "$k"; return 0; }
+	done
+	return 1
+}
+
+need_conf() { [ -f "$CONF" ] || die "no $CONF - run arctic-boot-strap first"; }
+
+cmd_list() {
+	run=$(running)
+	any=0
+	for k in $(installed); do
+		any=1
+		pkg=$(pkg_of "$k" 2>/dev/null) || pkg="not from a package"
+		rel=$(release_of "$k" 2>/dev/null) || rel="?"
+		if [ "$k" = "$run" ]; then
+			printf '  %s*%s %-18s %-14s %s%s%s\n' \
+				"$MINT" "$R" "$k" "$rel" "$MINT" "running" "$R"
+		else
+			printf '    %-18s %-14s %s%s%s\n' \
+				"$k" "$rel" "$GREY" "not running" "$R"
+		fi
+		printf '      %sfrom %s%s\n' "$GREY" "$pkg" "$R"
+	done
+	[ "$any" = 1 ] || die "no kernel is installed in $BOOTDIR"
+}
+
+cmd_current() {
+	run=$(running)
+	printf '  running   %s (%s)\n' "$run" "$(uname -r)"
+	if [ -f "$CONF" ]; then
+		b=$(awk '/^[[:space:]]*kernel_path:/{sub(/.*vmlinuz-/,""); print; exit}' "$CONF")
+		[ -n "$b" ] && printf '  boots     %s\n' "$b" || \
+			printf '  boots     %sunknown - no kernel_path in %s%s\n' "$GREY" "$CONF" "$R"
+		[ -n "$b" ] && [ "$b" != "$run" ] && \
+			printf '  %sthe kernel set to boot is not the one running - reboot to use it%s\n' \
+				"$GREY" "$R"
+	fi
+}
+
+# Point the ordinary boot entries at a different kernel. The entries this
+# tool adds are per-kernel by definition and are left alone.
+cmd_switch() {
+	need_conf
+	k=$(resolve "$1") || die "$1 is not installed - kernelswitcher list"
+	img=$(initrd_of "$k") || die "$k has no initramfs - run arctic-mkinitramfs first"
+	tmp=$CONF.new.$$
+	awk -v k="$k" -v img="$img" -v b="$BEGIN" -v e="$END" '
+		$0 == b { inblk = 1 }
+		$0 == e { inblk = 0 }
+		!inblk && /^[[:space:]]*kernel_path:.*vmlinuz-/ {
+			sub(/vmlinuz-[^ 	]*/, "vmlinuz-" k)
+		}
+		!inblk && /^[[:space:]]*module_path:.*initramfs-/ {
+			sub(/initramfs-[^ 	]*/, img)
+		}
+		{ print }
+	' "$CONF" >"$tmp" || { rm -f "$tmp"; die "could not rewrite $CONF"; }
+	mv -f "$tmp" "$CONF"
+	# Older Limine reads the .cfg; keep the pair in step.
+	if [ -f "$BOOTDIR/limine.cfg" ]; then
+		sed 's|^/Arctic|:Arctic|; s|^    \([a-z_]*\): |    \1=|' "$CONF" \
+			>"$BOOTDIR/limine.cfg" 2>/dev/null || :
+	fi
+	say "$k will boot next time ($(release_of "$k" 2>/dev/null))"
+}
+
+# One entry per kernel, so a kernel that turns out not to boot can be
+# escaped from the menu instead of a rescue USB.
+cmd_add() {
+	need_conf
+	k=$(resolve "$1") || die "$1 is not installed - kernelswitcher list"
+	img=$(initrd_of "$k") || die "$k has no initramfs - run arctic-mkinitramfs first"
+	cmdline=$(awk '/^[[:space:]]*kernel_cmdline:/{sub(/^[^:]*:[[:space:]]*/,""); print; exit}' "$CONF")
+	[ -n "$cmdline" ] || die "could not read kernel_cmdline from $CONF"
+
+	if grep -q "^/Arctic linux ($k)$" "$CONF" 2>/dev/null; then
+		say "$k already has an entry"
+		return 0
+	fi
+
+	tmp=$CONF.new.$$
+	if grep -qx "$BEGIN" "$CONF"; then
+		# Insert before the closing marker, keeping the block together.
+		awk -v e="$END" -v k="$k" -v img="$img" -v c="$cmdline" '
+			$0 == e {
+				printf "\n/Arctic linux (%s)\n", k
+				print  "    protocol: linux"
+				printf "    kernel_path: boot():/vmlinuz-%s\n", k
+				printf "    kernel_cmdline: %s\n", c
+				printf "    module_path: boot():/%s\n", img
+			}
+			{ print }
+		' "$CONF" >"$tmp"
+	else
+		{
+			cat "$CONF"
+			printf '\n%s\n' "$BEGIN"
+			printf '\n/Arctic linux (%s)\n' "$k"
+			printf '    protocol: linux\n'
+			printf '    kernel_path: boot():/vmlinuz-%s\n' "$k"
+			printf '    kernel_cmdline: %s\n' "$cmdline"
+			printf '    module_path: boot():/%s\n' "$img"
+			printf '\n%s\n' "$END"
+		} >"$tmp"
+	fi
+	mv -f "$tmp" "$CONF"
+	if [ -f "$BOOTDIR/limine.cfg" ]; then
+		sed 's|^/Arctic|:Arctic|; s|^    \([a-z_]*\): |    \1=|' "$CONF" \
+			>"$BOOTDIR/limine.cfg" 2>/dev/null || :
+	fi
+	say "added a boot entry for $k"
+}
+
+cmd_upgrade() {
+	pkgs=""
+	for k in $(installed); do
+		p=$(pkg_of "$k" 2>/dev/null) || continue
+		case " $pkgs " in *" $p "*) ;; *) pkgs="$pkgs $p" ;; esac
+	done
+	[ -n "$pkgs" ] || die "no installed kernel came from a package - nothing to upgrade"
+	say "upgrading:$pkgs"
+	# shellcheck disable=SC2086
+	alpm -y ins $pkgs || die "the kernel upgrade failed - the running kernel is untouched"
+	# A new kernel is a new module directory, and the initramfs that goes
+	# with it does not exist until it is built.
+	for k in $(installed); do
+		r=$(release_of "$k" 2>/dev/null) || continue
+		[ -f "$BOOTDIR/initramfs-$r.img" ] && continue
+		say "building the initramfs for $r"
+		arctic-mkinitramfs "$r" || printf '  %scould not build one for %s%s\n' "$RED" "$r" "$R"
+	done
+	say "done - kernelswitcher list"
+}
+
+case "${1:-}" in
+""|-h|--help|help) usage ;;
+list)     cmd_list ;;
+current)  cmd_current ;;
+upgrade)  cmd_upgrade ;;
+add)
+	[ -n "${2:-}" ] || die "which kernel? kernelswitcher add <kernel> bootentry"
+	case "${3:-bootentry}" in
+	bootentry|entry|"") cmd_add "$2" ;;
+	*) die "unknown: kernelswitcher add $2 $3" ;;
+	esac ;;
+*)        cmd_switch "$1" ;;
+esac

@@ -71,7 +71,7 @@ copylibs() {
 bb=$(command -v busybox) || { echo "arctic-mkinitramfs: no busybox found" >&2; exit 1; }
 cp -f "$bb" "$WORK/bin/busybox"
 copylibs "$bb"
-for a in sh mount umount switch_root mkdir sleep echo cat ls blkid \
+for a in sh mount umount switch_root mkdir sleep echo cat ls blkid findfs \
 	mknod chroot printf test grep sed cut sync modprobe insmod depmod \
 	readlink basename dirname; do
 	ln -sf busybox "$WORK/bin/$a"
@@ -134,6 +134,24 @@ for a in \$(cat /proc/cmdline); do
 	esac
 done
 [ -n "\$ROOT" ] || oops "no root= on the kernel command line"
+
+# root= is a spec, not always a path. The bootloader writes what fstab says,
+# and fstab says UUID= or PARTUUID= on every install that did not name a
+# device outright - so \$ROOT is a string like "PARTUUID=3401724a-..." and
+# testing it with [ -e ] asks whether a *file of that name* exists, which it
+# never does. findfs turns the spec into the device node; a device path is
+# left exactly as it is.
+case "\$ROOT" in
+UUID=*|PARTUUID=*|LABEL=*|PARTLABEL=*)
+	n=0
+	while [ "\$n" -lt 20 ]; do
+		_dev=\$(findfs "\$ROOT" 2>/dev/null) && [ -n "\$_dev" ] && break
+		sleep 1; n=\$((n+1))
+	done
+	[ -n "\$_dev" ] || oops "no device matches \$ROOT"
+	say "\$ROOT is \$_dev"
+	ROOT=\$_dev ;;
+esac
 
 if [ -n "\$LUKSSPEC" ]; then
 	say "encrypted root - loading dm-crypt"
