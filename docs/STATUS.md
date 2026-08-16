@@ -4,9 +4,14 @@ What's built and working, what's known-broken, what's still source-only.
 Full docs live at arctic-docs.apiwow.net — this file is the terse engineering
 log, not a tutorial.
 
-Release label: **Arctic Linux - Alpha v.1** (`alpha-v1`). That exact string is
-what the ISO filename, the volume id, `/etc/arctic-release`, the boot banner
-and `arcticfetch` all show; nothing spells its own variation of it.
+Release label: **Arctic Linux - Alpha 1.2** (`a1.2`). The tag counts in three
+positions: `a1` is the release, the second moves for a major bugfix, the third
+for minor fixes and quality-of-life changes. They are positions, not a decimal
+number - `a1.2` is later than `a1.1.9`.
+
+Whatever the label is, one string is what the ISO filename, the volume id,
+`/etc/arctic-release`, the boot banner and `arcticfetch` all show - nothing
+spells its own variation of it.
 
 ## Core system
 
@@ -20,7 +25,23 @@ and `arcticfetch` all show; nothing spells its own variation of it.
   is what proves they do.
 - LLVM 22.1.8 - clang, lld, libc++, compiler-rt - is packaged, so an
   installed system has a compiler and `alpm ins -s` works on it. Too large
-  for the mirror, so it is published as a release asset through `big`.
+  for the mirror, so it is published as a release asset through `big`. Built
+  with AMDGPU in its target list, which is not about targeting AMD as a
+  platform: mesa's radeonsi asks llvm-config for an amdgpu component and
+  refuses to configure without it.
+- **Graphics**: mesa 26.0.2, with `iris` and `crocus` (Intel had no OpenGL
+  driver at all before), `radeonsi`, `r300`, `r600`, `nouveau`, `llvmpipe`,
+  `zink`, `virgl` and `svga`, plus Vulkan for AMD, Intel and swrast. NVK,
+  nouveau's Vulkan driver, is out: it is written in Rust and its build wants
+  bindgen. `libclc` and `spirv-llvm-translator` are packaged because the
+  Intel drivers compile part of themselves from OpenCL C.
+- **Desktops**: the Xfce 4.20 component set builds and is packaged -
+  libxfce4util, xfconf, libxfce4ui, libxfce4windowing, garcon, exo, xfwm4,
+  xfce4-panel, xfdesktop, xfce4-session, thunar, xfce4-settings,
+  xfce4-appfinder, tumbler - along with openbox and icewm, gtk3, gdk-pixbuf,
+  imlib2, libwnck and the X libraries under them. LXDE and LXQt have recipes
+  in the ports tree but are not built: LXDE needs menu-cache and vte3, LXQt
+  needs the Qt6 stack.
 - Kernel 7.1.3 (Gentoo dist-kernel config + Arctic delta: no BTF/DWARF, no
   module signing, storage/USB/squashfs/overlayfs in-tree). Flavors: base,
   libre, small (monolithic, no module loader), lts, rt, hardened.
@@ -39,8 +60,12 @@ and `arcticfetch` all show; nothing spells its own variation of it.
   static; A_NET=dhcp/offline leaves NetworkManager to auto-configure a wired
   link itself, same as the old rc.d/network default did. The live/installer
   image does **not** carry NetworkManager - too big a dependency tree to
-  hand-build this early - it ships wpa_supplicant + a `wifi-connect <ssid>
-  <psk>` wrapper instead, just enough to get an install-time link up.
+  hand-build this early - it ships wpa_supplicant, `iw` and `wifi-connect`
+  instead, which is enough to get an install-time link up. `wifi-connect`
+  with no arguments scans, lists what is in range, asks which interface and
+  which network, and reads the passphrase with asterisks. It needed an SSID
+  typed exactly right from memory before, because `iw` was never on the image
+  and nothing else there could list a network.
   rc.d/network still exists but is live-image-only now (wired DHCP, no
   wifi/static branches); installed systems never enable it.
 
@@ -135,9 +160,18 @@ Declarative system management on top of that, once installed:
 
 ## Init systems
 
-busybox init is the default and what every `/etc/rc.d` script is written
-against. `A_INIT` also takes openrc, sysvinit, runit, dinit and nitro; all
-five have real binary packages in `main`.
+**initialization** is the default: a fork of nitro, packaged from
+github.com/apiwo/initialization, and the init Arctic ships rather than one of
+several a system might pick. Its `make install` referenced a `service` binary
+that is not in the tree, which stopped every install of it - fixed upstream.
+It does not ship a `service` of its own here either: that belongs to
+arctic-base, which hands a verb to whichever init is actually running.
+
+`A_INIT` also takes busybox, openrc, sysvinit, runit, dinit and nitro, and
+each installs *that* init's own tools - choosing openrc installs openrc and
+its commands and nothing of initialization's. Every `/etc/rc.d` script is
+written against busybox init's shape and translated from there. s6-66 and
+systemd-libre are named in the installer's list but are not packaged yet.
 
 `arctic-init-setup` translates `/etc/rc.d` into whichever init is chosen -
 openrc-run scripts plus runlevel links, LSB scripts plus rc3.d/rc5.d links,
@@ -171,6 +205,36 @@ produces is unpacked there and later builds compile and link against it
 paths point into the sysroot rather than at `/usr` on the build host.
 
 ## Known-fixed bugs worth remembering
+
+- **A new install had an address, a route, and no resolver.** Nothing wrote
+  `/etc/resolv.conf`: NetworkManager writes one once it is managing a link,
+  and until then there was none at all, so every lookup failed with
+  `ping: bad address 'google.com'` on a machine whose network was working
+  perfectly. The installer writes a resolver and an `nsswitch.conf` now
+  rather than leaving glibc on its compiled-in fallback.
+- **`iw` was never on the installation image**, so `wifi-connect scan`
+  answered "iw is not installed" and the only way onto wireless was to type
+  an SSID exactly right from memory. It is packaged and on the image, and
+  `wifi-connect` run with no arguments does the whole thing.
+- **The installer told you to install a bootloader it had already
+  installed.** It has run `arctic-boot-strap` itself for a while, but the
+  closing summary still ended with two commands to type, so a finished
+  install read as an unfinished one.
+- **A malloc and an HTTP/2 library put a compiler on the image.** jemalloc
+  was built with its C++ integration and nghttp2 ships C++ applications, so
+  both linked libc++ - and the only package providing libc++ is llvm, so
+  mkiso's library closure installed 350 MiB of compiler to satisfy one
+  runtime library. The image went from 381 MiB to 589. jemalloc is
+  `--disable-cxx` and nghttp2 is library-only, which is why it is packaged at
+  all: curl speaks HTTP/2 through it.
+- **A comment between two continued lines silently truncated a command.**
+  mesa's meson invocation lost every option after it - the shell joins the
+  lines first, so the `#` starts mid-command and swallows the rest - and mesa
+  configured itself with the defaults instead. It built. What came out was
+  not what the recipe said. `build/check-recipes.sh` refuses that shape now.
+- **Every Xfce recipe pointed at a version that does not exist.** They named
+  4.22; upstream is 4.20, in a `4.20/` directory, as `.tar.bz2`. Nothing in
+  the desktop could be fetched, let alone built.
 
 - **The base system stopped installing at `/usr/bin/blkid`.** toybox linked
   every command it provides except nine; busybox claims fifty-two. The two
@@ -412,6 +476,17 @@ paths point into the sysroot rather than at `/usr` on the build host.
   rc.boot stopped going through `clear` to blank the screen. Curses programs
   fall back to their built-in entries; `tput` itself does not work.
 
+- **LXDE and LXQt have recipes but no packages.** LXDE needs menu-cache and
+  vte3 (vte wants LTO it cannot do, systemd, and valac - all turned off now,
+  and it still fails to compile); LXQt needs the whole Qt6 stack.
+- **s6-66 and systemd-libre are listed as init choices and are not
+  packaged.** s6, s6-rc and execline are; 66 itself and systemd are not.
+- **btop, openexr and vte3 do not build.** btop's static pieces are compiled
+  without `-fPIC` and lld refuses the relocations; openexr's vendored
+  libdeflate uses AVX-512 intrinsics in functions built without the target
+  feature, which gcc accepted and clang does not; vte fails to compile after
+  its LTO, systemd and Vala requirements are turned off. The packages in the
+  repository for openexr and btop are older gcc builds.
 - **The desktop profiles do not install yet.** `arctic-xfce`, `arctic-kde`,
   `apiwow-dwm`, `arctic-sound` and `niri-dms` are meta-packages whose
   dependencies are still being built. What exists so far: dwm, dwl, st, foot,
