@@ -481,6 +481,25 @@ close_libs() {
 step "resolving shared libraries"
 close_libs || printf '   the image has unresolved libraries - see above\n' >&2
 
+# An executable whose library is not on the image is not a program, it is a
+# guaranteed "cannot open shared object file" the first time someone runs it.
+# Three of them shipped this way: fuse2fs, and nghttp2's HPACK test tools
+# inflatehd and deflatehd, none of which an installation image needs. Better
+# absent than present and broken - and named here, so a binary that actually
+# mattered would be noticed rather than quietly dropped.
+if [ -s "$WORK/missing" ]; then
+	while read -r sona; do
+		[ -n "$sona" ] || continue
+		for f in "$S"/usr/bin/* "$S"/usr/sbin/*; do
+			[ -f "$f" ] || continue
+			readelf -d "$f" 2>/dev/null | grep -q "\[$sona\]" || continue
+			rm -f "$f"
+			printf '   removed %s - nothing on the image provides %s\n' \
+				"${f#"$S"}" "$sona"
+		done
+	done <"$WORK/missing"
+fi
+
 ok "image configured"
 
 # ------------------------------------------------------- 3. depmod the modules

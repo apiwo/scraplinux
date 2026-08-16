@@ -310,7 +310,14 @@ rc_done
 # you want once the machine is up. A verbose boot keeps it on screen.
 case " $(cat /proc/cmdline 2>/dev/null) " in
 *" verbose "*|*" debug "*) ;;
-*) [ "${QUIET:-0}" = "1" ] || { command -v clear >/dev/null 2>&1 && clear; } ;;
+# netbsd-curses' clear goes through tput, which wants a terminfo database
+# that nothing in Arctic ships yet - so it failed, printed "tput: cannot
+# access the terminfo database" directly above the login prompt on every
+# boot, and left the screen uncleared. The escape sequence needs no database
+# and every terminal Arctic can boot on understands it.
+*) [ "${QUIET:-0}" = "1" ] || \
+	{ command -v clear >/dev/null 2>&1 && clear 2>/dev/null; } || \
+	printf '\033[H\033[2J' ;;
 esac
 
 # /run is a tmpfs, so keep a copy somewhere that survives the boot. This is
