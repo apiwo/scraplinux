@@ -13,7 +13,14 @@ and `arcticfetch` all show; nothing spells its own variation of it.
 - glibc 2.44, merged-`/usr`, built from source. No binary in the image needs
   a host library.
 - busybox 1.38.0 + toybox 0.8.14 (statically linked), zsh, doas, libarchive,
-  mandoc, bmake, byacc, netbsd-curses, libxcrypt, libmd, zlib, xz, zstd, curl.
+  mandoc, bmake, byacc, netbsd-curses, libxcrypt, libmd, zlib, xz, zstd, curl,
+  signify. busybox owns a named set of applets - init, getty, mdev, mount,
+  blkid, the module tools, the network tools - and toybox links everything
+  else it provides. The two lists have to agree; `build/check-conflicts.sh`
+  is what proves they do.
+- LLVM 22.1.8 - clang, lld, libc++, compiler-rt - is packaged, so an
+  installed system has a compiler and `alpm ins -s` works on it. Too large
+  for the mirror, so it is published as a release asset through `big`.
 - Kernel 7.1.3 (Gentoo dist-kernel config + Arctic delta: no BTF/DWARF, no
   module signing, storage/USB/squashfs/overlayfs in-tree). Flavors: base,
   libre, small (monolithic, no module loader), lts, rt, hardened.
@@ -41,9 +48,12 @@ and `arcticfetch` all show; nothing spells its own variation of it.
 
 Binaries and recipes are on separate hosts and never mix:
 
-- **pkg-arctic.apiwow.net** serves `.alpmz` binaries only - main, extra,
-  base, kernels, profile, nonfree, alt-nonfree, multilib. This is what
-  `/etc/alpm/repos.d` points at.
+- **raw.githubusercontent.com/apiwo/arctic-linux-pkgs** serves `.alpmz`
+  binaries only - main, extra, base, kernels, profile, nonfree, alt-nonfree,
+  multilib, fix, big. This is what `/etc/alpm/repos.d` points at. It is
+  deliberately *not* pkg-arctic.apiwow.net: that domain sits behind a CDN
+  which served two-week-old indexes while the origin was current, and an
+  installed machine was told about packages that no longer existed.
 - **ports-arctic.apiwow.net** serves recipes only, as
   `ALL/<repo>/<name>/recipe`. alpm reaches it through `ALPM_PORTS`, not
   through repos.d, so "what can be installed" and "what can be compiled" are
@@ -52,9 +62,32 @@ Binaries and recipes are on separate hosts and never mix:
 
 `build/publish-pkgs.sh` and `build/publish-ports.sh` generate both sites from
 what is actually in the tree - indexes and directory listings alike - so a
-repository cannot advertise a package it does not host. `linux-firmware` is
-the one deliberate omission: at 162 MiB it is past the mirror's file size
-limit and comes off the ISO instead.
+repository cannot advertise a package it does not host.
+
+**Large packages.** GitHub refuses any file of 100 MiB or more, which is not
+a limit that falls on optional things: `linux-firmware` is 162 MiB and the
+packaged toolchain is 148 MiB. Both are release assets under the tag
+`pkgs-x86_64` now. The `big` repository keeps its index in the tree with the
+others and points `pkgurl` at the release, so alpm fetches the index from one
+place and the package from another and nothing about installing one differs.
+Verified by installing firmware onto a machine from it.
+
+**Signed indexes.** Every index is signed with signify (Ed25519). alpm used
+to trust that an index came from wherever the packages did; it does not have
+to. A forged index hands a machine any package at all, because the checksum
+alpm verifies afterwards comes from that same file. The public key ships in
+`arctic-base` at `/etc/alpm/keys`, so it is on the machine before its first
+fetch, and signify is part of the base system so a fresh install can check
+what it downloads. A `.repo` file carries `sig = required | optional | off`;
+a signature that does not match is refused under all three, and only a
+missing one is tolerated - which is the state the installation image is still
+in, because it is built without signify on it. The secret key lives on the
+publishing machine and in no repository.
+
+**A published release is immutable.** `publish-pkgs.sh` refuses to replace a
+name-version-release with different bytes. alpm was rebuilt twice as 1.2.5-1,
+a machine fetched the newer package against the older index, and the install
+died on a checksum mismatch part way through the base system.
 
 Every repository is mirrored to Codeberg as well as GitHub;
 `build/mirror-codeberg.sh` pushes all six in one command.
@@ -68,6 +101,12 @@ prompt; leaving it unset and setting `A_ROOT_PART`/`A_BOOT_PART` instead
 uses partitions made ahead of time. Either way there is no target
 directory to mount and keep in sync by hand — that is internal to the
 tool now.
+
+A config has to leave a way in. root ships locked and a user created without
+a password is locked as well, so `arctic-install` refuses a config that sets
+neither `A_ROOTPASS` nor `A_USERPASS` nor an authorised ssh key - the
+alternative is an install that finishes cleanly and cannot be logged into,
+which is only discovered after the medium has been put away.
 
 `arctic-install` and `arctic-boot-strap` are the only install-time
 binaries. The old interactive `arctic-conf`/`arctic-boot-conf` TUI tools
@@ -125,6 +164,49 @@ produces is unpacked there and later builds compile and link against it
 paths point into the sysroot rather than at `/usr` on the build host.
 
 ## Known-fixed bugs worth remembering
+
+- **The base system stopped installing at `/usr/bin/blkid`.** toybox linked
+  every command it provides except nine; busybox claims fifty-two. The two
+  disagreed about twenty-two paths, glibc about `getconf` and `iconv`,
+  netbsd-curses about `clear` and `reset`, attr about `setfattr`. It was
+  survivable while the last symlink written won, and stopped being survivable
+  the moment alpm learned to refuse a path another package owns. toybox's
+  skip list is busybox's applet set now, and `build/check-conflicts.sh` reads
+  the archives to prove the two still agree - the alternative was finding one
+  path per twenty-minute install.
+- **A base install carried two TLS libraries and finished with neither.**
+  wpa_supplicant linked OpenSSL's `libssl.so.3` because openssl happened to
+  be in the build sysroot when it was built, while everything else - curl
+  included - links libressl. Both claim `/usr/include/openssl` and
+  `/usr/lib/libssl.so`, so the network set stopped on the conflict: libressl,
+  NetworkManager and curl never landed, and the install still reported
+  success. A machine was left with no way to fetch a package or configure a
+  network. wpa_supplicant is built against libressl now; `CONFIG_TLS=openssl`
+  stays, because that is its name for the API and not for the package.
+- **An install with no password could not be logged into.** root ships
+  locked, and a user created without a password is locked too, so a config
+  that set neither produced a system that installed perfectly and then had
+  nothing that could log in - found at the first boot, with the medium put
+  away. The installer refuses that config now.
+- **libressl would not link under lld.** Every 64-bit object, the crt files
+  included, was rejected as "incompatible with elf32-i386" although nothing
+  asked for 32-bit code. On a multilib build host `/usr/lib` is the 32-bit
+  directory; Arctic installs to `/usr/lib`, so libtool searches it at relink
+  time and finds glibc's 32-bit `libc.so`, a linker script beginning
+  `OUTPUT_FORMAT(elf32-i386)` - which lld honours over the `-m elf_x86_64`
+  the driver had already passed. It was never a libressl bug and any
+  autotools package could have hit it. `alpm-build` puts the host's 64-bit
+  directory behind the sysroot on hosts laid out that way; libressl builds
+  rather than being repacked by hand.
+- **`gen-ports.py` silently reverted hand-edited recipes.** less and
+  util-linux-libs lost their `replaces` field and their release bump when the
+  generator rewrote them from the manifest, so the recipes no longer built
+  the packages being shipped. A `recipe.local` marker is what stops it, and
+  both have one.
+- **`publish-fix.sh` published the oldest build of a version.** The manifest
+  names a version, not a release, and the first name a glob produces is the
+  lowest - so a fix could be published as a package built before it. It also
+  would have taken `-10` over `-2`.
 
 - **The live image had no network at all.** Only `lo` came up, and every
   network repository was "unreachable". Nothing loaded a driver for hardware
@@ -300,6 +382,22 @@ paths point into the sysroot rather than at `/usr` on the build host.
   does implement that extension, while Arctic's does not.
 
 ## Known rough edges
+
+- **The packages in the images were compiled by gcc.** Arctic is GNU-free in
+  policy before it is in fact. LLVM is packaged now, so the next rebuild has
+  a clang to use; nothing has been rebuilt with it yet.
+- **The installation image has no signify on it**, so the live session cannot
+  check a repository signature and the shipped `.repo` files say `optional`
+  rather than `required`. An installed system has both the key and the
+  verifier. Building signify into the live rootfs is what makes `required`
+  the default.
+- **Four conflicts remain between packages that can be installed together**,
+  none of them in a base install: openexr ships its own copy of Imath,
+  xorg-xwayland and xorg-server both claim `/usr/lib/xorg/protocol.txt` and
+  `Xserver.1`, sysvinit and util-linux-libs disagree about `last`, `mesg`,
+  `wall` and `utmpdump`, and util-linux would take `/usr/bin/blkid` from
+  busybox. `build/check-conflicts.sh` lists them; the rest of what it reports
+  is pairs that are alternatives and never installed together.
 
 - **The desktop profiles do not install yet.** `arctic-xfce`, `arctic-kde`,
   `apiwow-dwm`, `arctic-sound` and `niri-dms` are meta-packages whose
