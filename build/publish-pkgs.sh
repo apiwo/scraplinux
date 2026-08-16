@@ -130,6 +130,14 @@ for r in $REPOS; do
 			printf '# fields\tname version release arch dlsize isize sha256 deps desc\n'
 		} >"$d/$ARCH/INDEX"
 		sha256sum "$d/$ARCH/INDEX" | cut -d' ' -f1 >"$d/$ARCH/INDEX.sha256"
+		# An empty repository is still a repository, and it was the only
+		# kind shipping an index nobody could check - which is exactly what
+		# a machine with sig = required would refuse.
+		if [ -n "${ALPM_SIGN_KEY:-}" ]; then
+			rm -f "$d/$ARCH/INDEX.sig"
+			signify -S -s "$ALPM_SIGN_KEY" -m "$d/$ARCH/INDEX" \
+				-x "$d/$ARCH/INDEX.sig" >/dev/null
+		fi
 		printf '   %-12s empty\n' "$r"
 	fi
 done
