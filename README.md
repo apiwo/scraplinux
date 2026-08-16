@@ -1,6 +1,6 @@
 # Arctic Linux
 
-**Arctic Linux - Alpha v.1**
+**Arctic Linux - Alpha 1.2**
 
 glibc, LLVM, a BSD-style userland, busybox init, zsh, doas, and its own
 package manager (alpm).
@@ -42,10 +42,11 @@ authorise a key with `A_SSH=y` and `A_SSH_KEYS`. `arctic-install` refuses a
 config that sets none of them rather than producing a system nobody can log
 into.
 
-`A_INIT` takes busybox (the default), openrc, sysvinit, runit, dinit or
-nitro. Services are declared once in `/etc/rc.d` and translated into
-whichever init you pick, so `service start sshd` means the same thing on
-all of them.
+`A_INIT` takes **initialization** (the default — Arctic's own fork of nitro),
+busybox, openrc, sysvinit, runit, dinit or nitro. Each choice installs that
+init's own tools and nothing of the others'. Services are declared once in
+`/etc/rc.d` and translated into whichever init you pick, so `service start
+sshd` means the same thing on all of them.
 
 Once installed, the system stays declarative through
 `/etc/arctic/system.conf` + `arctic-rebuild`: list the packages and services
@@ -58,6 +59,13 @@ arctic-rebuild
 
 Also: `arctic-shell <pkgs>` for a throwaway package environment, `arctic gc`
 to clean up.
+
+## Wireless
+
+On the installation image, run `wifi-connect` with no arguments: it scans,
+lists what is in range, asks which interface and which network, and takes the
+passphrase with the characters masked. An installed system uses NetworkManager
+(`doas nmtui`).
 
 ## Packages
 

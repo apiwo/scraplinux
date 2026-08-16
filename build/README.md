@@ -32,6 +32,13 @@ build/publish-big.sh                         # anything over 100 MB, as a releas
 build/mirror-codeberg.sh                     # the same commits to Codeberg
 ```
 
+`build/check-recipes.sh` reads every recipe and refuses the mistakes that only
+show up hours into a build: a comment between two backslash-continued lines
+(which silently swallowed the rest of mesa's meson invocation), a continued
+line running into nothing, a `name=` that disagrees with its directory, and a
+hand-edited generated recipe with no `recipe.local` beside it to stop
+gen-ports.py reverting it.
+
 `build/check-conflicts.sh` reads the built archives and reports every path two
 packages disagree about, applying alpm's own rules — identical content, a
 declared `replaces`, otherwise a conflict. Run it before publishing: the
