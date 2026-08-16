@@ -118,6 +118,32 @@ if [ -d "$ALPM_SYSROOT/usr" ]; then
 	export CFLAGS CXXFLAGS LDFLAGS
 fi
 
+# On a multilib build host /usr/lib is the *32-bit* library directory and the
+# 64-bit one is /usr/lib64. Arctic installs to /usr/lib, so every .la file
+# records libdir=/usr/lib, and libtool puts -L/usr/lib on the link line when
+# it relinks at "make install" - ahead of the host's real 64-bit paths.
+#
+# What that finds there is /usr/lib/libc.so, a linker script beginning
+# OUTPUT_FORMAT(elf32-i386). lld obeys it, and every 64-bit object already on
+# the line becomes "incompatible with elf32-i386" - including the crt files
+# the compiler driver put there itself. libressl failed exactly this way and
+# it read as a libressl bug; it is not, and any autotools package with a
+# libtool dependency of its own can hit it. -m elf_x86_64 does not help: the
+# OUTPUT_FORMAT in the script wins over it.
+#
+# So the host's 64-bit directory goes on the line first - after the sysroot,
+# which still takes precedence over both.
+if [ -e /usr/lib64/libc.so ] && grep -qs 'OUTPUT_FORMAT(elf32' /usr/lib/libc.so; then
+	if [ -d "$ALPM_SYSROOT/usr" ]; then
+		# Behind the sysroot, which still answers first for anything Arctic
+		# has built for itself.
+		LDFLAGS="-L$ALPM_SYSROOT/usr/lib -L/usr/lib64 ${LDFLAGS#-L$ALPM_SYSROOT/usr/lib }"
+	else
+		LDFLAGS="-L/usr/lib64 $LDFLAGS"
+	fi
+	export LDFLAGS
+fi
+
 # A build's HOME has to be inside the build tree, on the same filesystem as
 # its temporary files. Left pointing at /root, tools that write a cache there
 # fail in two different ways: the sandbox has /root read-only, and anything
