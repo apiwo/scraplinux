@@ -391,13 +391,19 @@ paths point into the sysroot rather than at `/usr` on the build host.
   rather than `required`. An installed system has both the key and the
   verifier. Building signify into the live rootfs is what makes `required`
   the default.
-- **Four conflicts remain between packages that can be installed together**,
-  none of them in a base install: openexr ships its own copy of Imath,
+- **Two conflicts remain between packages that can be installed together**,
+  neither in a base install: openexr ships its own copy of Imath, and
   xorg-xwayland and xorg-server both claim `/usr/lib/xorg/protocol.txt` and
-  `Xserver.1`, sysvinit and util-linux-libs disagree about `last`, `mesg`,
-  `wall` and `utmpdump`, and util-linux would take `/usr/bin/blkid` from
-  busybox. `build/check-conflicts.sh` lists them; the rest of what it reports
-  is pairs that are alternatives and never installed together.
+  `Xserver.1`. Both are packages installing files that belong to another
+  package rather than anything alpm can resolve, and both want a rebuild of
+  something large. `build/check-conflicts.sh` lists them; everything else it
+  reports is pairs that are alternatives - libressl and openssl, eudev and
+  libudev-zero, dinit and sysvinit - which are never installed together.
+- **Nothing ships a terminfo database.** netbsd-curses builds the library but
+  no compiled database, so `tput` fails on any system - which is what printed
+  "tput: cannot access the terminfo database" above every login prompt until
+  rc.boot stopped going through `clear` to blank the screen. Curses programs
+  fall back to their built-in entries; `tput` itself does not work.
 
 - **The desktop profiles do not install yet.** `arctic-xfce`, `arctic-kde`,
   `apiwow-dwm`, `arctic-sound` and `niri-dms` are meta-packages whose
@@ -424,6 +430,13 @@ paths point into the sysroot rather than at `/usr` on the build host.
   way e2fsprogs/dosfstools are — only installable as packages. The
   filesystem picker already only lists what the live session can actually
   format, so this fails safe (fewer options shown), not badly.
+- openexr doesn't build under clang: the libdeflate it vendors uses AVX-512
+  intrinsics in functions compiled without the target feature, which gcc
+  accepted and clang refuses. The package in the repository is an older gcc
+  build, and it is the one that ships a second copy of Imath.
+- btop doesn't build: its static pieces are compiled without `-fPIC` and lld
+  refuses the relocations against a PIE. The package in the repository is an
+  older build from before the clang migration.
 - helix doesn't build: one of its ~130 tree-sitter grammar dependencies
   (tree-sitter-go-template) was deleted upstream.
 - `alpm rollback` restores files but doesn't fully reconcile the package

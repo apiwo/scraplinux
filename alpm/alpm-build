@@ -110,6 +110,11 @@ fi
 # build machine's paths into the binary that ships.
 if [ -d "$ALPM_SYSROOT/usr" ]; then
 	export PKG_CONFIG_PATH="$ALPM_SYSROOT/usr/lib/pkgconfig:$ALPM_SYSROOT/usr/share/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+	# cmake does not read PKG_CONFIG_PATH for find_package, so without this a
+	# cmake build cannot see anything Arctic has built and either fails or -
+	# worse, and quietly - vendors its own copy. openexr shipped a second
+	# Imath that way, colliding with the imath package it already depends on.
+	export CMAKE_PREFIX_PATH="$ALPM_SYSROOT/usr${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
 	export ACLOCAL_PATH="$ALPM_SYSROOT/usr/share/aclocal${ACLOCAL_PATH:+:$ACLOCAL_PATH}"
 	export PATH="$ALPM_SYSROOT/usr/bin:$PATH"
 	CFLAGS="-isystem $ALPM_SYSROOT/usr/include $CFLAGS"
