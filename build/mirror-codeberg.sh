@@ -29,12 +29,14 @@ if [ -n "${CODEBERG_KEY:-}" ]; then
 fi
 
 # repo-name:checkout
+#
+# The distribution and the kernel only. The binary package repository is
+# hundreds of megabytes of .alpmz and it filled the account's storage quota,
+# which is per account - so mirroring it stopped every *other* repository from
+# being pushed too. Binaries are served from GitHub, which is what
+# /etc/alpm/repos.d points at, so nothing depends on them being here.
 REPOS="arctic-linux:$TREE
-arctic-kernel:$B/src-extra/arctic-kernel
-arctic-docs:$B/src-extra/arctic-docs
-arctic-linux-site:$B/src-extra/arctic-linux-site
-arctic-linux-pkgs:$B/src-extra/arctic-linux-pkgs
-arctic-linux-ports:$B/src-extra/arctic-linux-ports"
+arctic-kernel:$B/src-extra/arctic-kernel"
 
 only=${1:-}
 fail=0
