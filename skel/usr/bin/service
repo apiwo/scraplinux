@@ -181,7 +181,7 @@ status)
 	if ! installed "$n"; then
 		printf '  %s%s%s is %snot installed%s - %s is missing\n' \
 			"$_SNOW" "$n" "$_R" "$_AMB" "$_R" "$(svc_cmd "$n")"
-		printf '  %sinstall it with: alpm ins %s%s\n' "$_GREY" "$n" "$_R"
+		printf '  %sinstall it with: alpm add %s%s\n' "$_GREY" "$n" "$_R"
 		exit 4
 	fi
 	if running "$n"; then

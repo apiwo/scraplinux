@@ -9,8 +9,8 @@
 # and services - and this makes the real system match it. This is the same
 # relationship NixOS's configuration.nix has to `nixos-rebuild switch`, built
 # on top of alpm rather than replacing it: every install/removal here is a
-# completely ordinary `alpm ins`/`alpm del+deps` call, snapshotted the exact
-# same way a plain `alpm ins` already snapshots itself, and every reconciled
+# completely ordinary `alpm add`/`alpm rem -d` call, snapshotted the exact
+# same way a plain `alpm add` already snapshots itself, and every reconciled
 # setting below is a real, individually testable step, not a single opaque
 # "apply everything" operation.
 #
@@ -303,14 +303,14 @@ fi
 
 if [ -n "$to_install" ]; then
 	# shellcheck disable=SC2086
-	ALPM_YES=1 alpm ins $to_install || rc=1
+	ALPM_YES=1 alpm add $to_install || rc=1
 fi
 if [ -n "$to_remove" ]; then
 	# del+deps also drops now-orphaned dependencies; alpm's own
 	# ALPM_NEVER_REMOVE list still protects the base system regardless of
 	# what system.conf says.
 	# shellcheck disable=SC2086
-	ALPM_YES=1 alpm del+deps $to_remove || rc=1
+	ALPM_YES=1 alpm rem -d $to_remove || rc=1
 fi
 for s in $svc_enable;  do service enable  "$s" >/dev/null 2>&1 || rc=1; done
 for s in $svc_disable; do service disable "$s" >/dev/null 2>&1 || rc=1; done

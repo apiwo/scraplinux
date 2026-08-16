@@ -156,8 +156,8 @@ alias fetch='arcticfetch'
 alias ff='arcticfetch'
 
 # alpm shorthands, matching how people actually type.
-alias ins='doas alpm ins'
-alias del='doas alpm del'
+alias ins='doas alpm add'
+alias del='doas alpm rem'
 alias up='doas alpm update'
 alias sync='doas alpm fetch all'
 alias pkgs='alpm list'

@@ -154,7 +154,7 @@ install_limine_bios() {
 
 install_grub() {
 	bd=$1 rd=$2
-	have grub-install || { echo "arctic-boot-strap: GRUB is not installed - alpm ins grub" >&2; exit 1; }
+	have grub-install || { echo "arctic-boot-strap: GRUB is not installed - alpm add grub" >&2; exit 1; }
 	dev=$(awk -v b="$bd" '$2==b{print $1}' /proc/mounts | tail -1)
 	disk=$(printf '%s' "$dev" | sed 's|p\?[0-9]*$||')
 	run grub-install --target=i386-pc --boot-directory="$bd" "$disk" || \

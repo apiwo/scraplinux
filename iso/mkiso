@@ -42,8 +42,8 @@ BUILD_ID=$(date '+%Y.%m.%d')
 #
 # They are positions, not a decimal number: a1.2 is a later release than
 # a1.1.9, and a1.1.10 is a later one than a1.1.9 as well.
-VERSION_TAG="a1.2.2"
-VERSION="Arctic Linux - Alpha 1.2.2"
+VERSION_TAG="a1.2.3"
+VERSION="Arctic Linux - Alpha 1.2.3"
 LABEL="ARCTIC"
 
 case "$PROFILE" in
@@ -108,7 +108,7 @@ cp -a "$SRCTREE/branding/plasma"    "$S/usr/share/arctic/"
 cp -a "$SRCTREE/branding/wallpaper" "$S/usr/share/arctic/" 2>/dev/null || :
 cp -a "$SRCTREE/branding/icons"     "$S/usr/share/arctic/" 2>/dev/null || :
 
-# The ports tree, so 'alpm ins -s' works offline on a fresh install.
+# The ports tree, so 'alpm add -s' works offline on a fresh install.
 mkdir -p "$S/var/lib/alpm/ports"
 cp -a "$SRCTREE/ports/." "$S/var/lib/alpm/ports/"
 

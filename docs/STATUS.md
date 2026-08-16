@@ -24,7 +24,7 @@ spells its own variation of it.
   else it provides. The two lists have to agree; `build/check-conflicts.sh`
   is what proves they do.
 - LLVM 22.1.8 - clang, lld, libc++, compiler-rt - is packaged, so an
-  installed system has a compiler and `alpm ins -s` works on it. Too large
+  installed system has a compiler and `alpm add -s` works on it. Too large
   for the mirror, so it is published as a release asset through `big`. Built
   with AMDGPU in its target list, which is not about targeting AMD as a
   platform: mesa's radeonsi asks llvm-config for an amdgpu component and
@@ -82,7 +82,7 @@ Binaries and recipes are on separate hosts and never mix:
 - **ports-arctic.apiwow.net** serves recipes only, as
   `ALL/<repo>/<name>/recipe`. alpm reaches it through `ALPM_PORTS`, not
   through repos.d, so "what can be installed" and "what can be compiled" are
-  never the same list. `alpm ins -s` and `alpm get -s` are the only things
+  never the same list. `alpm add -s` and `alpm get -s` are the only things
   that touch it.
 
 `build/publish-pkgs.sh` and `build/publish-ports.sh` generate both sites from
@@ -310,7 +310,7 @@ paths point into the sysroot rather than at `/usr` on the build host.
   against - libressl, say - left the curl on disk missing the soname it was
   built for, and every package still to come failed to download. Everything
   is fetched first now, then installed.
-- **`alpm ins -s` built the package and threw it away.** It looked for the
+- **`alpm add -s` built the package and threw it away.** It looked for the
   result under `$ALPM_CACHE/build/out` while alpm-build writes to
   `$ALPM_BUILDROOT/out` - the same path only when `ALPM_BUILDROOT` is unset.
   Any scratch root or batch build ended in "build produced no package"
@@ -339,7 +339,7 @@ paths point into the sysroot rather than at `/usr` on the build host.
 - **A directory under `local/` counted as an installed package.**
   `is_installed()` tested `[ -d "$ALPM_DB/local/$1" ]`, and `install_one`
   wrote PKGINFO *first*, so an install that died or was interrupted anywhere
-  after `mkdir` left an entry that every later command believed. `alpm ins
+  after `mkdir` left an entry that every later command believed. `alpm add
   vim` reported vim already installed while `alpm deps vim` died on the DEPS
   file that never got written, and the resolver counted it as satisfied for
   everything that needed it. Fixed by assembling the entry in
@@ -359,7 +359,7 @@ paths point into the sysroot rather than at `/usr` on the build host.
   downloader passed `-q -O`. `-O` is the one output flag toybox, busybox and
   GNU wget all agree on, so quietness comes from a redirect now. Confirmed
   against the real toybox binary rather than from the man page.
-- **`alpm ins alacritty` offered to compile a package that had a binary.**
+- **`alpm add alacritty` offered to compile a package that had a binary.**
   Two causes. The index was stale because of the https failure above, and a
   missing *dependency* was reported as if the requested package itself were
   unavailable. alpm now refuses to run at all without an index ("run 'alpm
@@ -465,7 +465,7 @@ paths point into the sysroot rather than at `/usr` on the build host.
   a declared dependency.
 - **The "no compiler" hint names a package that does not exist.** A source
   build on a machine without clang stops with `missing: clang ld.lld` and
-  advises `alpm ins base-devel`; base-devel has no binary package, so
+  advises `alpm add base-devel`; base-devel has no binary package, so
   following the advice fails. It should say `llvm`, which is the package that
   provides clang and lld - and it comes from the `big` repository, needing
   about 1.2 GiB free to unpack.

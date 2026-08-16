@@ -62,7 +62,7 @@ requires GCC — so `build-rootfs.sh` uses the host's GCC as a stage-0 tool for
 glibc alone. Nothing it produces beyond glibc is packaged.
 
 LLVM itself is a package now — `ports/main/llvm`, 22.1.8, clang and lld and
-libc++ — so an installed machine has a compiler and `alpm ins -s` works on it.
+libc++ — so an installed machine has a compiler and `alpm add -s` works on it.
 It is far past the mirror's file size limit, so it is published the same way
 firmware is, through the `big` repository.
 

@@ -49,80 +49,80 @@ REASON=explicit
 
 usage() {
 	cat <<EOF
-${A_TEAL}${C_B}alpm${C_R} ${A_GREY}${ALPM_VERSION} - Arctic Linux Package Manager${C_R}
+${A_TEAL}${C_B}alpm${C_R} ${A_GREY}${ALPM_VERSION}${C_R}  ${A_GREY}the Arctic Linux package manager${C_R}
 
-${C_B}OPTIONS${C_R}
-  -y, --yes, --noconfirm     answer every prompt and warning with yes
-  -s, --source               build from source instead of installing a binary
-  -nomod                     install without putting the package into place
-  --root=<dir>               operate on another root instead of /
+  ${C_B}alpm add${C_R} <pkg>              install
+  ${C_B}alpm add -s${C_R} <pkg>           build it from source instead
+  ${C_B}alpm rem${C_R} <pkg>              remove
+  ${C_B}alpm update${C_R}                 upgrade everything
+  ${C_B}alpm fetch all${C_R}              sync the repositories
 
-${C_B}INSTALLING${C_R}
-  alpm ins <pkg>...          install binary packages
-  alpm ins -s <pkg>...       build and install from source
-  alpm ins -nomod <pkg>...   install without putting it into place (no hooks,
-                             no bootloader/initramfs wiring) - for kernels and
-                             other system pieces you want to stage first
-  alpm commit <pkg>...       activate a package that was installed with -nomod
-  alpm update [pkg]...       upgrade everything, or just the named packages
-  alpm reins <pkg>...        reinstall, repairing any modified files
+${A_ICE}────${C_R} ${C_B}packages${C_R}
+  add <pkg>...              install
+  add -s <pkg>...           build from the port and install that
+  add -nomod <pkg>...       install without putting it in place - no hooks, no
+                            bootloader or initramfs wiring. for kernels and
+                            other pieces you want to stage first
+  commit <pkg>...           put a -nomod install into place
+  reins <pkg>...            reinstall, repairing anything modified
+  update [pkg]...           upgrade everything, or only what is named
 
-${C_B}REMOVING${C_R}
-  alpm del <pkg>...          remove packages
-  alpm del+deps <pkg>...     remove packages and any dependencies left orphaned
-  alpm del+junk <pkg>...     remove packages and their config/cache leftovers
-  alpm del+deps+junk <pkg>   both of the above
-  alpm autoremove            remove every orphan on the system
+${A_ICE}────${C_R} ${C_B}removing${C_R}
+  rem <pkg>...              remove
+  rem -a <pkg>...           and the config and cache it leaves behind
+  rem -d <pkg>...           and the dependencies nothing else needs
+  rem -a -d <pkg>...        both
+  rem -f <pkg>...           even if something still depends on it
+  autoremove                every orphan on the system
 
-${C_B}FETCHING${C_R}
-  alpm get <pkg>...          unpack package contents here without installing
-  alpm get -s <pkg>...       fetch upstream source here
-  alpm fetch all             sync every enabled repo
-  alpm fetch <repo>...       sync main | extra | base | kernels |
-                             nonfree | alt-nonfree | multilib | profile
-  alpm fetch ports           refresh the source recipe list only
+${A_ICE}────${C_R} ${C_B}repositories${C_R}
+  repo add <url>            add one
+  repo del <name>           remove one
+  repo list                 show what is configured
+  fetch all                 sync every enabled repository
+  fetch <repo>...           sync only these
+  fetch ports               refresh the recipe list only
+  mirror <repo>             show and pick the fastest mirror
 
-${C_B}SYSTEM${C_R}
-  alpm system upgrade        sync, upgrade packages and kernel, update the
-                             bootloader, then apply pending fixes
-  alpm system fix            apply corrections from the fix repository
-  alpm system fix <what>     only those for one area (bootloader, kernel,
-                             pkg, init, net) or one level (major, minor,
-                             change, or bugfix for both fix levels)
+${A_ICE}────${C_R} ${C_B}the system${C_R}
+  system upgrade            sync, upgrade packages and kernel, update the
+                            bootloader, then apply pending fixes
+  system fix                corrections from the fix repository
+  system fix <what>         one area (bootloader, kernel, pkg, init, net) or
+                            one level (major, minor, change, bugfix)
 
-${C_B}REPOSITORIES${C_R}
-  alpm add repo <url>        add a repository
-  alpm del repo <name>       remove a repository
-  alpm list repos            show configured repositories
-  alpm mirror <repo>         show/pick the fastest mirror for a repo
+${A_ICE}────${C_R} ${C_B}asking${C_R}
+  list [-e]                 what is installed (-e: only what you asked for)
+  index [repo]              what is available
+  search <pattern>          names and descriptions
+  info <pkg>                details
+  files <pkg>               what it owns
+  owns <path>               what owns this
+  deps / rdeps <pkg>        what it needs / what needs it
+  why <pkg>                 why it is here
+  orphans                   what nothing needs
+  stats                     sizes, counts, where things came from
 
-${C_B}QUERYING${C_R}
-  alpm list                  list installed packages
-  alpm list -e               list explicitly installed packages only
-  alpm index [repo]          list everything available
-  alpm search <pattern>      search names and descriptions
-  alpm info <pkg>            show package details
-  alpm files <pkg>           list files a package owns
-  alpm owns <path>           find which package owns a file
-  alpm deps <pkg>            show the dependency tree
-  alpm rdeps <pkg>           show what depends on a package
-  alpm why <pkg>             explain why a package is on the system
-  alpm orphans               list packages nothing needs
-  alpm stats                 installed size, counts, repo breakdown
+${A_ICE}────${C_R} ${C_B}looking after it${C_R}
+  verify [pkg]              check every installed file against the database
+  doctor                    find problems and offer to fix them
+  clean                     empty the download cache
+  hold / unhold <pkg>       pin against upgrades
+  mark <pkg> explicit|dep   change why it is installed
+  snapshot [name]           save the package state
+  rollback [id]             undo a transaction, restoring what it replaced
+  log                       what has been done
+  build <recipe>            build an .alpmz from a port recipe
+  get <pkg>...              unpack a package here without installing it
+  get -s <pkg>...           fetch its upstream source here
+  version                   print the version
 
-${C_B}MAINTENANCE${C_R}
-  alpm verify [pkg]          checksum every installed file against the database
-  alpm doctor                check the system for problems and offer fixes
-  alpm clean                 clear the download cache
-  alpm hold <pkg> / unhold   pin a package against upgrades
-  alpm mark <pkg> explicit|dep
-  alpm snapshot [name]       save the current package state
-  alpm rollback [id]         undo a transaction, restoring replaced files
-  alpm log                   show the transaction log
-  alpm build <recipe>        build an .alpmz from an Arctic port recipe
-  alpm version               print version
+${A_ICE}────${C_R} ${C_B}anywhere${C_R}
+  -y, --yes                 answer every prompt with yes
+  -s, --source              build from source rather than install a binary
+  --root=<dir>              work on another root instead of /
 
-Run as root for anything that changes the system.
+${A_GREY}Anything that changes the system needs root.${C_R}
 EOF
 }
 
@@ -2145,17 +2145,21 @@ done
 set -- $args
 
 case "$cmd" in
-ins|install|i)      cmd_ins "$@" ;;
+# The old verbs are gone. "ins" and "del" were what these were called
+# before add and rem; keeping both meant two names for one thing in every
+# example, every script and every page of documentation. They answer with
+# what to type instead rather than "unknown command".
+ins|install|i)      die "alpm ins is now: alpm add $*" ;;
 reins|reinstall)    cmd_reins "$@" ;;
 commit)             cmd_commit "$@" ;;
 del|remove|rm)
 	case "${1:-}" in
-	repo) shift; cmd_delrepo "$@" ;;
-	*)    do_remove 0 0 "$@" ;;
+	repo) shift; die "alpm del repo is now: alpm repo del $*" ;;
+	*)    die "alpm del is now: alpm rem $*" ;;
 	esac ;;
-del+deps)           do_remove 1 0 "$@" ;;
-del+junk)           do_remove 0 1 "$@" ;;
-del+deps+junk|del+junk+deps) do_remove 1 1 "$@" ;;
+del+deps)           die "alpm del+deps is now: alpm rem -d $*" ;;
+del+junk)           die "alpm del+junk is now: alpm rem -a $*" ;;
+del+deps+junk|del+junk+deps) die "alpm del+deps+junk is now: alpm rem -a -d $*" ;;
 autoremove)         cmd_autoremove ;;
 get)                cmd_get "$@" ;;
 fetch|sync)         cmd_fetch "$@" ;;
@@ -2165,7 +2169,7 @@ system|sys)         cmd_system "$@" ;;
 # because that is what it used to mean and scripts have it.
 add|a)
 	case "${1:-}" in
-	repo) shift; cmd_addrepo "$@" ;;
+	repo) shift; die "alpm add repo is now: alpm repo add $*" ;;
 	*)    cmd_ins "$@" ;;
 	esac ;;
 # The repository verbs read as what they do: alpm repo add <url>.

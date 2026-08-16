@@ -96,7 +96,7 @@ if [ ! -d "$ENVROOT/usr" ]; then
 	done
 	[ -e "$ENVROOT/lib64" ] || ln -s usr/lib "$ENVROOT/lib64"
 	# shellcheck disable=SC2086
-	ALPM_ROOT="$ENVROOT" ALPM_YES=1 alpm ins glibc busybox toybox $pkgs \
+	ALPM_ROOT="$ENVROOT" ALPM_YES=1 alpm add glibc busybox toybox $pkgs \
 		|| die "could not build the environment - see above"
 	printf '%s\n' "$pkgs" >"$ENVROOT/.arctic-shell-pkgs"
 else

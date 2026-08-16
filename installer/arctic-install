@@ -426,7 +426,7 @@ check_config() {
 # just applied to the live system's own root instead of a chrooted target.
 ensure_pkg() {
 	have "$2" && return 0
-	ALPM_YES=1 alpm ins "$1" >>"$LOGF" 2>&1
+	ALPM_YES=1 alpm add "$1" >>"$LOGF" 2>&1
 	have "$2"
 }
 
@@ -758,7 +758,7 @@ install_init() {
 	step "Installing $A_INIT" "$pkgs"
 	if [ -n "$pkgs" ]; then
 		# shellcheck disable=SC2086
-		if ! target_alpm ins $pkgs; then
+		if ! target_alpm add $pkgs; then
 			warn_soft "$A_INIT could not be installed - the system will boot busybox init instead"
 			A_INIT=busybox
 			return 0
@@ -791,7 +791,7 @@ install_init() {
 
 install_pkgit() {
 	step "Installing pkgit" "alongside alpm"
-	if target_alpm ins pkgit; then
+	if target_alpm add pkgit; then
 		logit "pkgit installed"
 	else
 		warn_soft "pkgit is not in the repositories yet - alpm remains the only package manager"
@@ -892,11 +892,11 @@ do_install() {
 		mkdir -p "$TARGET/var/cache/alpm/pkg"
 		cp -f /var/cache/alpm/pkg/*.alpmz "$TARGET/var/cache/alpm/pkg/" 2>/dev/null || :
 	fi
-	target_alpm ins $PKGS_MAIN || bail "the base system failed to install - see $LOGF"
+	target_alpm add $PKGS_MAIN || bail "the base system failed to install - see $LOGF"
 
 	step "Installing the kernel" "$A_KERNEL"
 	# -nomod keeps the kernel out of the bootloader until 'arctic-boot-strap' runs.
-	target_alpm ins -nomod "$A_KERNEL" || bail "could not install $A_KERNEL"
+	target_alpm add -nomod "$A_KERNEL" || bail "could not install $A_KERNEL"
 	# Microcode is only installed if a repository actually has it. Asking for
 	# intel-ucode when nothing packages it printed "package not found" in the
 	# middle of the install, which reads like a failure and is not one - the
@@ -904,7 +904,7 @@ do_install() {
 	uc=$(detect_microcode)
 	if [ "$uc" != none ]; then
 		if target_alpm info "$uc" >/dev/null 2>&1; then
-			target_alpm ins "$uc" || warn_soft "$uc could not be installed"
+			target_alpm add "$uc" || warn_soft "$uc could not be installed"
 		else
 			logit "no $uc package available; skipping microcode"
 		fi
@@ -913,7 +913,7 @@ do_install() {
 	step "Installing firmware" "linux-firmware"
 	case "$A_KERNEL" in
 	arctic-libre-kernel) logit "libre kernel: skipping nonfree firmware" ;;
-	*) target_alpm ins linux-firmware || warn_soft "firmware not installed" ;;
+	*) target_alpm add linux-firmware || warn_soft "firmware not installed" ;;
 	esac
 
 	# Optional from here down: the system already boots. A package that
@@ -921,11 +921,11 @@ do_install() {
 	# rather than printing "unresolved dependencies - nothing was installed"
 	# in the middle of an otherwise fine install and looking like a failure.
 	step "Installing network tools" "$PKGS_NET"
-	target_alpm ins $PKGS_NET || \
+	target_alpm add $PKGS_NET || \
 		warn_soft "some network packages could not be installed - see $LOGF"
 
 	step "Installing base utilities" "$PKGS_EXTRA_BASE"
-	target_alpm ins $PKGS_EXTRA_BASE || \
+	target_alpm add $PKGS_EXTRA_BASE || \
 		warn_soft "some base utilities could not be installed - see $LOGF"
 
 	install_init
@@ -946,11 +946,11 @@ do_install() {
 		# make. Choosing the proprietary driver is what pulls them in;
 		# nothing else on the system does.
 		logit "nvidia: installing gcc-libs and gmake - required by the proprietary driver"
-		target_alpm ins gcc-libs libglvnd gmake || :
+		target_alpm add gcc-libs libglvnd gmake || :
 		# The proprietary driver is not packaged yet, and this used to end
 		# in "|| :" - so an NVIDIA machine finished the install having
 		# quietly received no driver at all and nothing said so.
-		if ! target_alpm ins nvidia-drivers nvidia-utils; then
+		if ! target_alpm add nvidia-drivers nvidia-utils; then
 			warn_soft "the proprietary NVIDIA driver is not packaged yet - mesa drives the card through nouveau instead"
 		fi ;;
 	nouveau) : ;;
@@ -983,7 +983,7 @@ do_install() {
 	# software rasteriser and the VA driver are all inside it, which is what
 	# its "provides" says. vulkan-loader is what an application actually
 	# links against - the drivers are of no use without it.
-	*) target_alpm ins mesa vulkan-loader || \
+	*) target_alpm add mesa vulkan-loader || \
 		warn_soft "graphics drivers could not be installed - the console still works, X and Wayland will not" ;;
 	esac
 
@@ -994,10 +994,10 @@ do_install() {
 	# individual packages keeps this working on a repo that has the pieces
 	# but not the profile.
 	case "$A_DESKTOP" in
-	kde)   target_alpm ins arctic-kde  || target_alpm ins plasma-meta konsole dolphin || : ;;
-	xfce)  target_alpm ins arctic-xfce || target_alpm ins xfce4-meta xorg-server || : ;;
-	niri)  target_alpm ins niri-dms    || target_alpm ins niri waybar fuzzel || : ;;
-	dwm)   target_alpm ins apiwow-dwm  || target_alpm ins dwm st dmenu xorg-server || : ;;
+	kde)   target_alpm add arctic-kde  || target_alpm add plasma-meta konsole dolphin || : ;;
+	xfce)  target_alpm add arctic-xfce || target_alpm add xfce4-meta xorg-server || : ;;
+	niri)  target_alpm add niri-dms    || target_alpm add niri waybar fuzzel || : ;;
+	dwm)   target_alpm add apiwow-dwm  || target_alpm add dwm st dmenu xorg-server || : ;;
 	none)  logit "no desktop requested" ;;
 	esac
 
@@ -1013,37 +1013,37 @@ do_install() {
 		esac
 	fi
 	case "$dm" in
-	sddm)    target_alpm ins sddm sddm-arctic-theme || : ;;
-	lightdm) target_alpm ins lightdm || : ;;
-	greetd)  target_alpm ins greetd tuigreet || : ;;
+	sddm)    target_alpm add sddm sddm-arctic-theme || : ;;
+	lightdm) target_alpm add lightdm || : ;;
+	greetd)  target_alpm add greetd tuigreet || : ;;
 	none)    : ;;
 	esac
 	A_DM=$dm
 
 	step "Installing fonts" "${A_FONTS:-none}"
-	[ -n "$A_FONTS" ] && target_alpm ins $A_FONTS || :
+	[ -n "$A_FONTS" ] && target_alpm add $A_FONTS || :
 	step "Installing selected packages" "${A_PKGS:-none}"
-	[ -n "$A_PKGS" ] && target_alpm ins $A_PKGS || :
+	[ -n "$A_PKGS" ] && target_alpm add $A_PKGS || :
 	step "Installing package sets" "${A_SETS:-none}"
 	for _set in $A_SETS; do
 		case "$_set" in
-		devel)  target_alpm ins cmake llvm meson ninja pkgconf bmake lldb || : ;;
-		net)    target_alpm ins curl wget rsync openssh nmap || : ;;
-		media)  target_alpm ins ffmpeg mpv || : ;;
-		office) target_alpm ins libreoffice || : ;;
-		virt)   target_alpm ins qemu libvirt docker podman containerd crun conmon || : ;;
-		gaming) target_alpm ins wine steam gamemode gamescope dxvk || : ;;
-		cli)    target_alpm ins ripgrep fd bat eza fzf zoxide || : ;;
+		devel)  target_alpm add cmake llvm meson ninja pkgconf bmake lldb || : ;;
+		net)    target_alpm add curl wget rsync openssh nmap || : ;;
+		media)  target_alpm add ffmpeg mpv || : ;;
+		office) target_alpm add libreoffice || : ;;
+		virt)   target_alpm add qemu libvirt docker podman containerd crun conmon || : ;;
+		gaming) target_alpm add wine steam gamemode gamescope dxvk || : ;;
+		cli)    target_alpm add ripgrep fd bat eza fzf zoxide || : ;;
 		esac
 	done
 	# arctic-sound is the whole working stack: pipewire, wireplumber, the
 	# pulse shim so anything expecting PulseAudio still plays, and alsamixer
 	# for when levels need setting directly.
-	[ "$A_AUDIO" = y ] && { target_alpm ins arctic-sound || \
-		target_alpm ins pipewire wireplumber pipewire-pulse alsa-utils || :; }
-	[ "$A_BLUETOOTH" = y ] && target_alpm ins bluez bluez-utils || :
+	[ "$A_AUDIO" = y ] && { target_alpm add arctic-sound || \
+		target_alpm add pipewire wireplumber pipewire-pulse alsa-utils || :; }
+	[ "$A_BLUETOOTH" = y ] && target_alpm add bluez bluez-utils || :
 	if [ "$A_SSH" = y ]; then
-		target_alpm ins openssh || :
+		target_alpm add openssh || :
 		if [ "$A_SSH_PASSWORD_AUTH" = n ] && [ -f "$TARGET/etc/ssh/sshd_config" ]; then
 			if grep -q '^#\?PasswordAuthentication' "$TARGET/etc/ssh/sshd_config"; then
 				sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' \
@@ -1053,19 +1053,19 @@ do_install() {
 			fi
 		fi
 	fi
-	[ "$A_FIREWALL" = y ] && target_alpm ins nftables || :
+	[ "$A_FIREWALL" = y ] && target_alpm add nftables || :
 
 	step "Installing filesystem tools" "$A_ROOT_FS"
 	case "$A_ROOT_FS" in
-	btrfs) target_alpm ins btrfs-progs || : ;;
-	xfs)   target_alpm ins xfsprogs || : ;;
-	f2fs)  target_alpm ins f2fs-tools || : ;;
+	btrfs) target_alpm add btrfs-progs || : ;;
+	xfs)   target_alpm add xfsprogs || : ;;
+	f2fs)  target_alpm add f2fs-tools || : ;;
 	zfs)   logit "zfs userspace tools are not packaged for Arctic yet" ;;
-	*)     target_alpm ins e2fsprogs || : ;;  # ext4, ext3, ext2
+	*)     target_alpm add e2fsprogs || : ;;  # ext4, ext3, ext2
 	esac
 	if [ "$A_ENCRYPT" = y ]; then
 		step "Installing cryptsetup" "LUKS"
-		target_alpm ins cryptsetup || warn_soft "cryptsetup did not install"
+		target_alpm add cryptsetup || warn_soft "cryptsetup did not install"
 	fi
 
 	step "Setting up snapshots" "${A_SNAPSHOT:-none}"
@@ -1294,9 +1294,9 @@ setup_snapshots() {
 	# create" before every install and removal (see alpm/alpm's tx_snapshot),
 	# and arctic-snapshot itself reads TOOL= above to decide who to delegate to.
 	case "$A_SNAPSHOT" in
-	timeshift) target_alpm ins timeshift 2>/dev/null || \
+	timeshift) target_alpm add timeshift 2>/dev/null || \
 		logit "timeshift package not available; arctic-snapshot will drive btrfs directly" ;;
-	snapper)   target_alpm ins snapper 2>/dev/null || \
+	snapper)   target_alpm add snapper 2>/dev/null || \
 		logit "snapper package not available; arctic-snapshot will drive btrfs directly" ;;
 	esac
 	logit "snapshots configured: $A_SNAPSHOT"

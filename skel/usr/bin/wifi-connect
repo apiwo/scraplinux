@@ -192,7 +192,7 @@ connect() {
 }
 
 interactive() {
-	command -v iw >/dev/null 2>&1 || { oops "iw is not installed - cannot scan (alpm ins iw)"; exit 1; }
+	command -v iw >/dev/null 2>&1 || { oops "iw is not installed - cannot scan (alpm add iw)"; exit 1; }
 
 	# 1. the interface
 	ifaces=$(wireless_ifaces)
@@ -273,7 +273,7 @@ fi
 check_iface "$iface"
 
 if [ "$mode" = scan ] || [ "$mode" = list ]; then
-	command -v iw >/dev/null 2>&1 || { oops "iw is not installed - cannot scan (alpm ins iw)"; exit 1; }
+	command -v iw >/dev/null 2>&1 || { oops "iw is not installed - cannot scan (alpm add iw)"; exit 1; }
 	tmp=/tmp/.wifi-scan.$$
 	scan_with_spinner "$iface" "$tmp"
 	if [ "$mode" = list ]; then
