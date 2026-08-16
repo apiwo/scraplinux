@@ -28,3 +28,6 @@ a1-0016	minor	init	arctic-base	1.2.4	the hotplug guard tested the directory rath
 a1-0017	major	pkg	alpm	1.2.4	a package could not take over a path from toybox's fallback applets, so bzip2, vim and util-linux each stopped an install
 a1-0018	minor	pkg	alpm	1.2.4	a fix repository that could not be reached was reported as one that was not configured
 a1-0019	major	init	arctic-base	1.2.4	boot aborted part way through on a leading-zero uptime, leaving the session with no services and no network
+a1-0020	major	shell	toybox	0.8.14	tr, stty, expr, diff and more were missing from the system entirely, so alpm and arcticfetch printed "tr: not found" over their own output
+a1-0021	minor	pkg	less	679	less could not take its path from busybox's cut-down applet, which stopped an install
+a1-0022	minor	pkg	libressl	4.2.0	libressl and openssl both claimed /etc/ssl/openssl.cnf, which stopped an install that wanted both
