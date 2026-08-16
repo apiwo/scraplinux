@@ -359,6 +359,15 @@ check_config() {
 		cfg_warn "installing onto $A_ROOT_PART without formatting - whatever is already there stays"
 	[ "$A_LOCK_ROOT" = y ] && [ -z "$A_USER" ] && \
 		cfg_warn "A_LOCK_ROOT=y but A_USER is empty - ignored, that would leave no way in at all"
+	# root ships locked and a user created without a password is locked too,
+	# so an install that sets neither finishes perfectly and then cannot be
+	# logged into by anyone - which is discovered at the first boot, after
+	# the medium has been put away and with nothing to do about it but
+	# install again.
+	if [ -z "$A_ROOTPASS" ] && [ -z "$A_USERPASS" ] &&
+	   ! { [ "$A_SSH" = y ] && [ -n "$A_SSH_KEYS" ]; }; then
+		cfg_err "nothing could log in to the installed system: root ships locked, and no password is set for it or for a user. Set A_ROOTPASS, or A_USER with A_USERPASS, or authorise an ssh key with A_SSH=y and A_SSH_KEYS."
+	fi
 	[ "$A_SSH_PASSWORD_AUTH" = n ] && [ "$A_SSH" != y ] && \
 		cfg_warn "A_SSH_PASSWORD_AUTH=n has nothing to do - A_SSH is not y"
 	[ -n "$A_SSH_KEYS" ] && [ "$A_SSH" != y ] && \

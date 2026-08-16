@@ -86,6 +86,24 @@ for r in $REPOS; do
 			note "$r: $(basename "$f") is too large for the mirror ($((sz/1048576)) MiB) - skipped"
 			continue
 		fi
+		# A published name-version-release is a promise about specific bytes.
+		# Rebuilding one and pushing it under the same name breaks every
+		# client holding the older index: it fetches the new package, checks
+		# it against the old checksum and refuses to install it - which is
+		# exactly how an install died halfway through the base system after
+		# alpm was rebuilt twice as 1.2.5-1. Bump the release instead.
+		# ARCTIC_REPUBLISH=yes is for a mirror being rebuilt from scratch,
+		# where nothing has been handed out yet.
+		if [ -f "$dst/$(basename "$f")" ] && ! cmp -s "$f" "$dst/$(basename "$f")"; then
+			if [ "${ARCTIC_REPUBLISH:-no}" != yes ]; then
+				echo "publish-pkgs.sh: $(basename "$f") has already been published with different contents." >&2
+				echo "  A release is what a client's index refers to; changing what it points at" >&2
+				echo "  makes every stale index fatal. Bump the release and build again, or set" >&2
+				echo "  ARCTIC_REPUBLISH=yes if this mirror has never been handed out." >&2
+				exit 1
+			fi
+			note "$r: republished $(basename "$f") with different contents"
+		fi
 		cmp -s "$f" "$dst/$(basename "$f")" 2>/dev/null || cp -f "$f" "$dst/"
 		n=$((n+1))
 	done
