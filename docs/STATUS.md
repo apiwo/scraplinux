@@ -454,6 +454,22 @@ paths point into the sysroot rather than at `/usr` on the build host.
 
 ## Known rough edges
 
+- **A package's declared dependencies are not checked against what it
+  actually links.** dwm installs and then fails to start with
+  `libharfbuzz.so.0: cannot open shared object file` - it links harfbuzz
+  through libXft and does not declare it, so alpm never installed it. mkiso
+  closes over real linkage for the image, and nothing does the equivalent for
+  ordinary packages, so this is unlikely to be only dwm.
+  `build/check-conflicts.sh` already opens every archive and could do the
+  audit in the same pass: for each ELF, every DT_NEEDED must be satisfied by
+  a declared dependency.
+- **The "no compiler" hint names a package that does not exist.** A source
+  build on a machine without clang stops with `missing: clang ld.lld` and
+  advises `alpm ins base-devel`; base-devel has no binary package, so
+  following the advice fails. It should say `llvm`, which is the package that
+  provides clang and lld - and it comes from the `big` repository, needing
+  about 1.2 GiB free to unpack.
+
 - **The packages in the images were compiled by gcc.** Arctic is GNU-free in
   policy before it is in fact. LLVM is packaged now, so the next rebuild has
   a clang to use; nothing has been rebuilt with it yet.
