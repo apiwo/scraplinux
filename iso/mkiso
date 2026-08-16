@@ -34,16 +34,17 @@ BUILD_ID=$(date '+%Y.%m.%d')
 # arcticfetch's "os" line - reads it from here rather than spelling out its
 # own variation of it.
 #
-# The tag counts in three positions, left to right:
+# One dot, and the digits after it are read one at a time - not as a decimal
+# number and not as further dotted fields:
 #
-#   a1       the main release - Alpha 1
-#   a1.2     the second position moves for a major bugfix
-#   a1.2.1   the third moves for minor fixes and quality-of-life changes
+#   a1     the main release - Alpha 1
+#   a1.2   the first digit moves for a major bugfix
+#   a1.23  the second moves for minor fixes and quality-of-life changes
 #
-# They are positions, not a decimal number: a1.2 is a later release than
-# a1.1.9, and a1.1.10 is a later one than a1.1.9 as well.
-VERSION_TAG="a1.2.3"
-VERSION="Arctic Linux - Alpha 1.2.3"
+# So a1.23 follows a1.22, a1.3 is the next major bugfix after a1.29, and
+# there is never a second dot.
+VERSION_TAG="a1.23"
+VERSION="Arctic Linux - Alpha 1.23"
 LABEL="ARCTIC"
 
 case "$PROFILE" in

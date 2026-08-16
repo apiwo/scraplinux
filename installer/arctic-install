@@ -592,15 +592,32 @@ partition_disk() {
 	mkdir -p "$TARGET"
 	make_root_fs "$rootsrc" || bail "could not create the $A_ROOT_FS filesystem on $rootsrc - see $LOGF"
 
+	# A failed boot mount used to be ignored - "|| :" - and the install
+	# carried on writing the kernel, the initramfs and the bootloader into a
+	# plain directory on the root filesystem instead of onto the partition
+	# the firmware reads. Nothing said so, and the machine did not boot.
+	#
+	# It is checked now, and checked by asking the kernel rather than by
+	# trusting mount's exit status: a mount that "succeeds" onto the wrong
+	# thing is the failure worth catching.
+	mounted_at() {
+		awk -v m="$1" '$2 == m { found = 1 } END { exit !found }' /proc/mounts
+	}
 	if [ -n "$p1" ]; then
 		step "Mounting $p1" "$A_BOOT_MOUNT"
 		mkdir -p "$TARGET$A_BOOT_MOUNT"
-		mount "$p1" "$TARGET$A_BOOT_MOUNT" >>"$LOGF" 2>&1 || :
+		if ! mount "$p1" "$TARGET$A_BOOT_MOUNT" >>"$LOGF" 2>&1 || \
+		   ! mounted_at "$TARGET$A_BOOT_MOUNT"; then
+			bail "could not mount the boot partition $p1 on $TARGET$A_BOOT_MOUNT - see $LOGF. Carrying on would put the bootloader in a directory on the root filesystem and the machine would not boot."
+		fi
 		A_ESP=$p1
 	elif [ -n "$pb" ]; then
 		step "Mounting $pb" "$A_BIOS_BOOT_MOUNT"
 		mkdir -p "$TARGET$A_BIOS_BOOT_MOUNT"
-		mount "$pb" "$TARGET$A_BIOS_BOOT_MOUNT" >>"$LOGF" 2>&1 || :
+		if ! mount "$pb" "$TARGET$A_BIOS_BOOT_MOUNT" >>"$LOGF" 2>&1 || \
+		   ! mounted_at "$TARGET$A_BIOS_BOOT_MOUNT"; then
+			bail "could not mount the boot partition $pb on $TARGET$A_BIOS_BOOT_MOUNT - see $LOGF. Carrying on would put the bootloader in a directory on the root filesystem and the machine would not boot."
+		fi
 		A_BIOS_BOOTPART=$pb
 	fi
 	A_ROOTDEV=$p2
@@ -682,8 +699,14 @@ mount_existing() {
 		fi
 		step "Mounting $A_BOOT_PART" "$bm"
 		mkdir -p "$TARGET$bm"
-		mount "$A_BOOT_PART" "$TARGET$bm" >>"$LOGF" 2>&1 \
-			|| warn_soft "could not mount $A_BOOT_PART on $bm"
+		# Same reason as the partitioned path: a boot partition that does
+		# not mount means the bootloader is written into a directory on the
+		# root filesystem, and the machine does not boot. A warning was not
+		# enough - the install went on to report success.
+		if ! mount "$A_BOOT_PART" "$TARGET$bm" >>"$LOGF" 2>&1 || \
+		   ! awk -v m="$TARGET$bm" '$2 == m { f = 1 } END { exit !f }' /proc/mounts; then
+			bail "could not mount $A_BOOT_PART on $bm - see $LOGF. Carrying on would put the bootloader in a directory on the root filesystem and the machine would not boot."
+		fi
 		if [ "$fw" = efi ]; then
 			A_ESP=$A_BOOT_PART
 		else
