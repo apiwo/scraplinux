@@ -49,11 +49,22 @@ for pv in $want; do
 	ver=${pv##*-}
 	name=${pv%-*}
 	found=""
+	foundrel=0
+	# The manifest names a version, not a release, and a version is usually
+	# rebuilt several times before the fix is right. The highest release is
+	# the one that carries it. Taking the first name a glob produced took
+	# the lowest instead - and would have taken -10 over -2 - so a fix could
+	# be published as a package that predated it.
 	for r in main extra base kernels profile nonfree alt-nonfree multilib; do
 		for f in "$B/repo/$r/$ARCH/$name-$ver-"*.alpmz; do
 			[ -f "$f" ] || continue
-			found=$f
-			break
+			rel=${f##*-}
+			rel=${rel%%.*}
+			case $rel in *[!0-9]*) continue ;; esac
+			if [ -z "$found" ] || [ "$rel" -gt "$foundrel" ]; then
+				found=$f
+				foundrel=$rel
+			fi
 		done
 		[ -n "$found" ] && break
 	done
