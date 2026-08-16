@@ -439,22 +439,30 @@ if [ ! -x "$R/usr/bin/toybox" ]; then
 			# Only link toybox for names busybox and glibc have not already
 			# taken - two providers of one path is a package conflict later.
 			GLIBC_CLAIMED="getconf getent ldd locale localedef iconv gencat sprof"
+			# busybox owns these outright - the same list its own recipe
+			# claims, and the same one the toybox package skips.
+			#
+			# This used to be conditional on the name *already* being a
+			# symlink to busybox, and that is not the same thing. The rootfs
+			# is built incrementally: on a run where busybox was already
+			# built and toybox was not, the condition was evaluated against a
+			# tree where the busybox links had never been made, so toybox
+			# took the name anyway. /usr/bin/wget on the shipped image was a
+			# toybox link because of it - and toybox's wget cannot speak
+			# https at all, so anything reaching for it to fetch a source
+			# tarball failed on a URL busybox would have fetched.
+			BUSYBOX_CLAIMED="init sh ash getty mdev login su passwd chpasswd \
+adduser addgroup deluser delgroup mount umount swapon swapoff mkswap fsck \
+blkid findfs mountpoint losetup switch_root pivot_root udhcpc ip ifconfig \
+route ping wget modprobe insmod rmmod lsmod depmod sysctl hwclock killall5 \
+start-stop-daemon syslogd klogd crond reboot halt poweroff setfont loadkmap \
+vi less"
 			"$R/usr/bin/toybox" 2>/dev/null | tr ' ' '\n' | \
 			  while read -r a; do
 				[ -n "$a" ] || continue
 				[ "$a" = toybox ] && continue
 				case " $GLIBC_CLAIMED " in *" $a "*) continue ;; esac
-				# busybox already owns this name if it is a symlink to busybox.
-				if [ -L "$R/usr/bin/$a" ] && \
-				   [ "$(readlink "$R/usr/bin/$a")" = busybox ]; then
-					case "$a" in
-					init|sh|ash|getty|mdev|login|su|passwd|blkid|mount|umount|\
-					fsck|swapon|swapoff|mkswap|findfs|mountpoint|losetup|ip|\
-					ifconfig|route|ping|wget|modprobe|insmod|rmmod|lsmod|depmod|\
-					sysctl|hwclock|reboot|halt|poweroff|vi|less|syslogd|crond)
-						continue ;;
-					esac
-				fi
+				case " $BUSYBOX_CLAIMED " in *" $a "*) continue ;; esac
 				ln -sf toybox "$R/usr/bin/$a" 2>/dev/null || :
 			  done
 			ok "toybox + $(tgt "$R/usr/bin/toybox" | wc -w) commands"
@@ -462,6 +470,30 @@ if [ ! -x "$R/usr/bin/toybox" ]; then
 	fi
 else
 	ok "toybox already built"
+fi
+
+# Repair a tree an earlier run got wrong. The links above are only made on
+# the run that builds toybox, so a rootfs that already has one keeps whatever
+# it was given - and what it was given included /usr/bin/wget pointing at
+# toybox, whose wget cannot speak https. Rebuilding the whole rootfs from
+# source to correct a symlink is not a reasonable price.
+BUSYBOX_CLAIMED=${BUSYBOX_CLAIMED:-"init sh ash getty mdev login su passwd chpasswd \
+adduser addgroup deluser delgroup mount umount swapon swapoff mkswap fsck \
+blkid findfs mountpoint losetup switch_root pivot_root udhcpc ip ifconfig \
+route ping wget modprobe insmod rmmod lsmod depmod sysctl hwclock killall5 \
+start-stop-daemon syslogd klogd crond reboot halt poweroff setfont loadkmap \
+vi less"}
+if [ -x "$R/usr/bin/busybox" ]; then
+	_repaired=0
+	for a in $BUSYBOX_CLAIMED; do
+		[ -L "$R/usr/bin/$a" ] || continue
+		[ "$(readlink "$R/usr/bin/$a")" = toybox ] || continue
+		"$R/usr/bin/busybox" --list 2>/dev/null | grep -qx "$a" || continue
+		ln -sf busybox "$R/usr/bin/$a"
+		printf '   repointed %s at busybox\n' "$a"
+		_repaired=$((_repaired + 1))
+	done
+	[ "$_repaired" = 0 ] || ok "$_repaired applet(s) taken back from toybox"
 fi
 
 # util-linux is built with --disable-more, so toybox's own applet is

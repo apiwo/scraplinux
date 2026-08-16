@@ -103,6 +103,9 @@ still source-only.
 
 ## Mirrors
 
-Everything is on GitHub and Codeberg both:
 [github.com/apiwo](https://github.com/apiwo/arctic-linux) ·
 [codeberg.org/apiwo](https://codeberg.org/apiwo/arctic-linux)
+
+The Codeberg mirror is behind: the storage quota there is per account, the
+binary package repository filled it, and every push is rejected until that
+changes. GitHub is current.
