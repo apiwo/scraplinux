@@ -788,7 +788,7 @@ install_pkgit() {
 
 # Package sets, per repo. main is what every Arctic system needs.
 PKGS_MAIN="glibc busybox toybox zsh doas libarchive mandoc onetrueawk bmake byacc \
-alpm arctic-base arctic-init iana-etc tzdata ca-certificates"
+alpm arctic-base arctic-init iana-etc tzdata ca-certificates signify"
 PKGS_NET="networkmanager wpa_supplicant curl dbus"
 # Nothing beyond what a console system needs to run and be repaired. A
 # terminal emulator, a fetch tool and a system monitor are not part of a base

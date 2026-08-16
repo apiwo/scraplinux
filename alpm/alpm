@@ -1155,6 +1155,24 @@ sync_repo() {
 		return 1
 	fi
 
+	# Before it is believed, and before it replaces the index already on
+	# disk: a rejected index leaves the last good one in place rather than
+	# taking the machine's idea of the repository down with it.
+	if ! alpm_verify_index "$name" "$url" "$tmp"; then
+		rm -f "$tmp"
+		# "fetch all" runs each repository in a subshell, so the summary at
+		# the end cannot be told about this in a variable.
+		: >"$ALPM_DB/sync/.sigfail"
+		printf '\r  %s->%s %-14s %sunsigned%s      \n' \
+			"$A_ICE$C_B" "$C_R" "$name" "$A_RED" "$C_R"
+		printf '     %s%s%s\n' "$A_GREY" "$VERIFY_ERR" "$C_R"
+		return 1
+	fi
+	[ -n "${VERIFY_WARN:-}" ] && \
+		printf '\r  %s->%s %-14s %sunverified%s %s%s%s\n' \
+			"$A_ICE$C_B" "$C_R" "$name" "$A_AMB" "$C_R" \
+			"$A_GREY" "$VERIFY_WARN" "$C_R"
+
 	[ -f "$idx" ] && cp -f "$idx" "$old" 2>/dev/null || : >"$old"
 	# Strip comments and blank lines; keep it a clean TSV.
 	grep -v '^#' "$tmp" | grep -v '^[[:space:]]*$' >"$idx" || :
@@ -1255,6 +1273,18 @@ cmd_fetch() {
 	printf '\n'
 
 	if [ "$okc" = "0" ] && [ "$failc" -gt 0 ]; then
+		# A rejected signature is not a network problem, and telling someone
+		# to check their cabling when the index downloaded perfectly well and
+		# was then thrown away sends them a long way in the wrong direction.
+		if [ -f "$ALPM_DB/sync/.sigfail" ]; then
+			rm -f "$ALPM_DB/sync/.sigfail"
+			warn "no repository passed its signature check"
+			printf '  %sThe index downloaded and was refused, which is not a network\n' "$A_GREY"
+			printf '  fault. Either the public keys in /etc/alpm/keys are not the ones\n'
+			printf '  these repositories are signed with, or what answered is not the\n'
+			printf '  repository it claims to be.%s\n' "$C_R"
+			return 1
+		fi
 		warn "no repository could be reached"
 		if [ "${tot:-0}" -gt 0 ]; then
 			printf '  %s%s package(s) are known from the last sync, which may be out\n' \

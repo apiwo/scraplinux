@@ -1,0 +1,17 @@
+Public keys alpm will accept a repository index signature from.
+
+Every .pub file here is tried in turn, so a key can be rotated by shipping
+the new one beside the old and removing the old once the repositories have
+moved over. These are signify keys - Ed25519, one line - and the matching
+secret key is not on this machine and is not in any Arctic repository.
+
+A repository decides how much its signature matters, in its .repo file:
+
+    sig = required   an index without a good signature is not used
+    sig = optional   checked when it can be, warned about otherwise (default)
+    sig = off        not checked
+
+Arctic's own repositories are signed. They are shipped as "optional" while
+the installation image is still built without signify on it; set them to
+"required" on a machine that has signify installed, which is every machine
+that installed the base system.

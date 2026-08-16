@@ -31,6 +31,20 @@ MAXSIZE=104857600
 
 REPOS="main extra base kernels profile nonfree alt-nonfree multilib fix"
 
+# The index is signed when the publishing machine holds the key. It is not in
+# any repository and never will be - see skel/etc/alpm/keys/README. Publishing
+# without it is allowed, because a mirror can be rebuilt on a machine that has
+# no business holding the key, but it says so rather than quietly shipping an
+# index nobody can check.
+ALPM_SIGN_KEY=${ALPM_SIGN_KEY:-/home/apiwo/arctic-keys/arctic-pkg.sec}
+if [ -f "$ALPM_SIGN_KEY" ]; then
+	export ALPM_SIGN_KEY
+else
+	echo "$(basename "$0"): no signing key at $ALPM_SIGN_KEY - indexes will be unsigned" >&2
+	unset ALPM_SIGN_KEY
+fi
+
+
 # The large-package repository is not synced or reindexed here. Its packages
 # are release assets, published by publish-big.sh, and its index describes
 # files that are deliberately not in this tree - regenerating it from an empty

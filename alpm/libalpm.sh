@@ -3,7 +3,7 @@
 # POSIX sh only. Must run under busybox ash with no GNU utilities present.
 # shellcheck shell=sh disable=SC2039
 
-ALPM_VERSION="1.2.4"
+ALPM_VERSION="1.2.5"
 ALPM_FORMAT="2"
 
 : "${ALPM_ROOT:=/}"
@@ -884,6 +884,84 @@ alpm_repo_pkgurl() {
 	else
 		printf '%s/%s\n' "$(alpm_repo_url "$_pu_want")" "$ARCH"
 	fi
+}
+
+# How much a repository's signature matters:
+#
+#   required   an index without a good signature is not used
+#   optional   verified when it can be, warned about when it cannot (default)
+#   off        not checked at all
+#
+# Arctic's own repositories ship as "required" - they are signed, so anything
+# else arriving from them is either a mirror serving something it should not
+# or a connection that has been interfered with. "optional" is for a local
+# file:// repository or someone else's, which have no reason to carry a
+# signature Arctic's key would match.
+alpm_repo_sigmode() {
+	_sm_want=$1
+	_sm=$(for f in "$ALPM_REPOD"/*.repo; do
+		[ -f "$f" ] || continue
+		n=$(meta "$f" name); [ -n "$n" ] || n=$(basename "$f" .repo)
+		[ "$n" = "$_sm_want" ] || continue
+		meta "$f" sig
+	done)
+	[ -n "$_sm" ] || _sm=optional
+	printf '%s\n' "$_sm"
+}
+
+# Verify a freshly downloaded index against the keys the system trusts.
+#
+# The index is what says which packages exist, where they are and what they
+# hash to - so a forged index is enough to hand a machine any package at all,
+# and the per-package checksum alpm verifies afterwards is taken from that
+# same forged file. Signing it is what makes the answer the repository's word
+# rather than whoever happened to serve the connection. Ed25519 through
+# signify: one line of public key, no key server, no GPG in the base system.
+#
+# The key lives in /etc/alpm/keys and arrives with arctic-base, so it is on
+# the machine before the first fetch rather than being fetched alongside what
+# it is meant to verify.
+alpm_verify_index() {
+	_vi_name=$1 _vi_url=$2 _vi_file=$3
+	VERIFY_ERR="" VERIFY_WARN=""
+	_vi_mode=$(alpm_repo_sigmode "$_vi_name")
+	[ "$_vi_mode" = off ] && return 0
+
+	_vi_keys=""
+	for k in "$ALPM_ROOT"/etc/alpm/keys/*.pub; do
+		[ -f "$k" ] || continue
+		_vi_keys="$_vi_keys $k"
+	done
+	if [ -z "$_vi_keys" ]; then
+		[ "$_vi_mode" = required ] || return 0
+		VERIFY_ERR="no public key in /etc/alpm/keys to check it against"
+		return 1
+	fi
+	if ! have signify; then
+		[ "$_vi_mode" = required ] || return 0
+		VERIFY_ERR="signify is not installed, so the signature cannot be checked"
+		return 1
+	fi
+
+	if ! dlq "$_vi_url/$ARCH/INDEX.sig" "$_vi_file.sig" 2>/dev/null; then
+		rm -f "$_vi_file.sig"
+		VERIFY_ERR="the repository served no INDEX.sig"
+		[ "$_vi_mode" = required ] && return 1
+		# Worth saying rather than passing over in silence: a repository
+		# that stops being signed looks exactly like one that never was.
+		VERIFY_WARN="$VERIFY_ERR"
+		return 0
+	fi
+
+	for k in $_vi_keys; do
+		if signify -V -q -p "$k" -x "$_vi_file.sig" -m "$_vi_file" 2>/dev/null; then
+			rm -f "$_vi_file.sig"
+			return 0
+		fi
+	done
+	rm -f "$_vi_file.sig"
+	VERIFY_ERR="the signature does not match any key in /etc/alpm/keys"
+	return 1
 }
 
 # Index line format (tab separated, one package per line):

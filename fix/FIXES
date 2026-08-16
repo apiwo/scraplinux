@@ -9,27 +9,28 @@
 # reused and never renumbered. The package named is the one that carries the
 # correction, and it has to exist in this repository as an .alpmz - applying a
 # fix is an ordinary install, which is what keeps the system binary.
-a1-0001	major	pkg	alpm	1.2.4	repository indexes came from a stale edge cache, describing packages that were no longer served
-a1-0002	major	install	alpm	1.2.4	lzo shipped no shared library, so mkfs.btrfs could not start and the install died at formatting
-a1-0003	major	install	arctic-base	1.2.4	the installer drew a progress screen over alpm's own output, leaving the real error unreadable
-a1-0004	minor	init	arctic-base	1.2.4	boot wrote to /proc/sys/kernel/hotplug on kernels built without CONFIG_UEVENT_HELPER
-a1-0005	minor	init	arctic-base	1.2.4	a missing keymap file printed a redirection error the script could not silence
-a1-0006	minor	shell	arctic-base	1.2.4	backspace moved the cursor forward inside the installer's chroot shell
-a1-0007	minor	pkg	alpm	1.2.4	an optional package set that failed to resolve ended the whole install
-a1-0008	change	shell	arctic-base	1.2.4	the system summary no longer prints on every login of an installed machine
-a1-0009	change	init	arctic-base	1.2.4	boot ends on a cleared screen instead of the last service's output
-a1-0010	change	net	arctic-base	1.2.4	wifi-connect can list networks in range instead of needing the name in advance
-a1-0011	change	pkg	alpm	1.2.4	one closing line per transaction rather than one per package
-a1-0012	change	init	arctic-base	1.2.4	services report their own timing, and init reports the total
-a1-0013	major	net	arctic-base	1.2.4	the live session could come up with no address at all, which read as every repository being unreachable
-a1-0014	major	net	arctic-base	1.2.4	networking reported success while the interface was still addressless, so an install started before the lease landed
-a1-0015	minor	init	arctic-base	1.2.4	boot timing read /proc/uptime before /proc was mounted, opening every boot with an error and an arithmetic failure
-a1-0016	minor	init	arctic-base	1.2.4	the hotplug guard tested the directory rather than the file, so the error it was meant to prevent still printed
-a1-0017	major	pkg	alpm	1.2.4	a package could not take over a path from toybox's fallback applets, so bzip2, vim and util-linux each stopped an install
-a1-0018	minor	pkg	alpm	1.2.4	a fix repository that could not be reached was reported as one that was not configured
-a1-0019	major	init	arctic-base	1.2.4	boot aborted part way through on a leading-zero uptime, leaving the session with no services and no network
+a1-0001	major	pkg	alpm	1.2.5	repository indexes came from a stale edge cache, describing packages that were no longer served
+a1-0002	major	install	alpm	1.2.5	lzo shipped no shared library, so mkfs.btrfs could not start and the install died at formatting
+a1-0003	major	install	arctic-base	1.2.5	the installer drew a progress screen over alpm's own output, leaving the real error unreadable
+a1-0004	minor	init	arctic-base	1.2.5	boot wrote to /proc/sys/kernel/hotplug on kernels built without CONFIG_UEVENT_HELPER
+a1-0005	minor	init	arctic-base	1.2.5	a missing keymap file printed a redirection error the script could not silence
+a1-0006	minor	shell	arctic-base	1.2.5	backspace moved the cursor forward inside the installer's chroot shell
+a1-0007	minor	pkg	alpm	1.2.5	an optional package set that failed to resolve ended the whole install
+a1-0008	change	shell	arctic-base	1.2.5	the system summary no longer prints on every login of an installed machine
+a1-0009	change	init	arctic-base	1.2.5	boot ends on a cleared screen instead of the last service's output
+a1-0010	change	net	arctic-base	1.2.5	wifi-connect can list networks in range instead of needing the name in advance
+a1-0011	change	pkg	alpm	1.2.5	one closing line per transaction rather than one per package
+a1-0012	change	init	arctic-base	1.2.5	services report their own timing, and init reports the total
+a1-0013	major	net	arctic-base	1.2.5	the live session could come up with no address at all, which read as every repository being unreachable
+a1-0014	major	net	arctic-base	1.2.5	networking reported success while the interface was still addressless, so an install started before the lease landed
+a1-0015	minor	init	arctic-base	1.2.5	boot timing read /proc/uptime before /proc was mounted, opening every boot with an error and an arithmetic failure
+a1-0016	minor	init	arctic-base	1.2.5	the hotplug guard tested the directory rather than the file, so the error it was meant to prevent still printed
+a1-0017	major	pkg	alpm	1.2.5	a package could not take over a path from toybox's fallback applets, so bzip2, vim and util-linux each stopped an install
+a1-0018	minor	pkg	alpm	1.2.5	a fix repository that could not be reached was reported as one that was not configured
+a1-0019	major	init	arctic-base	1.2.5	boot aborted part way through on a leading-zero uptime, leaving the session with no services and no network
 a1-0020	major	shell	toybox	0.8.14	tr, stty, expr, diff and more were missing from the system entirely, so alpm and arcticfetch printed "tr: not found" over their own output
 a1-0021	minor	pkg	less	679	less could not take its path from busybox's cut-down applet, which stopped an install
 a1-0022	minor	pkg	libressl	4.2.0	libressl and openssl both claimed /etc/ssl/openssl.cnf, which stopped an install that wanted both
 a1-0023	major	install	toybox	0.8.14	toybox claimed twenty-seven commands busybox, glibc, netbsd-curses and attr own, and the base system stopped installing at /usr/bin/blkid
 a1-0024	major	net	wpa_supplicant	2.11	wpa_supplicant pulled openssl into a base install alongside libressl, and the conflict between them left the installed system with no curl and no NetworkManager
+a1-0025	change	pkg	alpm	1.2.5	repository indexes are signed now, and alpm checks the signature when signify and a public key are both present

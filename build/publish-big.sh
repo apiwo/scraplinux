@@ -29,6 +29,20 @@ STAGE=$B/.bigstage/$ARCH
 command -v gh >/dev/null 2>&1 || { echo "publish-big.sh: needs the gh CLI" >&2; exit 1; }
 
 step() { printf '\n:: %s\n' "$*"; }
+
+# The index is signed when the publishing machine holds the key. It is not in
+# any repository and never will be - see skel/etc/alpm/keys/README. Publishing
+# without it is allowed, because a mirror can be rebuilt on a machine that has
+# no business holding the key, but it says so rather than quietly shipping an
+# index nobody can check.
+ALPM_SIGN_KEY=${ALPM_SIGN_KEY:-/home/apiwo/arctic-keys/arctic-pkg.sec}
+if [ -f "$ALPM_SIGN_KEY" ]; then
+	export ALPM_SIGN_KEY
+else
+	echo "$(basename "$0"): no signing key at $ALPM_SIGN_KEY - indexes will be unsigned" >&2
+	unset ALPM_SIGN_KEY
+fi
+
 ok()   { printf '   ok %s\n' "$*"; }
 note() { printf '   %s\n' "$*"; }
 
@@ -77,6 +91,13 @@ d=$SITE/ALL/big/$ARCH
 mkdir -p "$d"
 cp -f "$STAGE/INDEX" "$d/INDEX"
 [ -f "$STAGE/INDEX.sha256" ] && cp -f "$STAGE/INDEX.sha256" "$d/INDEX.sha256"
+# The signature belongs beside the index it signs. Left behind in the staging
+# directory, this repository was the one alpm could not verify.
+if [ -f "$STAGE/INDEX.sig" ]; then
+	cp -f "$STAGE/INDEX.sig" "$d/INDEX.sig"
+else
+	rm -f "$d/INDEX.sig"
+fi
 ok "$d/INDEX"
 
 printf '\npackages: https://github.com/%s/releases/download/%s/\n' "$REPO_SLUG" "$TAG"

@@ -63,8 +63,29 @@ gen() {
 	rm -f "$tmp.pi"
 	mv "$tmp" "$idx"
 
-	# A detached checksum so clients can spot a truncated or tampered index.
+	# A detached checksum so clients can spot a truncated index. It says
+	# nothing about who wrote it - anyone who can replace the index can
+	# replace the checksum beside it - which is what the signature below is
+	# for.
 	sha256 "$idx" >"$idx.sha256"
+
+	# Signed when a key is available. ALPM_SIGN_KEY is a signify secret key
+	# and lives on the machine that publishes, never in a repository: the
+	# package trees are public, and a signing key in one of them would be
+	# worth less than no signature at all.
+	if [ -n "${ALPM_SIGN_KEY:-}" ]; then
+		if [ ! -f "$ALPM_SIGN_KEY" ]; then
+			die "ALPM_SIGN_KEY is set but $ALPM_SIGN_KEY does not exist"
+		elif ! have signify; then
+			die "ALPM_SIGN_KEY is set but signify is not installed"
+		fi
+		rm -f "$idx.sig"
+		signify -S -s "$ALPM_SIGN_KEY" -m "$idx" -x "$idx.sig" \
+			|| die "signing $idx failed"
+		ok "signed with $(basename "$ALPM_SIGN_KEY")"
+	else
+		rm -f "$idx.sig"
+	fi
 	ok "$n package(s) indexed -> $idx"
 }
 
