@@ -2161,11 +2161,41 @@ get)                cmd_get "$@" ;;
 fetch|sync)         cmd_fetch "$@" ;;
 update|upgrade|up)  cmd_update "$@" ;;
 system|sys)         cmd_system "$@" ;;
-add)
+# add is what installing is called now. "alpm add repo <url>" still works
+# because that is what it used to mean and scripts have it.
+add|a)
 	case "${1:-}" in
 	repo) shift; cmd_addrepo "$@" ;;
-	*)    die "usage: alpm add repo <url>" ;;
+	*)    cmd_ins "$@" ;;
 	esac ;;
+# The repository verbs read as what they do: alpm repo add <url>.
+repo)
+	_rv=${1:-}; shift 2>/dev/null || :
+	case "$_rv" in
+	add)          cmd_addrepo "$@" ;;
+	del|rm|remove) cmd_delrepo "$@" ;;
+	list|ls|"")   cmd_listrepos ;;
+	*)            die "usage: alpm repo add <url> | alpm repo del <name> | alpm repo list" ;;
+	esac ;;
+# rem takes the flags rather than needing a different verb per combination:
+#   rem <pkg>        the package
+#   rem -a <pkg>     and everything it left behind
+#   rem -d <pkg>     and the dependencies nothing else needs
+#   rem -a -d <pkg>  both
+#   rem -f <pkg>     even if something still depends on it
+rem|remove-pkg)
+	_rd=0; _rj=0
+	while :; do
+		case "${1:-}" in
+		-a|--all)   _rj=1; shift ;;
+		-d|--deps)  _rd=1; shift ;;
+		-f|--force) ALPM_FORCE=1; shift ;;
+		-ad|-da)    _rj=1; _rd=1; shift ;;
+		*) break ;;
+		esac
+	done
+	[ -n "${1:-}" ] || die "usage: alpm rem [-a] [-d] [-f] <package>..."
+	do_remove "$_rd" "$_rj" "$@" ;;
 mirror)             cmd_mirror "$@" ;;
 list|ls)
 	case "${1:-}" in

@@ -944,8 +944,13 @@ do_install() {
 		# nothing else on the system does.
 		logit "nvidia: installing gcc-libs and gmake - required by the proprietary driver"
 		target_alpm ins gcc-libs libglvnd gmake || :
-		target_alpm ins nvidia-drivers nvidia-utils || : ;;
-	nouveau) target_alpm ins mesa nouveau-drivers || : ;;
+		# The proprietary driver is not packaged yet, and this used to end
+		# in "|| :" - so an NVIDIA machine finished the install having
+		# quietly received no driver at all and nothing said so.
+		if ! target_alpm ins nvidia-drivers nvidia-utils; then
+			warn_soft "the proprietary NVIDIA driver is not packaged yet - mesa drives the card through nouveau instead"
+		fi ;;
+	nouveau) : ;;
 	esac
 
 	# Installing the driver is not the same as using it. The running kernel
@@ -970,9 +975,13 @@ do_install() {
 	[ "${GPU_REBOOT:-0}" = 1 ] && \
 		printf '    %sReboot is needed to apply changes.%s\n' "$c_amb" "$t_reset"
 	case "$g" in
-	amd) target_alpm ins mesa vulkan-radeon libva-mesa-driver || : ;;
-	intel) target_alpm ins mesa vulkan-intel intel-media-driver || : ;;
-	*) target_alpm ins mesa || : ;;
+	# One package covers all of them. mesa is not split here the way other
+	# distributions split it: the Vulkan drivers for AMD and Intel, the
+	# software rasteriser and the VA driver are all inside it, which is what
+	# its "provides" says. vulkan-loader is what an application actually
+	# links against - the drivers are of no use without it.
+	*) target_alpm ins mesa vulkan-loader || \
+		warn_soft "graphics drivers could not be installed - the console still works, X and Wayland will not" ;;
 	esac
 
 	step "Installing the desktop" "$A_DESKTOP"
