@@ -1301,9 +1301,6 @@ EOF
 
 	step "Finishing up" "cleaning the cache"
 	rm -rf "$TARGET/var/cache/alpm/build"/* 2>/dev/null || :
-	# The first boot of a finished install shows the Arctic greeting.
-	: >"$TARGET/var/lib/arctic/firstboot" 2>/dev/null || {
-		mkdir -p "$TARGET/var/lib/arctic"; : >"$TARGET/var/lib/arctic/firstboot"; }
 	sync
 
 	sleep 1
@@ -1712,6 +1709,14 @@ gen_uuid() { cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "00000000-0000
 
 configure_network() {
 	mkdir -p "$TARGET/etc/NetworkManager/system-connections"
+	# 700, not whatever the umask leaves it at. NetworkManager's keyfile
+	# plugin refuses to load *any* connection from a world-readable
+	# system-connections directory - not just a world-readable file in it -
+	# and does so silently: no error on boot, nothing in a log anyone would
+	# think to check, the profile just never loads. A machine configured
+	# with A_NET=wifi and a real SSID/PSK came up with no network and no
+	# indication why the credentials that were typed in were never used.
+	chmod 700 "$TARGET/etc/NetworkManager/system-connections"
 
 	# A resolver, before anything else. NetworkManager writes
 	# /etc/resolv.conf once it is managing a link, but nothing writes one

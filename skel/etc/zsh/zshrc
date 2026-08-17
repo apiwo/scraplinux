@@ -203,19 +203,12 @@ ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=238'
 # Anything dropped in here is picked up automatically.
 for f in /etc/zsh/zshrc.d/*.zsh(N); do source $f; done
 
-# A quiet greeting on the first interactive shell of a login session. The
-# INSTALLED= is only ever written into /etc/arctic-release by arctic-install,
-# so its absence is what tells the live image apart from a real install. Both
-# the summary and the reminder belong to the live session: on an installed
-# system they printed on every single login, which is noise once you know
-# what machine you are sitting at.
-if [[ -o interactive ]] && [[ -z $ARCTIC_GREETED ]] && [[ -z $ARCTIC_CHROOT ]] \
-   && [[ $SHLVL -eq 1 ]] \
-   && ! grep -q '^INSTALLED=' /etc/arctic-release 2>/dev/null; then
-	export ARCTIC_GREETED=1
-	# No arcticfetch here. It is a thing to run when you want to look at it -
-	# printing a logo and a hardware summary over the top of every login is
-	# noise, and on the live image it pushed the one line that matters (how
-	# to get onto a network) off the top of a small screen.
-	print -P "%F{245}Wireless? Run %F{44}wifi-connect%F{245} - it scans, lists what is in range and asks for the passphrase. Or plug in Ethernet. Then edit %F{44}/etc/arctic/install.conf%F{245} and run %F{44}arctic-install%F{245}.%f"
-fi
+# No greeting here any more. It printed a wifi-connect reminder on the first
+# shell of a login session - meant for the live image only, gated on
+# /etc/arctic-release having no INSTALLED= line - but wifi-connect is not
+# the installed system's wireless tool (NetworkManager is, unconditionally,
+# as of a2.4's PKGS_NET; see warn_if_networkmanager in wifi-connect for what
+# happens when the two fight over the same radio) and the gate printed it
+# there anyway often enough that the honest fix is not printing it at all.
+# The live image's arctic-welcome (iso/mkiso) covers the same ground already,
+# once, before a shell is even reached.

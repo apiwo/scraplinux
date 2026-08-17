@@ -100,6 +100,28 @@ check_iface() {
 	[ -d "/sys/class/net/$1/wireless" ] || { oops "$1 is not a wireless interface"; exit 1; }
 }
 
+# NetworkManager runs its own wpa_supplicant against a device the moment it
+# is managing it - unconditionally, on every installed system - and a raw
+# `iw scan` issued while that is happening fails on most drivers with
+# "Device or resource busy". The scan then returns nothing at all, which
+# used to be reported as "no networks found - move closer, or check the
+# antenna": a wrong diagnosis for two programs fighting over one radio,
+# not a signal problem. wifi-connect is the live image's tool; nmtui is the
+# installed system's, and this is skipped entirely where nmcli is not even
+# installed - the live image never has this conflict to warn about.
+warn_if_networkmanager() {
+	command -v nmcli >/dev/null 2>&1 || return 0
+	_nm=$(nmcli -t -f GENERAL.STATE device show "$1" 2>/dev/null)
+	case "$_nm" in
+	*unmanaged*|'') return 0 ;;
+	esac
+	oops "NetworkManager is already managing $1"
+	printf '     %sthis is the installed system'"'"'s wireless tool now - run%s\n' "$GREY" "$R"
+	printf '     %sdoas nmtui%s instead. wifi-connect and NetworkManager fighting over\n' "$BOLD" "$GREY"
+	printf '     the same radio is why a scan just found nothing.%s\n' "$R"
+	exit 1
+}
+
 # A scan takes a few seconds and says nothing while it runs, which reads as a
 # hang on a machine that has just booted and has no other sign of life.
 scan_with_spinner() {
@@ -365,6 +387,7 @@ interactive() {
 		[ -n "$iface" ] || { oops "no interface number $pick"; exit 1; }
 	fi
 	check_iface "$iface"
+	warn_if_networkmanager "$iface"
 
 	# 2. what is in range
 	tmp=/tmp/.wifi-scan.$$
@@ -425,6 +448,7 @@ check_iface "$iface"
 
 if [ "$mode" = scan ] || [ "$mode" = list ]; then
 	command -v iw >/dev/null 2>&1 || { oops "iw is not installed - cannot scan (alpm add iw)"; exit 1; }
+	warn_if_networkmanager "$iface"
 	tmp=/tmp/.wifi-scan.$$
 	scan_with_spinner "$iface" "$tmp"
 	if [ "$mode" = list ]; then

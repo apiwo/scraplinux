@@ -75,6 +75,21 @@ write_limine_conf() {
 		[ -n "$cu" ] && luks="rd.luks.uuid=$cu "
 	fi
 
+	# A btrfs root needs rootflags=subvol=@ or the initramfs mounts the raw
+	# top-level volume instead of the subvolume arctic-install actually
+	# installed onto - "@", "@home" and the rest sit *inside* that top level,
+	# so /newroot/sbin/init does not exist where switch_root looks for it and
+	# the kernel panics with "Attempted to kill init!" before rc.boot ever
+	# runs. Every fresh btrfs install hit this. fstab's root line already has
+	# the right subvol= from genfstab, once the system is up; read it back
+	# from there rather than re-deriving it, same as crypttab above.
+	rflags=""
+	if [ -s "$ROOTDIR/etc/fstab" ]; then
+		fsopts=$(awk '$2=="/"{print $4; exit}' "$ROOTDIR/etc/fstab")
+		sv=$(printf '%s\n' "$fsopts" | tr ',' '\n' | grep '^subvol=' | head -1)
+		[ -n "$sv" ] && rflags="rootflags=$sv "
+	fi
+
 	# Limine 9+ configuration syntax.
 	cat >"$bd/limine.conf" <<EOF
 # Arctic Linux - Limine configuration
@@ -91,17 +106,17 @@ backdrop: 5f5bc6
 /Arctic linux
     protocol: linux
     kernel_path: boot():/$kname
-    kernel_cmdline: ${luks}root=$rootspec rw quiet loglevel=3 arctic.splash$mods
+    kernel_cmdline: ${luks}${rflags}root=$rootspec rw quiet loglevel=3 arctic.splash$mods
 
 /Arctic linux (verbose)
     protocol: linux
     kernel_path: boot():/$kname
-    kernel_cmdline: ${luks}root=$rootspec rw loglevel=7$mods
+    kernel_cmdline: ${luks}${rflags}root=$rootspec rw loglevel=7$mods
 
 /Arctic linux (recovery shell)
     protocol: linux
     kernel_path: boot():/$kname
-    kernel_cmdline: ${luks}root=$rootspec rw single init=/bin/sh$mods
+    kernel_cmdline: ${luks}${rflags}root=$rootspec rw single init=/bin/sh$mods
 EOF
 	# Older Limine reads limine.cfg; ship both so either version boots.
 	sed 's|^/Arctic|:Arctic|; s|^    \([a-z_]*\): |    \1=|' "$bd/limine.conf" \
@@ -168,18 +183,27 @@ install_grub() {
 		[ -n "$cu" ] && luks="rd.luks.uuid=$cu "
 	fi
 
+	# Same reasoning as write_limine_conf's $rflags - a btrfs root needs
+	# rootflags=subvol=@ or switch_root cannot find /sbin/init on it.
+	rflags=""
+	if [ -s "$rd/etc/fstab" ]; then
+		fsopts=$(awk '$2=="/"{print $4; exit}' "$rd/etc/fstab")
+		sv=$(printf '%s\n' "$fsopts" | tr ',' '\n' | grep '^subvol=' | head -1)
+		[ -n "$sv" ] && rflags="rootflags=$sv "
+	fi
+
 	mkdir -p "$bd/grub"
 	cat >"$bd/grub/grub.cfg" <<EOF
 set timeout=3
 set default=0
 insmod all_video
 menuentry "Arctic linux" {
-	linux /$(basename "$(ls "$bd"/vmlinuz-* | head -1)") ${luks}root=$(awk '$2=="/"{print $1; exit}' "$rd/etc/fstab") rw quiet
+	linux /$(basename "$(ls "$bd"/vmlinuz-* | head -1)") ${luks}${rflags}root=$(awk '$2=="/"{print $1; exit}' "$rd/etc/fstab") rw quiet
 $( [ -f "$(ls "$bd"/initramfs-* 2>/dev/null | head -1)" ] && \
 	printf '\tinitrd /%s\n' "$(basename "$(ls "$bd"/initramfs-* | head -1)")" )
 }
 menuentry "Arctic linux (recovery shell)" {
-	linux /$(basename "$(ls "$bd"/vmlinuz-* | head -1)") ${luks}root=$(awk '$2=="/"{print $1; exit}' "$rd/etc/fstab") rw single init=/bin/sh
+	linux /$(basename "$(ls "$bd"/vmlinuz-* | head -1)") ${luks}${rflags}root=$(awk '$2=="/"{print $1; exit}' "$rd/etc/fstab") rw single init=/bin/sh
 }
 EOF
 }

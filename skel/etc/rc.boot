@@ -109,19 +109,28 @@ done
 # modprobe resolves it through modules.alias. Failures are ordinary here -
 # plenty of devices have no module in this kernel - so they stay quiet.
 #
-# A real machine can have several hundred of these, one modprobe fork each,
-# fully serial - and this printed nothing at all from "Loading kernel
-# modules" until it was done, twenty seconds later on real hardware with no
-# sign anything was happening. That is exactly the shape of a hung boot, and
-# is how you end up holding the power button on a machine that was working
-# the whole time. Backgrounded and dotted the same way wifi-connect's own
-# silent scan is, so there is a heartbeat instead of a dead screen.
+# A real machine can have several hundred of these, and this used to
+# modprobe every single one - including devices the kernel had already
+# bound a driver to before userspace even started (most of them, on real
+# hardware: built-in matching and earlier-loaded modules satisfy the
+# majority of devices before rc.boot ever runs), and including the same
+# alias two or three times over on machines with several identical USB or
+# PCI devices. Each of those was a full fork of busybox modprobe, which
+# re-parses modules.dep from scratch on every invocation - it has no cache
+# across calls the way real kmod does. Backgrounded and dotted the same way
+# wifi-connect's own silent scan is, so there is a heartbeat instead of a
+# dead screen either way, but the real fix is not asking twice: a device
+# with a `driver` symlink already has one, and an alias already queued for
+# this boot does not need to be looked up again.
 if [ -d /sys/devices ]; then
 	(
 		find /sys/devices -name modalias -type f 2>/dev/null | \
 		while read -r a; do
+			[ -e "${a%/modalias}/driver" ] && continue
 			read -r alias <"$a" 2>/dev/null || continue
-			[ -n "$alias" ] || continue
+			[ -n "$alias" ] && printf '%s\n' "$alias"
+		done | sort -u | \
+		while read -r alias; do
 			modprobe -q "$alias" 2>/dev/null || :
 		done
 	) &
@@ -318,11 +327,11 @@ if [ -d /etc/arctic/services ]; then
 fi
 
 # ----------------------------------------------------------------------- greeting
-# A finished install says hello exactly once.
-if [ -f /var/lib/arctic/firstboot ]; then
-	rm -f /var/lib/arctic/firstboot
-	[ -x /usr/bin/arctic-firstboot ] && /usr/bin/arctic-firstboot
-fi
+# No automatic message on first boot any more - arctic-firstboot still exists
+# and still works, run by hand, but a finished install boots straight to the
+# login prompt now rather than printing something once and needing to be
+# told to stop.
+rm -f /var/lib/arctic/firstboot
 
 rc_done
 

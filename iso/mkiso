@@ -44,8 +44,8 @@ BUILD_ID=$(date '+%Y.%m.%d')
 # One dot at most, and the digits after it are read one at a time - not as a
 # decimal number and not as further dotted fields, so a2.12 follows a2.11 and
 # a2.2 is the next major bugfix after a2.19.
-VERSION_TAG="a2.5"
-VERSION="Arctic Linux - Alpha 2.5"
+VERSION_TAG="a2.61"
+VERSION="Arctic Linux - Alpha 2.61"
 LABEL="ARCTIC"
 
 case "$PROFILE" in
@@ -361,7 +361,6 @@ cat >"$S/usr/bin/arctic-welcome" <<'WELCOME'
 export HOME=/root
 export TERM=${TERM:-linux}
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-export ARCTIC_GREETED=1
 # getty -l exports no SHELL, and the live image's root entry still reads
 # /bin/sh, so anything asking what shell this is got the wrong answer for a
 # session that runs zsh a few lines below.
