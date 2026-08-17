@@ -168,7 +168,17 @@ A_FS=""
 bail() {
 	tui_done 2>/dev/null
 	printf '\n%serror:%s %s\n' "$c_red$t_bold" "$t_reset" "$*" >&2
-	printf '  %sthe full log is at %s%s\n\n' "$c_grey" "$LOGF" "$t_reset" >&2
+	# The last few lines of the log, not just the one-sentence reason bail
+	# was called with. "the base system failed to install" was the entire
+	# on-screen error for months, whatever actually went wrong - a missing
+	# package, no network, a full disk - because nothing printed it anywhere
+	# the person looking at the screen could see it without already knowing
+	# to go read a log file the install was about to abandon them next to.
+	if [ -f "$LOGF" ]; then
+		printf '\n  %slast lines of %s:%s\n' "$c_grey" "$LOGF" "$t_reset" >&2
+		tail -n 12 "$LOGF" 2>/dev/null | sed 's/^/    /' >&2
+	fi
+	printf '\n  %sthe full log is at %s%s\n\n' "$c_grey" "$LOGF" "$t_reset" >&2
 	exit 1
 }
 logit() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*" >>"$LOGF"; }
@@ -872,7 +882,22 @@ run() {
 
 target_alpm() {
 	# alpm honours --root, so the whole install is one package transaction.
-	ALPM_ROOT="$TARGET" ALPM_YES=1 alpm "$@"
+	#
+	# This used to run alpm plain, with no capture at all. Every call site
+	# reports its own failure with "bail ... - see $LOGF", and the log had
+	# nothing in it beyond the step name - alpm's actual reason (a missing
+	# package, an unreachable repository, a full disk) went to the terminal
+	# and nowhere else, so "the base system failed to install" was the whole
+	# of what anyone could see afterwards. It still prints to the terminal;
+	# it goes into the log now as well, and the last lines of it are what
+	# bail actually shows, not just the step name that called it.
+	_ta_rc="${LOGF%/*}/.target_alpm.rc"
+	rm -f "$_ta_rc"
+	{ ALPM_ROOT="$TARGET" ALPM_YES=1 alpm "$@"; echo $? >"$_ta_rc"; } 2>&1 | \
+		tee -a "$LOGF"
+	_ta_ret=$(cat "$_ta_rc" 2>/dev/null)
+	rm -f "$_ta_rc"
+	return "${_ta_ret:-1}"
 }
 
 do_install() {

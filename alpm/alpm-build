@@ -120,6 +120,20 @@ if [ -d "$ALPM_SYSROOT/usr" ]; then
 	CFLAGS="-isystem $ALPM_SYSROOT/usr/include $CFLAGS"
 	CXXFLAGS="-isystem $ALPM_SYSROOT/usr/include $CXXFLAGS"
 	LDFLAGS="-L$ALPM_SYSROOT/usr/lib -Wl,-rpath-link,$ALPM_SYSROOT/usr/lib $LDFLAGS"
+	# -B, not -L, for the C runtime objects.
+	#
+	# Scrt1.o and friends are found by the compiler driver, not through -L,
+	# so putting the 64-bit directory on the library path does not affect
+	# which one gets linked. On a multilib host /usr/lib/Scrt1.o is the
+	# 32-bit one; lld takes the output format from the first input that
+	# declares one, so any link that reaches it becomes elf32-i386 and then
+	# rejects crti.o and every object after it as "incompatible". -B is the
+	# switch that tells the driver where to look for those files first.
+	if [ -d /usr/lib64 ] && [ -f /usr/lib64/Scrt1.o ]; then
+		CFLAGS="-B/usr/lib64 $CFLAGS"
+		LDFLAGS="-B/usr/lib64 $LDFLAGS"
+		export CXXFLAGS="-B/usr/lib64 ${CXXFLAGS:-}"
+	fi
 	export CFLAGS CXXFLAGS LDFLAGS
 fi
 
@@ -144,9 +158,47 @@ fi
 # way. The sysroot is searched before any of them, so a libc.so *there*
 # settles it whatever order the rest arrives in. It is the host's own 64-bit
 # script, which is what these builds link against anyway.
-if [ -d "$ALPM_SYSROOT/usr/lib" ] && [ ! -e "$ALPM_SYSROOT/usr/lib/libc.so" ] && \
-   [ -e /usr/lib64/libc.so ] && grep -qs 'OUTPUT_FORMAT(elf32' /usr/lib/libc.so; then
-	cp -f /usr/lib64/libc.so "$ALPM_SYSROOT/usr/lib/libc.so" 2>/dev/null || :
+#
+# Every one of them, not just libc.so. lld takes the output format from the
+# first linker script it reads, so a single 32-bit script anywhere on the line
+# decides the whole link - and libfm went on failing with libc.so shimmed
+# because this host also has a 32-bit libbsd.so. Shimming one and not the
+# other only moves which package trips.
+if [ -d "$ALPM_SYSROOT/usr/lib" ]; then
+	# No grep, no od. This runs with $ALPM_SYSROOT/usr/bin already on PATH,
+	# where grep and sed are toybox symlinks, and reaching for either here
+	# killed alpm-build before it printed its first line. Shell built-ins
+	# only.
+	for _hl in /usr/lib/lib*.so; do
+		[ -f "$_hl" ] || continue
+		_hb=${_hl##*/}
+		[ -e "$ALPM_SYSROOT/usr/lib/$_hb" ] && continue
+		[ -f "/usr/lib64/$_hb" ] || continue
+		# A linker script is text; read a little of it and look for the
+		# 32-bit output format with a case pattern.
+		_head=$(head -c 300 "$_hl" 2>/dev/null) || continue
+		case "$_head" in
+		*"OUTPUT_FORMAT(elf32"*)
+			cp -f "/usr/lib64/$_hb" "$ALPM_SYSROOT/usr/lib/$_hb" 2>/dev/null || : ;;
+		esac
+	done
+	# And the C runtime objects, which are what actually decided it.
+	#
+	# lld takes the output format from the first input that declares one, and
+	# on a multilib host /usr/lib/Scrt1.o is the *32-bit* one. Anything that
+	# puts -L/usr/lib in front of the 64-bit directory - libtool does, in
+	# libfm and in any autotools package linking a module - reaches it first,
+	# lld sets the target to elf32-i386 from it, and then rejects crti.o and
+	# every object after as "incompatible with elf32-i386".
+	#
+	# Copied unconditionally when the sysroot has none: on a host with a
+	# /usr/lib64 at all, that is the copy these builds want, and testing the
+	# ELF class of the /usr/lib one needs a tool this cannot safely call.
+	for _co in Scrt1.o crt1.o crti.o crtn.o gcrt1.o rcrt1.o; do
+		[ -e "$ALPM_SYSROOT/usr/lib/$_co" ] && continue
+		[ -f "/usr/lib64/$_co" ] || continue
+		cp -f "/usr/lib64/$_co" "$ALPM_SYSROOT/usr/lib/$_co" 2>/dev/null || :
+	done
 fi
 
 if [ -e /usr/lib64/libc.so ] && grep -qs 'OUTPUT_FORMAT(elf32' /usr/lib/libc.so; then
