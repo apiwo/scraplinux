@@ -123,6 +123,10 @@ done
 # with a `driver` symlink already has one, and an alias already queued for
 # this boot does not need to be looked up again.
 if [ -d /sys/devices ]; then
+	# A label for this step specifically, even under quiet: begin() prints
+	# nothing at all in that mode, and dots with no idea what they belong to
+	# read as garbage on an otherwise blank screen rather than progress.
+	[ "${QUIET:-0}" = "1" ] && printf '  :: loading drivers '
 	(
 		find /sys/devices -name modalias -type f 2>/dev/null | \
 		while read -r a; do
@@ -135,13 +139,24 @@ if [ -d /sys/devices ]; then
 		done
 	) &
 	_cp_pid=$!
-	if [ "${QUIET:-0}" != "1" ]; then
-		while kill -0 "$_cp_pid" 2>/dev/null; do
-			printf '.'
-			sleep 1
-		done
-	fi
+	# Not gated on QUIET. The default boot entry passes both quiet and
+	# arctic.splash, either of which sets QUIET=1 - so on the one entry
+	# everyone actually boots from, a2.5's dots never printed at all, and
+	# this step was exactly as silent as it had always been. The whole
+	# reason the dots exist is to stop someone reaching for the power
+	# button on a machine that is working; that has to survive quiet mode,
+	# because quiet mode is what a real boot actually uses. QUIET still
+	# suppresses the step label itself, further down in begin(); this is
+	# the one piece of output that outranks it.
+	while kill -0 "$_cp_pid" 2>/dev/null; do
+		printf '.'
+		sleep 1
+	done
 	wait "$_cp_pid" 2>/dev/null
+	# good() prints nothing at all under quiet, so without this the cursor
+	# sits right after the last dot and whatever prints next - quiet or
+	# not - lands on the same line.
+	[ "${QUIET:-0}" = "1" ] && printf '\n'
 fi
 good
 

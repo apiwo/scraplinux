@@ -34,18 +34,21 @@ BUILD_ID=$(date '+%Y.%m.%d')
 # arcticfetch's "os" line - reads it from here rather than spelling out its
 # own variation of it.
 #
-# The main line is a whole number. Alpha 1 ran from a1 to a1.24; a2 is the
-# next one, and the release after it is a3.
+# Alpha 1 ran a1 to a1.24, Alpha 2 ran a2 to a2.61 under the old one-dot
+# scheme. Starting with Alpha 3 the tag is main.bigfix.smallfix plus a
+# stability suffix:
 #
-#   a2     the main release - Alpha 2
-#   a2.1   the first digit moves for a major bugfix
-#   a2.12  the second moves for minor fixes and quality-of-life changes
+#   3          main version - a whole new release line
+#   3.1        bigfix - the first number after the main version
+#   3.1.01     smallfix - a small fix or change on top of a bigfix
+#   SS/S/VS/U  somewhat stable / stable / very stable / unstable
 #
-# One dot at most, and the digits after it are read one at a time - not as a
-# decimal number and not as further dotted fields, so a2.12 follows a2.11 and
-# a2.2 is the next major bugfix after a2.19.
-VERSION_TAG="a2.61"
-VERSION="Arctic Linux - Alpha 2.61"
+# Stable is the best a release can be rated; SS is one step below it, not a
+# synonym for "beta". bigfix and smallfix are each read as their own number,
+# not further dotted fields - 3.1.10 follows 3.1.9, and 3.2 is the next
+# bigfix after 3.1.99.
+VERSION_TAG="3-SS"
+VERSION="Arctic Linux - Alpha 3 SS"
 LABEL="ARCTIC"
 
 case "$PROFILE" in

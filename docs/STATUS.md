@@ -4,12 +4,15 @@ What's built and working, what's known-broken, what's still source-only.
 Full docs live at arctic-docs.apiwow.net — this file is the terse engineering
 log, not a tutorial.
 
-Release label: **Arctic Linux - Alpha 2.61** (`a2.61`). The main line is a whole
-number - Alpha 1 ran from `a1` to `a1.24`. One dot at most, and the digits
-after it are read one at a time, not as a decimal and not as further dotted
-fields: the first digit after the dot moves for a major bugfix and the second
-for minor fixes, so `a2.12` follows `a2.11` and `a2.2` is the next major
-bugfix after `a2.19`.
+Release label: **Arctic Linux - Alpha 3 SS** (`3-SS`). Alpha 1 ran `a1` to
+`a1.24`, Alpha 2 ran `a2` to `a2.61` under the old one-dot scheme. Starting
+with Alpha 3 the tag is `main.bigfix.smallfix` plus a stability suffix -
+`3` is the main version, the first number after it is a bigfix, a further
+number after that is a smallfix, and `SS`/`S`/`VS`/`U` mean somewhat stable /
+stable / very stable / unstable. Stable is the best a release can be rated;
+SS is one step below it, not a synonym for "beta". bigfix and smallfix are
+each read as their own number, not further dotted fields: `3.1.10` follows
+`3.1.9`, and `3.2` is the next bigfix after `3.1.99`.
 
 Whatever the label is, one string is what the ISO filename, the volume id,
 `/etc/arctic-release`, the boot banner and `arcticfetch` all show - nothing
@@ -207,6 +210,46 @@ produces is unpacked there and later builds compile and link against it
 paths point into the sysroot rather than at `/usr` on the build host.
 
 ## Known-fixed bugs worth remembering
+
+- **Alpha 3 SS: `nmtui` hardcoded the build host's own `/usr/lib64/libnewt.so`
+  instead of a proper soname.** NetworkManager was built before `newt` had
+  been seeded into the sysroot, so its configure step detected and linked the
+  build host's real 64-bit `libnewt.so` at that path rather than a sysroot
+  copy. `readelf -d` on the shipped `nmtui` showed the absolute host path in
+  `DT_NEEDED`, which is why `nmtui` could not even start on a real install
+  (`/usr/lib64/libnewt.so: cannot open shared object file`) despite `newt`
+  being packaged and installed. Fixed by seeding `newt` and `slang` into the
+  sysroot before rebuilding NetworkManager; the rebuilt binary links
+  `libnewt.so.0.52` as a soname like every other shared library on the
+  system.
+
+- **Alpha 3 SS: `wifi-connect` and NetworkManager fought over the same radio.**
+  `wifi-connect`'s `iw scan` ran against a device NetworkManager's own
+  wpa_supplicant already had open, failed with "device busy", and the
+  fallback message ("no networks found, move closer to the router") looked
+  like a hardware/range problem when it was actually two programs contending
+  for one radio. `wifi-connect` now detects a running NetworkManager first
+  and tells the user to use `nmtui` instead of scanning underneath it.
+
+- **Alpha 3 SS: every fresh btrfs install kernel-panicked at "Attempted to
+  kill init!".** The installer wrote the initramfs a root device with no
+  `subvol=` flag, so it mounted the top-level btrfs volume instead of the `@`
+  subvolume that actually contains `/sbin/init` - the panic was the kernel
+  correctly reporting that PID 1 did not exist where it looked. Fixed in
+  `arctic-boot-strap` for both the Limine and GRUB code paths: `rootflags=`
+  is now computed by reading the `subvol=` option back out of the `/etc/fstab`
+  line the installer itself just wrote, for both bootloaders.
+
+- **Alpha 3 SS: coldplug's progress dots never appeared on the boot entry
+  everyone actually boots from.** a2.5 added a heartbeat of `.` characters
+  while kernel modules load, gated on `QUIET != 1` so it wouldn't clutter a
+  quiet boot - but the *default* Limine entry passes both `quiet` and
+  `arctic.splash`, either of which sets `QUIET=1` in `rc.boot`. The dots were
+  live code that simply never ran on the one entry that matters, so a boot
+  that was actually loading modules for a few seconds looked identical to a
+  frozen one. The dot loop itself is no longer gated on `QUIET`; only the
+  one-time `:: loading drivers` label is quiet-gated, so quiet boots still
+  see the heartbeat without a stray label line.
 
 - **`-f` is not an option Arctic's wpa_supplicant has, and passing it stopped
   wireless dead.** a2 added `-f "$log"` to the supplicant invocation so a

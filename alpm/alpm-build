@@ -132,7 +132,31 @@ if [ -d "$ALPM_SYSROOT/usr" ]; then
 	if [ -d /usr/lib64 ] && [ -f /usr/lib64/Scrt1.o ]; then
 		CFLAGS="-B/usr/lib64 $CFLAGS"
 		LDFLAGS="-B/usr/lib64 $LDFLAGS"
-		export CXXFLAGS="-B/usr/lib64 ${CXXFLAGS:-}"
+		# CXXFLAGS does not get it. qt6-base built clean without any of this;
+		# qt6-svg and qt6-shadertools, the first C++/cmake packages built
+		# after this fix was added, failed with libc++'s <cmath> unable to
+		# find its own <math.h> - "header search paths are not configured
+		# properly" - which is libc++'s own diagnostic for exactly this: a
+		# -B directory shadowing clang's normal, implicit resource-relative
+		# discovery of its bundled c++/v1 headers. -B/usr/lib64 is only ever
+		# needed for the C-language autotools module link trap; C++ builds
+		# never hit that trap in the first place; and giving it to CXXFLAGS
+		# broke something -B was never meant to touch.
+		export CXXFLAGS="${CXXFLAGS:-}"
+		# -B on its own is not enough: it has to survive being forwarded
+		# through every build tool between the recipe and the actual clang
+		# invocation, and libtool's own link line for a `-module` target
+		# does not carry CFLAGS through at all - only what it recorded of
+		# LDFLAGS at configure time, which for some targets is nothing. One
+		# such module linked clean against a 64-bit crti.o *by full path*
+		# (proven with `file`) and still failed - because lld had already
+		# locked the output format from something earlier on the same line,
+		# reached the way clang finds crt objects it inserts itself: never
+		# through -L, always by searching its own driver paths plus
+		# LIBRARY_PATH. That variable is inherited by every subprocess
+		# regardless of what any one build tool decides to forward, which
+		# -B is not, so it is the fix that actually reaches every link.
+		export LIBRARY_PATH="/usr/lib64${LIBRARY_PATH:+:$LIBRARY_PATH}"
 	fi
 	export CFLAGS CXXFLAGS LDFLAGS
 fi

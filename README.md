@@ -1,6 +1,6 @@
 # Arctic Linux
 
-**Arctic Linux - Alpha 1.2**
+**Arctic Linux - Alpha 3 SS**
 
 glibc, LLVM, a BSD-style userland, busybox init, zsh, doas, and its own
 package manager (alpm).
