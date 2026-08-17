@@ -167,6 +167,17 @@ A_FS=""
 # finished install.
 bail() {
 	tui_done 2>/dev/null
+	# Everything under $TARGET, deepest mount first, so a retry does not open
+	# with mke2fs refusing a device "is mounted" from the attempt that just
+	# failed. A failure here is logged, never fatal - the install has already
+	# failed and an unmount that cannot complete should not hide why.
+	if [ -n "$TARGET" ] && [ -d "$TARGET" ]; then
+		awk -v t="$TARGET" '$2 ~ "^"t {print $2}' /proc/mounts | sort -r | \
+			while read -r m; do
+				umount -R "$m" >>"$LOGF" 2>&1 || umount -l "$m" >>"$LOGF" 2>&1 || \
+					logit "warning: could not unmount $m"
+			done
+	fi
 	printf '\n%serror:%s %s\n' "$c_red$t_bold" "$t_reset" "$*" >&2
 	# The last few lines of the log, not just the one-sentence reason bail
 	# was called with. "the base system failed to install" was the entire
@@ -468,6 +479,16 @@ list_disks() {
 # Make the filesystem chosen in the config, and lay out btrfs subvolumes.
 make_root_fs() {
 	dev=$1
+	# mke2fs and friends refuse outright to format a mounted device -
+	# "/dev/nvme0n1p4 is mounted; will not make a filesystem here!" - which is
+	# the right instinct for a tool that has no idea why it is mounted, and
+	# the wrong outcome for an installer being run a second time after an
+	# earlier attempt left the target mounted (a previous failed run, or a
+	# repair session someone was using the same medium for). Nothing else on
+	# a live session has a reason to be using this device, so it is freed
+	# rather than left for mke2fs to reject.
+	awk -v d="$dev" '$1 == d { print $2 }' /proc/mounts | sort -r | \
+		while read -r m; do umount -R "$m" >>"$LOGF" 2>&1 || umount -l "$m" 2>/dev/null || :; done
 	case "$A_ROOT_FS" in
 	btrfs)
 		mkfs.btrfs -f -L arctic-root "$dev" >>"$LOGF" 2>&1 || return 1
@@ -850,7 +871,13 @@ install_pkgit() {
 # Package sets, per repo. main is what every Arctic system needs.
 PKGS_MAIN="glibc busybox toybox zsh doas libarchive mandoc onetrueawk bmake byacc \
 alpm arctic-base arctic-init iana-etc tzdata ca-certificates signify"
-PKGS_NET="networkmanager wpa_supplicant curl dbus"
+# iw and wireless-regdb, not just wpa_supplicant: the live session can scan
+# for a network because it carries iw, and a finished install could not,
+# because iw was never part of what actually lands on the target - so the
+# first boot of a fresh install had no way to even list what was in range,
+# and no way to fetch iw either, because that needs the network iw itself is
+# what is missing. wifi-connect works the moment the machine boots now.
+PKGS_NET="networkmanager wpa_supplicant iw wireless-regdb curl dbus"
 # Nothing beyond what a console system needs to run and be repaired. A
 # terminal emulator, a fetch tool and a system monitor are not part of a base
 # install - they were installed on every machine whether or not it would ever
@@ -901,6 +928,15 @@ target_alpm() {
 }
 
 do_install() {
+	# First, not "whenever the person running this remembered to". Every
+	# package this install fetches comes from the live session's own sync
+	# database, copied into the target further down - a stale or never-synced
+	# one meant a fresh install running against an index that was current
+	# when the medium was built and nothing since, which is the same failure
+	# a machine with no network at all produces, just quieter about it.
+	step "Fetching repositories" "alpm fetch all"
+	alpm fetch all >>"$LOGF" 2>&1 || bail "could not fetch repositories - see $LOGF"
+
 	step "Checking the target" "$TARGET"
 	[ -d "$TARGET" ] || bail "$TARGET is not a directory"
 	mountpoint -q "$TARGET" 2>/dev/null || \
@@ -978,13 +1014,14 @@ do_install() {
 	*) target_alpm add linux-firmware || warn_soft "firmware not installed" ;;
 	esac
 
-	# Optional from here down: the system already boots. A package that
-	# cannot be resolved is reported as a warning and the install carries on,
-	# rather than printing "unresolved dependencies - nothing was installed"
-	# in the middle of an otherwise fine install and looking like a failure.
+	# Not optional, unlike everything below it. A system with no network
+	# path boots, technically, and then cannot reach a repository, cannot
+	# scan for a network to fix that, and cannot be told why either - it
+	# just sits there. That is a worse failure than stopping the install
+	# here and saying so while the medium is still in the drive.
 	step "Installing network tools" "$PKGS_NET"
 	target_alpm add $PKGS_NET || \
-		warn_soft "some network packages could not be installed - see $LOGF"
+		bail "network tools failed to install - the machine would have no way online - see $LOGF"
 
 	step "Installing base utilities" "$PKGS_EXTRA_BASE"
 	target_alpm add $PKGS_EXTRA_BASE || \

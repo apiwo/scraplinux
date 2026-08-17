@@ -11,32 +11,14 @@ else
 	R= ; B= ; TEAL= ; SNOW= ; GREY=
 fi
 
-printf '\n%s' "$TEAL$B"
-cat <<'ARCTIC'
- _____________________
-< Enjoy Arctic linux! >
- ---------------------
-   \
-    \
-        .--.
-       |o_o |
-       |:_/ |
-      //   \ \
-     (|     | )
-    /'\_   _/`\
-    \___)=(___/
-ARCTIC
-printf '%s\n' "$R"
-
-# A short orientation note, only on a real first boot.
+# No mascot. A first login is not the moment for one, any more than a
+# failed install was - see bail() for the same call made the other way.
 if [ "${1:-}" != "-q" ]; then
 	rel=/etc/arctic-release
 	k=$(sed -n 's/^KERNEL=//p' "$rel" 2>/dev/null)
-	printf '  %skernel%s   %s\n' "$GREY" "$R" "${k:-$(uname -r)}"
-	printf '  %spackages%s %s installed\n' "$GREY" "$R" \
-		"$(ls -1 /var/lib/alpm/local 2>/dev/null | wc -l | tr -d ' ')"
-	printf '\n'
-	printf '  %salpm%s to install things, %sservice%s to run them,\n' \
-		"$SNOW" "$R" "$SNOW" "$R"
-	printf '  %sdoas%s when you need root.\n\n' "$SNOW" "$R"
+	printf '\n  %sArctic Linux%s   %skernel%s %s   %spackages%s %s installed\n' \
+		"$TEAL$B" "$R" "$GREY" "$R" "${k:-$(uname -r)}" \
+		"$GREY" "$R" "$(ls -1 /var/lib/alpm/local 2>/dev/null | wc -l | tr -d ' ')"
+	printf '  %salpm%s to install things, %sservice%s to run them, %sdoas%s for root.\n\n' \
+		"$SNOW" "$R" "$SNOW" "$R" "$SNOW" "$R"
 fi

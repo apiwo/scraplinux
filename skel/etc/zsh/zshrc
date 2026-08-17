@@ -29,8 +29,13 @@ setopt HIST_REDUCE_BLANKS HIST_VERIFY EXTENDED_HISTORY
 
 # --------------------------------------------------------------- completion
 autoload -Uz compinit
-# Cache the dump under the user's own directory so root and users do not fight.
-compinit -d "${XDG_CACHE_HOME:-$HOME/.cache}/zcompdump"
+# -u: skip the insecure-directories check rather than prompt about it. On a
+# fresh boot with no terminal history the prompt just sits there unanswered -
+# "run compaudit for a list of insecure directories, or press '"'y'"' to
+# continue?" - which reads as tab completion not working at all, because
+# nothing following it in the shell startup ever runs either. Arctic controls
+# permissions on every directory in $fpath; there is nothing to audit.
+compinit -u -d "${XDG_CACHE_HOME:-$HOME/.cache}/zcompdump"
 
 zstyle ':completion:*' menu select
 zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}' 'r:|=*' 'l:|=* r:|=*'
@@ -94,8 +99,11 @@ bindkey '^[[1;5D' backward-word
 bindkey '^H' backward-kill-word
 
 # --------------------------------------------------------------------- prompt
-# Two lines: context on the first, a gradient arrow on the second. The arrow
-# turns amber when the last command failed and violet for root.
+# One line: user@host path, a git branch when there is one, then '>'. This
+# used to print that on one line and put the '>' on a line of its own below
+# it, coloured for exit status - two lines for every single prompt, which is
+# too much screen for what it said. Colour still marks the state; it is the
+# prompt character now, not a second line.
 autoload -Uz vcs_info
 zstyle ':vcs_info:*' enable git
 zstyle ':vcs_info:git:*' formats ' %F{99}%b%f'
@@ -112,8 +120,7 @@ _arctic_prompt() {
 	# this function prints is rescanned for % escapes but never for $ again.
 	print -n "%F{245}%n%f%F{238}@%f%F{69}%m%f %F{81}%~%f${vcs_info_msg_0_}"
 	(( ret != 0 )) && print -n " %F{203}[$ret]%f"
-	print ""
-	print -n "%F{$arrow_colour}%B>%b%f "
+	print -n " %F{$arrow_colour}%B>%b%f "
 }
 PROMPT='$(_arctic_prompt)'
 RPROMPT='%F{238}%*%f'
