@@ -109,9 +109,9 @@ begin() {
 	printf '%s  ::%s %s' "$_TEAL$_B" "$_R" "$_rc_msg"
 }
 
-# Width of the status field "[  ok  ]" plus the " t=1.3s" that follows it, and
-# of the "  :: " prefix begin() writes.
-_RC_STATUS_W=18
+# Width of the status field "[ done ]" and of the "  :: " prefix begin()
+# writes. No time follows it any more.
+_RC_STATUS_W=9
 _RC_PREFIX_W=5
 
 # Pad so the status sits flush right without ever reaching the last column - one
@@ -125,12 +125,14 @@ _rc_pad() {
 	printf '%s' "$_sp"
 }
 
+# No elapsed time. Every service starts in a few hundredths of a second and
+# the column said nothing; what a boot line is for is whether the thing came
+# up, not how long it took. _rc_cs and _rc_secs are still here because
+# rc_done still reports the total.
 good() {
-	_rc_el=$(( $(_rc_cs) - ${_rc_step_start:-0} ))
-	[ "$_rc_el" -lt 0 ] && _rc_el=0
 	[ "${QUIET:-0}" = "1" ] && return 0
-	printf '%s%s[%s  ok  %s]%s %st=%s%s\n' "$(_rc_pad)" "$_GREY" "$_MINT$_B" \
-		"$_R$_GREY" "$_R" "$_GREY" "$(_rc_secs "$_rc_el")" "$_R"
+	printf '%s%s[%s done %s]%s\n' "$(_rc_pad)" "$_GREY" "$_MINT$_B" \
+		"$_R$_GREY" "$_R"
 }
 
 bad() {
@@ -138,10 +140,8 @@ bad() {
 	if [ "${QUIET:-0}" = "1" ]; then
 		printf '%s  ::%s %s' "$_RED$_B" "$_R" "$_rc_msg"
 	fi
-	_rc_el=$(( $(_rc_cs) - ${_rc_step_start:-0} ))
-	[ "$_rc_el" -lt 0 ] && _rc_el=0
-	printf '%s%s[%sfailed%s]%s %st=%s%s\n' "$(_rc_pad)" "$_GREY" "$_RED$_B" \
-		"$_R$_GREY" "$_R" "$_GREY" "$(_rc_secs "$_rc_el")" "$_R"
+	printf '%s%s[%s fail %s]%s\n' "$(_rc_pad)" "$_GREY" "$_RED$_B" \
+		"$_R$_GREY" "$_R"
 	[ -n "${1:-}" ] && printf '%s     %s%s\n' "$_GREY" "$*" "$_R"
 	# Tested, not redirected-and-hoped. A redirection that cannot be opened is
 	# reported by the shell itself, before the command's own "2>/dev/null" is
@@ -155,7 +155,7 @@ bad() {
 
 skip() {
 	[ "${QUIET:-0}" = "1" ] && return 0
-	printf '%s%s[%sskip%s]%s\n' "$(_rc_pad)" "$_GREY" "$_GREY" "$_GREY" "$_R"
+	printf '%s%s[%s skip %s]%s\n' "$(_rc_pad)" "$_GREY" "$_GREY" "$_GREY" "$_R"
 }
 
 # The gradient rule and wordmark shown at the top of a boot.

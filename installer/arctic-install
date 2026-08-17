@@ -42,8 +42,16 @@ done
 # One label for the whole distribution, spelled the same way in the ISO's
 # filename and volume id, /etc/arctic-release, arcticfetch's "os" line and
 # here. VERSION_TAG is the same thing where a filename needs it.
-VERSION="Arctic Linux - Alpha 1.1"
-VERSION_TAG="a1.1"
+# Read from the running system, not spelled out here. This was a literal
+# "Arctic Linux - Alpha 1.1" and write_release() copies it into the installed
+# system's /etc/arctic-release - so every machine installed from every image
+# since a1.1 has called itself Alpha 1.1, and the boot banner that reads that
+# file said so on every boot. The live image the installer is running from
+# already knows what it is.
+VERSION=$(sed -n 's/^VERSION=//p' /etc/arctic-release 2>/dev/null | tr -d '"' | head -1)
+VERSION_TAG=$(sed -n 's/^VERSION_ID=//p' /etc/arctic-release 2>/dev/null | tr -d '"' | head -1)
+[ -n "$VERSION" ] || VERSION="Arctic Linux"
+[ -n "$VERSION_TAG" ] || VERSION_TAG="unknown"
 CONF=/etc/arctic/install.conf
 # The install log. /run is a root-owned tmpfs; /tmp is world-writable, and
 # this runs as root - a non-root user on the live session could leave a
@@ -81,7 +89,13 @@ A_BOOT_FS="vfat"
 A_BOOT_TIMEOUT="3"
 A_KERNEL_ARGS=""
 A_GENERATIONS="5"
-A_INIT="initialization"
+# busybox, not initialization. initialization is Arctic's own init and it is
+# still the one this distribution is aiming at, but a machine installed with
+# it froze partway through boot and never reached a login - and an init is the
+# one component where a bad default cannot be recovered from without another
+# medium. busybox init is what every image here has booted. Set
+# A_INIT=initialization in install.conf to choose it deliberately.
+A_INIT="busybox"
 A_PKGIT="n"
 A_KERNEL="arctic-base-kernel"
 A_MICROCODE="auto"

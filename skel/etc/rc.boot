@@ -20,7 +20,11 @@ case " $(cat /proc/cmdline 2>/dev/null) " in
 *" quiet "*|*" arctic.splash "*) QUIET=1 ;;
 esac
 
-banner
+# No banner. It printed the release out of /etc/arctic-release above the
+# boot, which is a version string nobody needs at the top of every boot and
+# which was wrong for a long time anyway - the installer stamped every machine
+# "Alpha 1.1" whatever image it came from. `arcticfetch` answers the question
+# when it is actually being asked.
 
 # --------------------------------------------------------------- pseudo filesystems
 begin "Mounting pseudo-filesystems"
