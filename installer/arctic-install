@@ -869,8 +869,15 @@ install_pkgit() {
 # ------------------------------------------------------------------ the install
 
 # Package sets, per repo. main is what every Arctic system needs.
+#
+# pam is the library and the standard module set - nothing on a base install
+# is built against it yet, busybox's login and su need no authentication
+# stack at all (see the util-linux-libs entry in docs/STATUS.md for what
+# happened the one time something here did link libpam without it being
+# packaged). It is here so ly, sddm and anything else that wants PAM has it
+# on the machine already rather than needing a second install pass first.
 PKGS_MAIN="glibc busybox toybox zsh doas libarchive mandoc onetrueawk bmake byacc \
-alpm arctic-base arctic-init iana-etc tzdata ca-certificates signify"
+alpm arctic-base arctic-init iana-etc tzdata ca-certificates signify pam"
 # iw and wireless-regdb, not just wpa_supplicant: the live session can scan
 # for a network because it carries iw, and a finished install could not,
 # because iw was never part of what actually lands on the target - so the

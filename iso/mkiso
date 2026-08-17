@@ -44,8 +44,8 @@ BUILD_ID=$(date '+%Y.%m.%d')
 # One dot at most, and the digits after it are read one at a time - not as a
 # decimal number and not as further dotted fields, so a2.12 follows a2.11 and
 # a2.2 is the next major bugfix after a2.19.
-VERSION_TAG="a2.4"
-VERSION="Arctic Linux - Alpha 2.4"
+VERSION_TAG="a2.5"
+VERSION="Arctic Linux - Alpha 2.5"
 LABEL="ARCTIC"
 
 case "$PROFILE" in

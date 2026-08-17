@@ -4,7 +4,7 @@ What's built and working, what's known-broken, what's still source-only.
 Full docs live at arctic-docs.apiwow.net — this file is the terse engineering
 log, not a tutorial.
 
-Release label: **Arctic Linux - Alpha 2.4** (`a2.4`). The main line is a whole
+Release label: **Arctic Linux - Alpha 2.5** (`a2.5`). The main line is a whole
 number - Alpha 1 ran from `a1` to `a1.24`. One dot at most, and the digits
 after it are read one at a time, not as a decimal and not as further dotted
 fields: the first digit after the dot moves for a major bugfix and the second

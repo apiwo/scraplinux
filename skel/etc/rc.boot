@@ -108,13 +108,31 @@ done
 # Every modalias under /sys is a device asking for its driver by name;
 # modprobe resolves it through modules.alias. Failures are ordinary here -
 # plenty of devices have no module in this kernel - so they stay quiet.
+#
+# A real machine can have several hundred of these, one modprobe fork each,
+# fully serial - and this printed nothing at all from "Loading kernel
+# modules" until it was done, twenty seconds later on real hardware with no
+# sign anything was happening. That is exactly the shape of a hung boot, and
+# is how you end up holding the power button on a machine that was working
+# the whole time. Backgrounded and dotted the same way wifi-connect's own
+# silent scan is, so there is a heartbeat instead of a dead screen.
 if [ -d /sys/devices ]; then
-	find /sys/devices -name modalias -type f 2>/dev/null | \
-	while read -r a; do
-		read -r alias <"$a" 2>/dev/null || continue
-		[ -n "$alias" ] || continue
-		modprobe -q "$alias" 2>/dev/null || :
-	done
+	(
+		find /sys/devices -name modalias -type f 2>/dev/null | \
+		while read -r a; do
+			read -r alias <"$a" 2>/dev/null || continue
+			[ -n "$alias" ] || continue
+			modprobe -q "$alias" 2>/dev/null || :
+		done
+	) &
+	_cp_pid=$!
+	if [ "${QUIET:-0}" != "1" ]; then
+		while kill -0 "$_cp_pid" 2>/dev/null; do
+			printf '.'
+			sleep 1
+		done
+	fi
+	wait "$_cp_pid" 2>/dev/null
 fi
 good
 
