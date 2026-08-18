@@ -4,15 +4,16 @@ What's built and working, what's known-broken, what's still source-only.
 Full docs live at arctic-docs.apiwow.net — this file is the terse engineering
 log, not a tutorial.
 
-Release label: **Arctic Linux - Alpha 3.1 SS** (`3.1-SS`). Alpha 1 ran `a1` to
-`a1.24`, Alpha 2 ran `a2` to `a2.61` under the old one-dot scheme. Starting
-with Alpha 3 the tag is `main.bigfix.smallfix` plus a stability suffix -
-`3` is the main version, the first number after it is a bigfix, a further
-number after that is a smallfix, and `SS`/`S`/`VS`/`U` mean super stable /
-stable / very stable / unstable. Super stable is the best a release can be
-rated - the top of the scale, not a lesser tier than plain "stable". bigfix
-and smallfix are each read as their own number, not further dotted fields:
-`3.1.10` follows `3.1.9`, and `3.2` is the next bigfix after `3.1.99`.
+Release label: **Arctic Linux - A1 TESTING** (`A1-TESTING`). Earlier schemes:
+`a1`-`a1.24`, `a2`-`a2.61` (one-dot), then a brief `main.bigfix.smallfix` +
+stability-suffix scheme (`3-SS`, `3.1-SS`) that claimed a maturity - "super
+stable" - the distro was not actually at: a fresh install of `3-SS` itself
+still behaved like the live image, from a bootstrap path (`arctic-base`/
+`alpm`, packaged by `build/pkg-tools.sh` straight from `skel/`, separately
+from every other package) that had gone stale and was found the same day
+`3-SS` shipped. Reset to `A<n> TESTING`, incremented per testing cycle, for
+however long the distro is being put together faster than it can be
+verified - not a permanent scheme, an honest one.
 
 Whatever the label is, one string is what the ISO filename, the volume id,
 `/etc/arctic-release`, the boot banner and `arcticfetch` all show - nothing

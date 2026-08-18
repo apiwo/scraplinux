@@ -34,21 +34,20 @@ BUILD_ID=$(date '+%Y.%m.%d')
 # arcticfetch's "os" line - reads it from here rather than spelling out its
 # own variation of it.
 #
-# Alpha 1 ran a1 to a1.24, Alpha 2 ran a2 to a2.61 under the old one-dot
-# scheme. Starting with Alpha 3 the tag is main.bigfix.smallfix plus a
-# stability suffix:
+# Alpha 1 ran a1 to a1.24, Alpha 2 ran a2 to a2.61 under an old one-dot
+# scheme, and a brief "main.bigfix.smallfix + stability suffix" scheme
+# (3-SS, 3.1-SS) claimed a maturity - "super stable" - the distro was not
+# actually at: a fresh install of 3 SS itself still behaved like the live
+# image because a whole bootstrap path had gone stale, found the same day
+# it shipped. Reset to something that says what this actually is:
 #
-#   3          main version - a whole new release line
-#   3.1        bigfix - the first number after the main version
-#   3.1.01     smallfix - a small fix or change on top of a bigfix
-#   SS/S/VS/U  super stable / stable / very stable / unstable
+#   A1 TESTING   A<n>, incremented per testing cycle, until the distro is
+#                stable enough to earn a real version number again
 #
-# Super stable is the best a release can be rated - not a lesser tier than
-# plain "stable", the top of the scale. bigfix and smallfix are each read as
-# their own number, not further dotted fields - 3.1.10 follows 3.1.9, and
-# 3.2 is the next bigfix after 3.1.99.
-VERSION_TAG="3.1-SS"
-VERSION="Arctic Linux - Alpha 3.1 SS"
+# Not a permanent scheme, just an honest one for however long the distro is
+# being put together faster than it can be verified.
+VERSION_TAG="A1-TESTING"
+VERSION="Arctic Linux - A1 TESTING"
 LABEL="ARCTIC"
 
 case "$PROFILE" in
