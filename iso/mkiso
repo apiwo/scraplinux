@@ -41,14 +41,14 @@ BUILD_ID=$(date '+%Y.%m.%d')
 #   3          main version - a whole new release line
 #   3.1        bigfix - the first number after the main version
 #   3.1.01     smallfix - a small fix or change on top of a bigfix
-#   SS/S/VS/U  somewhat stable / stable / very stable / unstable
+#   SS/S/VS/U  super stable / stable / very stable / unstable
 #
-# Stable is the best a release can be rated; SS is one step below it, not a
-# synonym for "beta". bigfix and smallfix are each read as their own number,
-# not further dotted fields - 3.1.10 follows 3.1.9, and 3.2 is the next
-# bigfix after 3.1.99.
-VERSION_TAG="3-SS"
-VERSION="Arctic Linux - Alpha 3 SS"
+# Super stable is the best a release can be rated - not a lesser tier than
+# plain "stable", the top of the scale. bigfix and smallfix are each read as
+# their own number, not further dotted fields - 3.1.10 follows 3.1.9, and
+# 3.2 is the next bigfix after 3.1.99.
+VERSION_TAG="3.1-SS"
+VERSION="Arctic Linux - Alpha 3.1 SS"
 LABEL="ARCTIC"
 
 case "$PROFILE" in

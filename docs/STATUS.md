@@ -4,7 +4,7 @@ What's built and working, what's known-broken, what's still source-only.
 Full docs live at arctic-docs.apiwow.net — this file is the terse engineering
 log, not a tutorial.
 
-Release label: **Arctic Linux - Alpha 3 SS** (`3-SS`). Alpha 1 ran `a1` to
+Release label: **Arctic Linux - Alpha 3.1 SS** (`3.1-SS`). Alpha 1 ran `a1` to
 `a1.24`, Alpha 2 ran `a2` to `a2.61` under the old one-dot scheme. Starting
 with Alpha 3 the tag is `main.bigfix.smallfix` plus a stability suffix -
 `3` is the main version, the first number after it is a bigfix, a further
@@ -210,6 +210,26 @@ produces is unpacked there and later builds compile and link against it
 paths point into the sysroot rather than at `/usr` on the build host.
 
 ## Known-fixed bugs worth remembering
+
+- **Alpha 3.1 SS: a real install still behaved like the live image - the
+  first-login greeting told you to run `arctic-install` again, wifi-connect
+  reported "no networks found" against real hardware, and kernel-module
+  coldplug took the full ~30s the live ISO does not.** All three were the
+  same bug: `arctic-base` and `alpm` do not build through the normal
+  `ports/*/recipe` + `alpm-build` pipeline - `build/pkg-tools.sh` packages
+  them straight from the live `skel/` tree instead, because `alpm-build`
+  itself depends on `alpm` already being installed. Every `skel/` fix this
+  entire cycle (the rc.boot coldplug fix, the removed live-image
+  wifi-connect greeting, the ld.so.conf fix, wifi-connect's
+  NetworkManager-conflict detection) reached the live ISO through `mkiso`'s
+  own direct copy of `skel/`, and never reached a real install, because
+  nothing had rerun `pkg-tools.sh` since before any of it existed - the
+  published `arctic-base` was still `1.4.1`, built 2026-08-16. Fixed by
+  rerunning `build/arctic-sandbox build/pkg-tools.sh 1.4.2` and republishing.
+  `ports/main/arctic-base/recipe` (a separate, `alpm-build`-buildable recipe
+  with its own stale `skel.tar`/`branding.tar`) is dead code that nothing in
+  the real pipeline uses - don't waste time keeping it in sync instead of
+  this.
 
 - **Alpha 3 SS: `clang` could not run at all on a freshly installed system -
   every source build was broken from the first boot.** LLVM's own CMake

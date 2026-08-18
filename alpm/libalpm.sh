@@ -3,7 +3,7 @@
 # POSIX sh only. Must run under busybox ash with no GNU utilities present.
 # shellcheck shell=sh disable=SC2039
 
-ALPM_VERSION="1.4.1"
+ALPM_VERSION="1.4.2"
 ALPM_FORMAT="2"
 
 : "${ALPM_ROOT:=/}"
@@ -744,7 +744,10 @@ untar() {
 # $pkgdir, not from who shipped the tarball.
 untar_src() {
 	archive=$1 dest=$2
-	mkdir -p "$dest"
+	# _HOST_MKDIR is alpm-build's captured pre-sysroot-PATH mkdir (see its
+	# own comment on why); plain `alpm` never sets it, so this still means
+	# an ordinary mkdir there.
+	"${_HOST_MKDIR:-mkdir}" -p "$dest"
 	if have bsdtar; then bsdtar -xof "$archive" -C "$dest"
 	else tar -xof "$archive" -C "$dest"; fi
 }

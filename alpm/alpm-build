@@ -25,6 +25,29 @@ recipe=${1:-recipe}
 [ -f "$recipe" ] || die "no such recipe: $recipe"
 recipe=$(cd "$(dirname "$recipe")" && printf '%s/%s' "$(pwd)" "$(basename "$recipe")")
 
+# Captured before PATH gains $ALPM_SYSROOT/usr/bin below, and used for every
+# rm/mkdir alpm-build does of its own bookkeeping from here on (never for
+# anything a recipe's build()/package() does - those should see whatever the
+# recipe's own build system finds on PATH). The sysroot's own coreutils are
+# dynamically linked and this early nothing has pointed LD_LIBRARY_PATH at
+# them yet - deliberately, see the LD_LIBRARY_PATH comment further down - so
+# calling `rm`/`mkdir` bare here can resolve to a sysroot binary running
+# without its own runtime libraries and misbehaving in a way that has nothing
+# to do with what it was actually asked to do ("rm: invalid option -- 'r'").
+_HOST_RM=$(command -v rm)
+_HOST_MKDIR=$(command -v mkdir)
+_HOST_BASENAME=$(command -v basename)
+_HOST_LN=$(command -v ln)
+_HOST_SED=$(command -v sed)
+_HOST_DIRNAME=$(command -v dirname)
+_HOST_TAR=$(command -v tar)
+_HOST_CP=$(command -v cp)
+_HOST_INSTALL=$(command -v install)
+_HOST_CHMOD=$(command -v chmod)
+_HOST_DU=$(command -v du)
+_HOST_CUT=$(command -v cut)
+export _HOST_TAR _HOST_CP _HOST_INSTALL _HOST_CHMOD
+
 : "${ALPM_BUILDROOT:=$ALPM_CACHE/build}"
 OUT="$ALPM_BUILDROOT/out"
 
@@ -97,6 +120,29 @@ for _t in ar nm ranlib strip objcopy objdump; do
 		eval "export $_u=\${$_u:-$_t}"
 	fi
 done
+# A build's HOME has to be inside the build tree, on the same filesystem as
+# its temporary files. Left pointing at /root, tools that write a cache there
+# fail in two different ways: the sandbox has /root read-only, and anything
+# that builds a file under $TMPDIR and then renames it into the cache crosses
+# a filesystem boundary - harfbuzz's g-ir-scanner died on exactly that with
+# "OSError: [Errno 18] Invalid cross-device link". Same reason CARGO_HOME is
+# set for the Rust recipes.
+#
+# This has to run before PATH gains $ALPM_SYSROOT/usr/bin below: mkdir here
+# is alpm-build's own bookkeeping, not part of any package build, and calling
+# the sysroot's own (dynamically linked) mkdir this early - before
+# LD_LIBRARY_PATH points anywhere near it, which does not happen until right
+# before build() runs, deliberately, so it does not also reach curl - hits
+# the same class of bug as the "no grep" note further down: it loads without
+# its runtime libraries, and instead of a clean linker error it comes back
+# as toybox's applet dispatch resolving to the wrong applet entirely -
+# "mkdir: invalid option -- 'p'" from what turned out to be some other tool.
+export HOME="$ALPM_BUILDROOT/home"
+export XDG_CACHE_HOME="$HOME/.cache"
+export XDG_CONFIG_HOME="$HOME/.config"
+export XDG_DATA_HOME="$HOME/.local/share"
+mkdir -p "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME"
+
 export CFLAGS="${CFLAGS:--O2 -pipe -fstack-protector-strong -fno-plt}"
 export CXXFLAGS="${CXXFLAGS:-$CFLAGS}"
 if command -v ld.lld >/dev/null 2>&1; then
@@ -116,9 +162,24 @@ if [ -d "$ALPM_SYSROOT/usr" ]; then
 	# Imath that way, colliding with the imath package it already depends on.
 	export CMAKE_PREFIX_PATH="$ALPM_SYSROOT/usr${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
 	export ACLOCAL_PATH="$ALPM_SYSROOT/usr/share/aclocal${ACLOCAL_PATH:+:$ACLOCAL_PATH}"
+	_HOST_PATH=$PATH
 	export PATH="$ALPM_SYSROOT/usr/bin:$PATH"
-	CFLAGS="-isystem $ALPM_SYSROOT/usr/include $CFLAGS"
-	CXXFLAGS="-isystem $ALPM_SYSROOT/usr/include $CXXFLAGS"
+	# --sysroot, not -isystem. -isystem is a plain search-path entry, so
+	# clang's driver put it ahead of the *implicit* c++/v1 path it adds for
+	# its own bundled libc++ - meaning libc++'s own <cctype> and <cmath>
+	# found the sysroot's plain <ctype.h>/<math.h> before libc++'s own
+	# wrapper of the same name and hit libc++'s own guard against exactly
+	# this: "<cctype> tried including <ctype.h> but didn't find libc++'s
+	# <ctype.h> header ... header search paths should contain the C++
+	# Standard Library headers before any C Standard Library." That is what
+	# qt6-svg's and qt6-shadertools's PCH failures actually were, and it
+	# would have hit every C++ package eventually - ninja and btop just got
+	# there first once BUILD_TESTING=OFF let them reach a real compile.
+	# --sysroot is clang's own answer to "point me at an alternate root": it
+	# slots the sysroot's C headers in after the compiler's own bundled
+	# libc++ headers instead of in front of them.
+	CFLAGS="--sysroot=$ALPM_SYSROOT $CFLAGS"
+	CXXFLAGS="--sysroot=$ALPM_SYSROOT $CXXFLAGS"
 	LDFLAGS="-L$ALPM_SYSROOT/usr/lib -Wl,-rpath-link,$ALPM_SYSROOT/usr/lib $LDFLAGS"
 	# -B, not -L, for the C runtime objects.
 	#
@@ -225,7 +286,16 @@ if [ -d "$ALPM_SYSROOT/usr/lib" ]; then
 	done
 fi
 
-if [ -e /usr/lib64/libc.so ] && grep -qs 'OUTPUT_FORMAT(elf32' /usr/lib/libc.so; then
+# No grep here either, same reason as the loop above: with
+# $ALPM_SYSROOT/usr/bin on PATH ahead of everything else, "grep" can resolve
+# to the sysroot's own toybox symlink, and toybox's argv[0] dispatch outside
+# the environment it expects landed on the wrong applet entirely - "invalid
+# option -- 'q'" from what turned out to be iconv, not grep, silently failing
+# every build that reached this line once BUILD_TESTING=OFF let ninja and
+# btop compile far enough to need it.
+_lc_head=$(head -c 300 /usr/lib/libc.so 2>/dev/null) || _lc_head=""
+case "$_lc_head" in *"OUTPUT_FORMAT(elf32"*) _lc_32=1 ;; *) _lc_32=0 ;; esac
+if [ -e /usr/lib64/libc.so ] && [ "$_lc_32" = 1 ]; then
 	if [ -d "$ALPM_SYSROOT/usr" ]; then
 		# Behind the sysroot, which still answers first for anything Arctic
 		# has built for itself.
@@ -235,19 +305,6 @@ if [ -e /usr/lib64/libc.so ] && grep -qs 'OUTPUT_FORMAT(elf32' /usr/lib/libc.so;
 	fi
 	export LDFLAGS
 fi
-
-# A build's HOME has to be inside the build tree, on the same filesystem as
-# its temporary files. Left pointing at /root, tools that write a cache there
-# fail in two different ways: the sandbox has /root read-only, and anything
-# that builds a file under $TMPDIR and then renames it into the cache crosses
-# a filesystem boundary - harfbuzz's g-ir-scanner died on exactly that with
-# "OSError: [Errno 18] Invalid cross-device link". Same reason CARGO_HOME is
-# set for the Rust recipes.
-export HOME="$ALPM_BUILDROOT/home"
-export XDG_CACHE_HOME="$HOME/.cache"
-export XDG_CONFIG_HOME="$HOME/.config"
-export XDG_DATA_HOME="$HOME/.local/share"
-mkdir -p "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME"
 
 export MAKEFLAGS="-j${ALPM_JOBS}"
 JOBS=$ALPM_JOBS
@@ -331,8 +388,8 @@ info "jobs       $JOBS"
 # the flag being passed at all, and a recipe that changed its source version
 # built the version still sitting on disk. Extraction is cheap - the
 # tarballs themselves are cached separately, under $ALPM_CACHE/src.
-rm -rf "$pkgdir" "$srcdir"
-mkdir -p "$srcdir" "$pkgdir"
+"$_HOST_RM" -rf "$pkgdir" "$srcdir"
+"$_HOST_MKDIR" -p "$srcdir" "$pkgdir"
 
 # ------------------------------------------------------------------ get sources
 if [ -n "$source" ]; then
@@ -342,7 +399,7 @@ if [ -n "$source" ]; then
 		i=$((i+1))
 		case "$s" in
 		*::*) fn=${s%%::*}; su=${s#*::} ;;
-		*)    su=$s; fn=$(basename "$s") ;;
+		*)    su=$s; fn=$("$_HOST_BASENAME" "$s") ;;
 		esac
 		cache="$ALPM_CACHE/src/$fn"
 		case "$su" in
@@ -360,14 +417,14 @@ if [ -n "$source" ]; then
 				info "clone $fn"
 				git clone --depth 1 "$gu" "$cache" || die "clone failed: $gu"
 			fi
-			cp -a "$cache" "$srcdir/" ; continue ;;
+			"$_HOST_CP" -a "$cache" "$srcdir/" ; continue ;;
 		*)
-			cache="$(dirname "$recipe")/$su"
+			cache="$("$_HOST_DIRNAME" "$recipe")/$su"
 			[ -e "$cache" ] || die "local source missing: $su" ;;
 		esac
 
 		# Verify against the recipe's checksum list, position by position.
-		want=$(printf '%s\n' $sha256 | sed -n "${i}p")
+		want=$(printf '%s\n' $sha256 | "$_HOST_SED" -n "${i}p")
 		if [ -n "$want" ] && [ "$want" != "SKIP" ]; then
 			got=$(sha256 "$cache")
 			[ "$got" = "$want" ] || die "checksum mismatch for $fn
@@ -382,7 +439,7 @@ if [ -n "$source" ]; then
 		*.zip)
 			( cd "$srcdir" && unzip -q "$cache" ) ;;
 		*)
-			cp -a "$cache" "$srcdir/" ;;
+			"$_HOST_CP" -a "$cache" "$srcdir/" ;;
 		esac
 	done
 fi
@@ -407,8 +464,8 @@ srcdir_fix() {
 		_sf_n=$((_sf_n+1)); _sf_d=${_sf_e%/}
 	done
 	[ "$_sf_n" = 1 ] || return 1
-	ln -sfn "$(basename "$_sf_d")" "$srcdir/$1" 2>/dev/null || return 1
-	info "sources unpacked into $(basename "$_sf_d"), not $1 - linked"
+	"$_HOST_LN" -sfn "$("$_HOST_BASENAME" "$_sf_d")" "$srcdir/$1" 2>/dev/null || return 1
+	info "sources unpacked into $("$_HOST_BASENAME" "$_sf_d"), not $1 - linked"
 	return 0
 }
 
@@ -458,6 +515,18 @@ command -v package >/dev/null 2>&1 || die "recipe has no package() function"
 msg2 "package()"
 package
 
+# Everything from here on is alpm-build's own bookkeeping - stripping,
+# .FILES, .PKGINFO - never a package's own build tooling, so there is no
+# reason left for any of it to run against the sysroot instead of the host.
+# Both PATH and LD_LIBRARY_PATH, not just one: LD_LIBRARY_PATH alone stops
+# a *captured* host binary from crashing against the sysroot's glibc, but a
+# bare name like `cut` or `du` still resolves through PATH to the sysroot's
+# own copy regardless - restoring PATH is what actually changes which
+# binary a plain, unqualified command name reaches from here on.
+[ -n "${_HOST_PATH:-}" ] && PATH=$_HOST_PATH
+export PATH
+unset LD_LIBRARY_PATH
+
 # --------------------------------------------------------------- tidy the payload
 msg2 "post-processing"
 case " $options " in
@@ -473,7 +542,7 @@ esac
 # Arctic ships mandoc, so man pages are stored uncompressed and .la files go.
 find "$pkgdir" -name '*.la' -delete 2>/dev/null || :
 find "$pkgdir" -name 'perllocal.pod' -delete 2>/dev/null || :
-rm -rf "$pkgdir/usr/share/info" 2>/dev/null || :
+"$_HOST_RM" -rf "$pkgdir/usr/share/info" 2>/dev/null || :
 
 isize=$(du -sk "$pkgdir" 2>/dev/null | cut -f1)
 isize=$(( ${isize:-0} * 1024 ))
@@ -504,8 +573,12 @@ for d in $replaces;  do printf 'replaces = %s\n' "$d" >>"$pkgdir/.PKGINFO"; done
 for d in $backup;    do printf 'backup = %s\n' "$d" >>"$pkgdir/.PKGINFO"; done
 
 # An .INSTALL next to the recipe becomes the package's hook script.
-if [ -f "$(dirname "$recipe")/install" ]; then
-	cp "$(dirname "$recipe")/install" "$pkgdir/.INSTALL"
+# LD_LIBRARY_PATH is cleared for both calls below: this runs after build()
+# has already pointed it at the sysroot, and a host binary loaded against
+# Arctic's own glibc instead of the host's is exactly as broken as running
+# a sysroot binary without it - see the same fix in arctic-base's recipe.
+if [ -f "$(LD_LIBRARY_PATH= "$_HOST_DIRNAME" "$recipe")/install" ]; then
+	cp "$(LD_LIBRARY_PATH= "$_HOST_DIRNAME" "$recipe")/install" "$pkgdir/.INSTALL"
 fi
 
 ( cd "$pkgdir" && find . -type f -o -type l ) | sed 's|^\.||' | \
@@ -532,7 +605,7 @@ fi
 # at all. Only whole /usr-rooted values are rewritten; anything built out of
 # ${prefix} already follows.
 msg2 "publishing into the build sysroot"
-mkdir -p "$ALPM_SYSROOT"
+"$_HOST_MKDIR" -p "$ALPM_SYSROOT"
 cp -a "$pkgdir/." "$ALPM_SYSROOT/" 2>/dev/null || :
 rm -f "$ALPM_SYSROOT/.PKGINFO" "$ALPM_SYSROOT/.FILES" "$ALPM_SYSROOT/.INSTALL"
 # Two plain expressions rather than one with \?, which is a GNU extension
