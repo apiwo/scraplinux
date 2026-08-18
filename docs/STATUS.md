@@ -8,11 +8,11 @@ Release label: **Arctic Linux - Alpha 3 SS** (`3-SS`). Alpha 1 ran `a1` to
 `a1.24`, Alpha 2 ran `a2` to `a2.61` under the old one-dot scheme. Starting
 with Alpha 3 the tag is `main.bigfix.smallfix` plus a stability suffix -
 `3` is the main version, the first number after it is a bigfix, a further
-number after that is a smallfix, and `SS`/`S`/`VS`/`U` mean somewhat stable /
-stable / very stable / unstable. Stable is the best a release can be rated;
-SS is one step below it, not a synonym for "beta". bigfix and smallfix are
-each read as their own number, not further dotted fields: `3.1.10` follows
-`3.1.9`, and `3.2` is the next bigfix after `3.1.99`.
+number after that is a smallfix, and `SS`/`S`/`VS`/`U` mean super stable /
+stable / very stable / unstable. Super stable is the best a release can be
+rated - the top of the scale, not a lesser tier than plain "stable". bigfix
+and smallfix are each read as their own number, not further dotted fields:
+`3.1.10` follows `3.1.9`, and `3.2` is the next bigfix after `3.1.99`.
 
 Whatever the label is, one string is what the ISO filename, the volume id,
 `/etc/arctic-release`, the boot banner and `arcticfetch` all show - nothing
@@ -210,6 +210,32 @@ produces is unpacked there and later builds compile and link against it
 paths point into the sysroot rather than at `/usr` on the build host.
 
 ## Known-fixed bugs worth remembering
+
+- **Alpha 3 SS: `clang` could not run at all on a freshly installed system -
+  every source build was broken from the first boot.** LLVM's own CMake
+  defaults install `libc++`/`libc++abi`/`libunwind` into a target-triple
+  subdirectory (`/usr/lib/x86_64-unknown-linux-gnu/`) instead of straight
+  into `/usr/lib` like every other Arctic package, and nothing told the
+  dynamic linker to look there - there was no `/etc/ld.so.conf` at all.
+  `clang` itself is linked against `libc++`, so it failed before compiling
+  a single line: `clang: error while loading shared libraries: libc++.so.1:
+  cannot open shared object file: No such file or directory`. `alpm add -s`
+  on any package failed the same way, immediately, with no useful error
+  pointing at the real cause.
+
+  This went unnoticed all the way to a release candidate because every
+  build this cycle ran through the sandboxed build host, which bind-mounts
+  the *host's* whole filesystem read-only - the host's own `/etc/ld.so.conf`
+  and cache were visible inside the sandbox and quietly did the resolving
+  that a real, freshly installed Arctic system has no way to do. It only
+  showed up chrooting into an actual `arctic-install` target with no host
+  underneath it to fall back on - a reminder that the sandboxed build
+  environment is not a substitute for testing a real install, only a
+  guard against a build clobbering the host.
+
+  Fixed with `skel/etc/ld.so.conf` listing the triple directory - `alpm`
+  already runs `ldconfig` after every transaction (`run_hooks` in
+  `alpm/alpm`), it just had nothing to read before this existed.
 
 - **Alpha 3 SS: `nmtui` hardcoded the build host's own `/usr/lib64/libnewt.so`
   instead of a proper soname.** NetworkManager was built before `newt` had
