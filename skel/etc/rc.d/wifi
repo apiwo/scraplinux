@@ -15,6 +15,17 @@ NAME=wifi
 CTRL_DIR=/run/wpa_supplicant
 
 start() {
+	# Same reason as wifi-connect's own unblock_rfkill(): a soft-blocked
+	# radio still creates its netdev, so this would otherwise look like a
+	# clean boot that just never found the network - not a hard failure of
+	# anything, an association that never had a working radio to run on.
+	for k in /sys/class/rfkill/rfkill*; do
+		[ -d "$k" ] || continue
+		[ "$(cat "$k/type" 2>/dev/null)" = wlan ] || continue
+		[ "$(cat "$k/soft" 2>/dev/null)" = 1 ] || continue
+		echo 0 >"$k/soft" 2>/dev/null || :
+	done
+
 	_started=0
 	for conf in /etc/wpa_supplicant-*.conf; do
 		[ -f "$conf" ] || continue

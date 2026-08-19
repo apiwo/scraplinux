@@ -87,10 +87,59 @@ check_regdomain() {
 	esac
 }
 
+# "no networks found" was one message for at least three different causes -
+# NetworkManager holding the radio (warn_if_networkmanager catches that one
+# specifically), a soft-blocked radio that still creates its netdev and
+# still fails to transmit, a regulatory domain that will not let it, or
+# genuinely nothing in range. Printing the actual state instead of a single
+# guess is what turns the next report of this into "here is what rfkill and
+# iw actually said" instead of another screenshot of the same five words.
+diagnose_no_networks() {
+	_if=$1
+	if [ -s "$SCAN_ERR" ]; then
+		printf '     %siw itself said:%s\n' "$GREY" "$R"
+		sed 's/^/       /' "$SCAN_ERR" >&2
+	fi
+	for k in /sys/class/rfkill/rfkill*; do
+		[ -d "$k" ] || continue
+		[ "$(cat "$k/type" 2>/dev/null)" = wlan ] || continue
+		_soft=$(cat "$k/soft" 2>/dev/null)
+		_hard=$(cat "$k/hard" 2>/dev/null)
+		if [ "$_hard" = 1 ]; then
+			printf '     %srfkill: hard-blocked - a physical switch or BIOS toggle,\n' "$GREY"
+			printf '     nothing here can clear that in software.%s\n' "$R"
+		elif [ "$_soft" = 1 ]; then
+			printf '     %srfkill: soft-blocked, and unblocking it did not help -\n' "$GREY"
+			printf '     something is re-blocking it after this ran.%s\n' "$R"
+		fi
+	done
+	_reg=$(iw reg get 2>/dev/null | awk -F': ' '/^country/{print $1; exit}' | awk '{print $2}')
+	printf '     %sregulatory domain: %s%s\n' "$GREY" "${_reg:-unknown}" "$R"
+}
+
 wireless_ifaces() {
 	for i in /sys/class/net/*; do
 		[ -d "$i/wireless" ] || continue
 		printf '%s\n' "${i##*/}"
+	done
+}
+
+# Many laptops boot with wifi soft-blocked by default - a BIOS setting or
+# just the kernel's own rfkill default, nothing this system did. A
+# soft-blocked radio still creates its netdev (wlan0 exists, coldplug's
+# driver load succeeded) but cannot actually transmit or receive, so a scan
+# comes back with nothing in range - indistinguishable from a genuine "no
+# networks found" without checking rfkill specifically, which nothing here
+# did. No `rfkill` package exists in Arctic to shell out to; the kernel's
+# own sysfs interface needs nothing installed. `hard` (a physical switch)
+# is read-only and cannot be fixed from software - only `soft` is ours to
+# clear.
+unblock_rfkill() {
+	for k in /sys/class/rfkill/rfkill*; do
+		[ -d "$k" ] || continue
+		[ "$(cat "$k/type" 2>/dev/null)" = wlan ] || continue
+		[ "$(cat "$k/soft" 2>/dev/null)" = 1 ] || continue
+		echo 0 >"$k/soft" 2>/dev/null || :
 	done
 }
 
@@ -124,10 +173,18 @@ warn_if_networkmanager() {
 
 # A scan takes a few seconds and says nothing while it runs, which reads as a
 # hang on a machine that has just booted and has no other sign of life.
+#
+# iw's own stderr on a failed scan - "Device or resource busy",
+# "Operation not permitted" from a rfkill-blocked radio, whatever it
+# actually was - used to go to /dev/null here and be gone by the time
+# anything downstream needed to explain why the scan came back empty.
+# Kept in $SCAN_ERR rather than printed here: this runs once per attempt,
+# nothing has decided yet whether the result needs explaining.
+SCAN_ERR=/tmp/.wifi-scan-err.$$
 scan_with_spinner() {
 	_if=$1 _out=$2
 	ip link set "$_if" up 2>/dev/null
-	iw dev "$_if" scan >"$_out" 2>/dev/null &
+	iw dev "$_if" scan >"$_out" 2>"$SCAN_ERR" &
 	_pid=$!
 	printf '%s::%s scanning on %s ' "$TEAL$BOLD" "$R" "$_if"
 	while kill -0 "$_pid" 2>/dev/null; do
@@ -401,7 +458,13 @@ interactive() {
 	scan_with_spinner "$iface" "$tmp"
 	nets=$(parse_scan "$tmp")
 	rm -f "$tmp"
-	[ -n "$nets" ] || { oops "no networks found - move closer, or check the antenna"; exit 1; }
+	if [ -z "$nets" ]; then
+		oops "no networks found - move closer, or check the antenna"
+		diagnose_no_networks "$iface"
+		rm -f "$SCAN_ERR"
+		exit 1
+	fi
+	rm -f "$SCAN_ERR"
 
 	printf '\n  %s%-32s %-8s %s%s\n' "$GREY" "NETWORK" "SIGNAL" "SECURITY" "$R"
 	i=0
@@ -427,6 +490,10 @@ interactive() {
 
 	connect "$ssid" "$PASSWORD" "$iface"
 }
+
+# Once, before anything below touches a radio at all - scanning, listing or
+# connecting equally need a soft-blocked card unblocked first.
+unblock_rfkill
 
 mode=connect
 case "${1:-}" in
