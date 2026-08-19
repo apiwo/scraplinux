@@ -1018,7 +1018,30 @@ do_install() {
 	step "Installing firmware" "linux-firmware"
 	case "$A_KERNEL" in
 	arctic-libre-kernel) logit "libre kernel: skipping nonfree firmware" ;;
-	*) target_alpm add linux-firmware || warn_soft "firmware not installed" ;;
+	*)
+		# The real linux-firmware package is well over the free-tier
+		# mirror's size limit - kernels.repo has said so, in its own
+		# comment, since before this was ever wired up - so target_alpm
+		# add linux-firmware 404s against the mirror on every single real
+		# install, silently, because this used warn_soft rather than bail.
+		# That is the whole of "wifi worked on the live image and not on
+		# the install": the wireless driver loaded and wlan0 existed
+		# either way, but only the live image actually had the firmware
+		# file it needed to bring the radio up, because the live image
+		# never fetches it over the network at all - build-usable.sh
+		# copies a curated, wireless-plus-console subset straight into the
+		# rootfs at build time. That subset is sitting right here, on the
+		# medium this installer is running from; copy it, the same way
+		# the installer already is one, rather than asking a mirror for a
+		# gigabyte-plus package it was never going to be able to serve.
+		if [ -d /usr/lib/firmware ]; then
+			mkdir -p "$TARGET/usr/lib/firmware"
+			cp -a /usr/lib/firmware/. "$TARGET/usr/lib/firmware/" 2>/dev/null || \
+				warn_soft "could not copy firmware from the live medium"
+		else
+			warn_soft "no /usr/lib/firmware on the live medium to copy"
+		fi
+		;;
 	esac
 
 	# Not optional, unlike everything below it. A system with no network
