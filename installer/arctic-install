@@ -113,7 +113,13 @@ A_LANG="en_US.UTF-8"
 A_KEYMAP="us"
 A_CONSOLE_FONT=""
 A_TZ="UTC"
-A_NTP="y"
+# Off by default: /etc/rc.d/ntpd runs /usr/bin/ntpd, a standalone binary no
+# package in Arctic actually provides (busybox's own ntpd applet is a
+# different invocation entirely) - so an install taking the default got a
+# service enabled with nothing that could ever run it, failing on the very
+# first boot. Same reasoning as microcode just above: do not enable
+# something nothing packages yet.
+A_NTP="n"
 A_NET="offline"
 A_WIFI_SSID=""
 A_WIFI_PSK=""

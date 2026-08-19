@@ -33,6 +33,26 @@ say()  { printf '%s::%s %s\n' "$TEAL$BOLD" "$R" "$*"; }
 ok()   { printf '  %s✓%s  %s\n' "$MINT$BOLD" "$R" "$*"; }
 oops() { printf '%s!!%s %s\n' "$RED$BOLD" "$R" "$*" >&2; }
 
+# The live image logs straight in as root, so wifi-connect never needed to
+# think about privilege - every command it runs (ip link, iw scan,
+# wpa_supplicant, udhcpc) genuinely does need root or CAP_NET_ADMIN, it just
+# always already had it. A real install's default login is the account
+# arctic-install created, not root, and none of those commands said so when
+# they failed: `iw scan` came back "command failed: Operation not permitted
+# (-1)", which parse_scan happily turned into an empty list and wifi-connect
+# reported as "no networks found - move closer, or check the antenna" - a
+# permissions error with a diagnosis about signal strength. Re-exec through
+# doas once here instead, the same way the live image effectively always
+# ran this.
+if [ "$(id -u)" != 0 ]; then
+	if command -v doas >/dev/null 2>&1; then
+		exec doas "$0" "$@"
+	else
+		oops "wifi-connect needs root - run it with doas, or as root"
+		exit 1
+	fi
+fi
+
 # Where wpa_supplicant opens its control socket, and where wpa_cli looks for
 # it by default. Kept in one place so the two can never disagree.
 CTRL_DIR=/run/wpa_supplicant
