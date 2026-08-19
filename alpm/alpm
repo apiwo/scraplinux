@@ -2145,21 +2145,29 @@ done
 set -- $args
 
 case "$cmd" in
-# The old verbs are gone. "ins" and "del" were what these were called
-# before add and rem; keeping both meant two names for one thing in every
-# example, every script and every page of documentation. They answer with
-# what to type instead rather than "unknown command".
-ins|install|i)      die "alpm ins is now: alpm add $*" ;;
+# "ins" and "del" were what these were called before add and rem - add and
+# rem are what every example and every page of documentation says now, but
+# the old names still work as plain aliases rather than stopping with an
+# error, the same way any other command keeps an old spelling working
+# instead of demanding the new one be typed from memory.
+ins|install|i)      cmd_ins "$@" ;;
 reins|reinstall)    cmd_reins "$@" ;;
 commit)             cmd_commit "$@" ;;
 del|remove|rm)
 	case "${1:-}" in
-	repo) shift; die "alpm del repo is now: alpm repo del $*" ;;
-	*)    die "alpm del is now: alpm rem $*" ;;
+	repo) shift; cmd_delrepo "$@" ;;
+	*)    [ -n "${1:-}" ] || die "usage: alpm del <package>..."
+	      do_remove 0 0 "$@" ;;
 	esac ;;
-del+deps)           die "alpm del+deps is now: alpm rem -d $*" ;;
-del+junk)           die "alpm del+junk is now: alpm rem -a $*" ;;
-del+deps+junk|del+junk+deps) die "alpm del+deps+junk is now: alpm rem -a -d $*" ;;
+del+deps)
+	[ -n "${1:-}" ] || die "usage: alpm del+deps <package>..."
+	do_remove 1 0 "$@" ;;
+del+junk)
+	[ -n "${1:-}" ] || die "usage: alpm del+junk <package>..."
+	do_remove 0 1 "$@" ;;
+del+deps+junk|del+junk+deps)
+	[ -n "${1:-}" ] || die "usage: alpm del+deps+junk <package>..."
+	do_remove 1 1 "$@" ;;
 autoremove)         cmd_autoremove ;;
 get)                cmd_get "$@" ;;
 fetch|sync)         cmd_fetch "$@" ;;
@@ -2169,7 +2177,7 @@ system|sys)         cmd_system "$@" ;;
 # because that is what it used to mean and scripts have it.
 add|a)
 	case "${1:-}" in
-	repo) shift; die "alpm add repo is now: alpm repo add $*" ;;
+	repo) shift; cmd_addrepo "$@" ;;
 	*)    cmd_ins "$@" ;;
 	esac ;;
 # The repository verbs read as what they do: alpm repo add <url>.

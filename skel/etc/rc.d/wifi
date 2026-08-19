@@ -1,0 +1,83 @@
+#!/bin/sh
+# Arctic Linux - reconnect wireless from a saved wifi-connect profile on boot.
+#
+# wifi-connect already writes a real, working wpa_supplicant config to
+# /etc/wpa_supplicant-<iface>.conf every time it associates - that file is
+# not a live-image-only artifact, it lands on the installed system too (see
+# arctic-install carrying it across in configure_network()). What was
+# missing was anything that read it back on a normal boot: the live image
+# gets its wireless from wifi-connect being run by hand, and a fresh install
+# had no equivalent at all, so a laptop that connected once during install
+# came up with no wireless on every boot after. This is that equivalent -
+# the same wpa_supplicant + udhcpc pairing wifi-connect itself uses, just
+# driven from a saved file instead of a prompt.
+NAME=wifi
+CTRL_DIR=/run/wpa_supplicant
+
+start() {
+	_started=0
+	for conf in /etc/wpa_supplicant-*.conf; do
+		[ -f "$conf" ] || continue
+		iface=${conf#/etc/wpa_supplicant-}
+		iface=${iface%.conf}
+		[ -d "/sys/class/net/$iface" ] || continue
+
+		ip link set lo up 2>/dev/null
+		ip link set "$iface" up 2>/dev/null
+
+		# Same reason as wifi-connect's own connect(): a leftover process
+		# from an earlier boot or an earlier run of wifi-connect fighting
+		# a fresh one over the same nl80211 device fails both.
+		pkill -f "wpa_supplicant.*-i *$iface" 2>/dev/null
+		sleep 1
+
+		mkdir -p "$CTRL_DIR" 2>/dev/null
+		wpa_supplicant -B -i "$iface" -c "$conf" >/dev/null 2>&1
+
+		# wpa_supplicant -B returns the moment it has forked, well before
+		# association - the exact same race wifi-connect's own connect()
+		# guards against. Give it a real window rather than assuming.
+		_n=0
+		while [ "$_n" -lt 15 ]; do
+			[ "$(cat "/sys/class/net/$iface/carrier" 2>/dev/null)" = 1 ] && break
+			_n=$((_n + 1))
+			sleep 1
+		done
+		[ "$(cat "/sys/class/net/$iface/carrier" 2>/dev/null)" = 1 ] || continue
+
+		udhcpc -b -i "$iface" -p "/run/udhcpc.$iface.pid" \
+			-s /usr/share/udhcpc/default.script >/dev/null 2>&1
+		_started=1
+	done
+	[ "$_started" = 1 ] || return 0
+
+	# Same reason as rc.d/network: udhcpc -b forks immediately, so without
+	# this the service reports success while the interface is still
+	# addressless.
+	_n=0
+	while [ "$_n" -lt 12 ]; do
+		for conf in /etc/wpa_supplicant-*.conf; do
+			[ -f "$conf" ] || continue
+			iface=${conf#/etc/wpa_supplicant-}; iface=${iface%.conf}
+			ip -4 addr show dev "$iface" 2>/dev/null | grep -q 'inet ' && return 0
+		done
+		sleep 1
+		_n=$((_n + 1))
+	done
+	return 0
+}
+
+stop() {
+	pkill -f 'wpa_supplicant -B -i' 2>/dev/null
+	for p in /run/udhcpc.*.pid; do
+		[ -f "$p" ] && { kill "$(cat "$p")" 2>/dev/null; rm -f "$p"; }
+	done
+}
+
+case "${1:-}" in
+start) start ;;
+stop) stop ;;
+restart) stop; sleep 1; start ;;
+status) ip route 2>/dev/null | grep -q '^default' ;;
+*) echo "usage: $0 start|stop|restart|status" >&2; exit 2 ;;
+esac

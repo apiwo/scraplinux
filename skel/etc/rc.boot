@@ -134,9 +134,27 @@ if [ -d /sys/devices ]; then
 			read -r alias <"$a" 2>/dev/null || continue
 			[ -n "$alias" ] && printf '%s\n' "$alias"
 		done | sort -u | \
-		while read -r alias; do
-			modprobe -q "$alias" 2>/dev/null || :
-		done
+		{
+			# busybox's modprobe caches nothing between invocations - it
+			# re-parses modules.dep from scratch every single time, unlike
+			# real kmod's binary index. On real hardware's dozens of unique
+			# aliases (a VM's much smaller device set never showed this),
+			# that repeated parse is most of what makes this step slow, and
+			# it is exactly as slow run one at a time as eight at a time:
+			# nothing here shares state, each modprobe does its own
+			# independent parse regardless. `wait -n` would schedule the
+			# next one the moment any one slot frees up, but it is a
+			# bashism busybox ash does not have - batches of eight, all
+			# launched, then one `wait` for the whole batch, is the
+			# portable version of the same idea.
+			_cp_n=0
+			while read -r alias; do
+				modprobe -q "$alias" 2>/dev/null &
+				_cp_n=$((_cp_n + 1))
+				[ "$_cp_n" -ge 8 ] && { wait; _cp_n=0; }
+			done
+			wait
+		}
 	) &
 	_cp_pid=$!
 	# Not gated on QUIET. The default boot entry passes both quiet and

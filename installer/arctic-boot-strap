@@ -96,12 +96,14 @@ write_limine_conf() {
 timeout: 3
 default_entry: 1
 interface_branding: Arctic Linux
-term_palette: 1e1e2e;f38ba8;a6e3a1;f9e2af;89b4fa;cba6f7;94e2d5;bac2de
+term_palette: 1a1b26;f7768e;9ece6a;e0af68;7aa2f7;bb9af7;7dcfff;c0caf5
+term_palette_bright: 414868;ff899d;9fe044;faba4a;8db0ff;c7a9ff;a4daff;c8d3f5
 term_background: 1a1b26
+term_foreground: c8d3f5
 graphics: yes
 wallpaper: boot():/arctic-splash.png
 wallpaper_style: centered
-backdrop: 5f5bc6
+backdrop: 1a1b26
 
 /Arctic linux
     protocol: linux

@@ -354,8 +354,15 @@ connect() {
 		[ -n "$gw" ] && ok "gateway   $gw"
 		ns=$(awk '/^nameserver/{printf "%s ", $2}' /etc/resolv.conf 2>/dev/null)
 		[ -n "$ns" ] && ok "resolver  $ns"
-		printf '\n  %sReady. Edit /etc/arctic/install.conf, then run arctic-install.%s\n' \
-			"$GREY" "$R"
+		# The live image's own next step, not an installed system's - an
+		# already-installed machine telling you to go install it is exactly
+		# the "still acts like the live ISO" bug. /etc/arctic-release
+		# carries an INSTALLED= line the moment arctic-install has run;
+		# nothing does before that.
+		if ! grep -q '^INSTALLED=' /etc/arctic-release 2>/dev/null; then
+			printf '\n  %sReady. Edit /etc/arctic/install.conf, then run arctic-install.%s\n' \
+				"$GREY" "$R"
+		fi
 	else
 		oops "associated, but DHCP failed"
 		[ -s "$_dhcplog" ] && tail -n 8 "$_dhcplog" | sed 's/^/     /' >&2

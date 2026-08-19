@@ -1817,6 +1817,16 @@ EOF
 			# NetworkManager refuses to load a world-readable profile - the
 			# key is in it in plain text.
 			chmod 600 "$_wf"
+			# The raw file itself, not regenerated from the SSID/PSK just
+			# parsed out of it: this is exactly the format rc.d/wifi reads
+			# on every later boot, the same wpa_supplicant + udhcpc pairing
+			# wifi-connect uses on the live image, carried across instead
+			# of asked for a second time. Copying the file wifi-connect
+			# already wrote sidesteps needing a matching escape/unescape
+			# pass a second time - it is already in the right format.
+			cp -f "$_wc" "$TARGET/etc/$(basename "$_wc")"
+			chmod 600 "$TARGET/etc/$(basename "$_wc")"
+			WIFI_CARRIED=1
 			logit "carried the wireless connection '$_ws' into the installed system"
 			step "Wireless" "carried '$_ws' across from the installer"
 			break
@@ -1846,6 +1856,22 @@ EOF
 				printf '\n[ipv4]\nmethod=auto\n\n[ipv6]\nmethod=auto\n'
 			} >"$f"
 			chmod 600 "$f"
+			# Same reason as the carry-across case just above: rc.d/wifi
+			# needs its own wpa_supplicant config, in wpa_supplicant's
+			# format, not NetworkManager's.
+			_wif=${A_WIFI_IFACE:-wlan0}
+			_wc="$TARGET/etc/wpa_supplicant-$_wif.conf"
+			{
+				printf 'ctrl_interface=/run/wpa_supplicant\n'
+				printf 'ctrl_interface_group=0\n'
+				printf 'update_config=1\n'
+				printf 'network={\n'
+				printf '\tssid="%s"\n' "$(printf '%s' "$A_WIFI_SSID" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')"
+				printf '\tpsk="%s"\n' "$(printf '%s' "$A_WIFI_PSK" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')"
+				printf '}\n'
+			} >"$_wc"
+			chmod 600 "$_wc"
+			WIFI_CARRIED=1
 		fi
 		;;
 	static)
@@ -1894,11 +1920,24 @@ enable_services() {
 	}
 	svc udev
 	svc dbus
-	# NetworkManager replaces the old rc.d/network + iwd pairing outright -
-	# it drives DHCP, static config and wifi (via wpa_supplicant) all
-	# itself, so it is enabled unconditionally the same way rc.d/network
-	# used to be, not only when A_NET=wifi.
-	svc NetworkManager
+	if [ "${WIFI_CARRIED:-0}" = 1 ]; then
+		# The live image's own networking, carried onto the installed
+		# system rather than handed to NetworkManager: wifi-connect's
+		# wpa_supplicant + udhcpc pairing, reconnected on every boot by
+		# rc.d/wifi, is what actually associated during install - putting
+		# NetworkManager's own wpa_supplicant on the same radio afterwards
+		# is the two-programs-fighting-over-one-device bug wifi-connect's
+		# own warn_if_networkmanager() already warns about, just moved
+		# from "run by hand after boot" to "every single boot". rc.d/network
+		# still covers wired.
+		svc network
+		svc wifi
+	else
+		# NetworkManager replaces the old rc.d/network + iwd pairing
+		# outright - it drives DHCP, static config and wifi (via
+		# wpa_supplicant) all itself.
+		svc NetworkManager
+	fi
 	[ "$A_NTP" = y ] && svc ntpd
 	[ "$A_SSH" = y ] && svc sshd
 	[ "$A_FIREWALL" = y ] && svc nftables
