@@ -325,7 +325,19 @@ for _a in $(cat /proc/cmdline 2>/dev/null); do
 done
 
 # ------------------------------------------------------------------------ services
+#
+# Started together, then waited on in the same order they started - not one
+# at a time. A slow service used to hold up every service after it whether
+# or not either had anything to do with the other: rc.d/wifi and rc.d/network
+# can each spend real seconds waiting for a lease or an association, and
+# nothing about, say, sshd or a display manager needs to wait for that to
+# finish first. Output still prints in a fixed, readable order (begin() for
+# each is not interleaved with another service's own output) - only the
+# actual work overlaps, not the reporting of it.
 if [ -d /etc/arctic/services ]; then
+	mkdir -p /run/arctic/svc-out
+	: >/run/arctic/svc-pids
+	_svc_pending=""
 	for s in /etc/arctic/services/*; do
 		[ -e "$s" ] || continue
 		n=$(basename "$s")
@@ -342,19 +354,34 @@ if [ -d /etc/arctic/services ]; then
 			bad "no executable /etc/rc.d/$n"
 			continue
 		fi
-		begin "Service '$n'"
 		# Failures used to go to /dev/null, which meant a service that could
-		# not start left no trace anywhere. Keep the console tidy on success,
-		# but record what went wrong either way.
-		if _out=$("/etc/rc.d/$n" start 2>&1); then
+		# not start left no trace anywhere. Keep the console tidy on
+		# success, but record what went wrong either way.
+		#
+		# PID kept in a file, not an eval'd $n-named variable: service names
+		# from /etc/arctic/services/* are almost always plain words, but
+		# A_SERVICES in install.conf is user-supplied text, and a name with
+		# a dash or anything else that is not a valid shell identifier
+		# character breaks an eval'd assignment instead of just failing to
+		# start.
+		"/etc/rc.d/$n" start >"/run/arctic/svc-out/$n" 2>&1 &
+		printf '%s %s\n' "$n" "$!" >>/run/arctic/svc-pids
+		_svc_pending="$_svc_pending $n"
+	done
+	for n in $_svc_pending; do
+		begin "Service '$n'"
+		_svc_pid=$(awk -v n="$n" '$1==n{print $2; exit}' /run/arctic/svc-pids)
+		if wait "$_svc_pid"; then
 			good
 			rc_log "service $n: started"
-			[ -n "$_out" ] && rc_log "  $_out"
+			[ -s "/run/arctic/svc-out/$n" ] && rc_log "  $(cat "/run/arctic/svc-out/$n")"
 		else
 			bad "$n"
 			rc_log "service $n: FAILED"
-			[ -n "$_out" ] && { printf '%s\n' "$_out" | sed 's/^/     /'
-				printf '%s\n' "$_out" | sed 's/^/  /' >>"$RC_LOG" 2>/dev/null || :; }
+			if [ -s "/run/arctic/svc-out/$n" ]; then
+				sed 's/^/     /' "/run/arctic/svc-out/$n"
+				sed 's/^/  /' "/run/arctic/svc-out/$n" >>"$RC_LOG" 2>/dev/null || :
+			fi
 		fi
 	done
 fi
