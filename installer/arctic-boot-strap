@@ -228,7 +228,11 @@ EOF
 
 # ----------------------------------------------------------------------- main
 
-need_root 2>/dev/null || { echo "Must be run as root." >&2; exit 1; }
+# Not need_root() from libalpm.sh: that calls die(), which exits the whole
+# script from inside this call - "need_root 2>/dev/null" redirected that
+# exit's own error message to /dev/null along with it, so a non-root run
+# exited silently instead of ever reaching the fallback message below.
+[ "$(id -u)" = 0 ] || { echo "Must be run as root." >&2; exit 1; }
 
 method="" loader="" BOOTDIR=""
 while [ $# -gt 0 ]; do

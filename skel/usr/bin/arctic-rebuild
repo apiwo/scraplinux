@@ -45,7 +45,12 @@ case "${1:-}" in
 -h|--help|help) sed -n '2,20p' "$0" | sed 's/^# \?//'; exit 0 ;;
 esac
 
-need_root 2>/dev/null || { echo "Must be run as root." >&2; exit 1; }
+# Not need_root() from libalpm.sh: that calls die(), which prints to
+# stderr and then exits the whole script from inside this call - and
+# "need_root 2>/dev/null" redirects that exit's own error message to
+# /dev/null along with it, so a non-root run of this script used to exit
+# silently instead of ever reaching the fallback message below.
+[ "$(id -u)" = 0 ] || { echo "Must be run as root." >&2; exit 1; }
 
 if [ -t 1 ]; then
 	R=$(printf '\033[0m'); B=$(printf '\033[1m')
@@ -149,6 +154,10 @@ SYS_MICROCODE="auto"
 SYS_BOOTLOADER=""
 SYS_BOOT_TIMEOUT=""
 if [ -f "$CONF" ]; then
+	# A wifi password can live in this file now; lock it down regardless of
+	# what mode it was created with, including a system.conf from before
+	# that was ever true.
+	chmod 600 "$CONF" 2>/dev/null || :
 	# shellcheck disable=SC1090
 	. "$CONF"
 fi
@@ -211,6 +220,7 @@ if [ "$all_empty" = 1 ]; then
 		printf 'SYS_GPU="auto"\nSYS_MICROCODE="auto"\n\n'
 		printf 'SYS_BOOTLOADER=""\nSYS_BOOT_TIMEOUT=""\n'
 	} >"$CONF"
+	chmod 600 "$CONF"
 	printf '  %sWrote %s. Nothing was changed this run.%s\n' "$GREY" "$CONF" "$R"
 	exit 0
 fi

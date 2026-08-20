@@ -1132,7 +1132,26 @@ do_install() {
 	kde)   target_alpm add arctic-kde  || target_alpm add plasma-meta konsole dolphin || : ;;
 	xfce)  target_alpm add arctic-xfce || target_alpm add xfce4-meta xorg-server || : ;;
 	niri)  target_alpm add niri-dms    || target_alpm add niri waybar fuzzel || : ;;
-	dwm)   target_alpm add apiwow-dwm  || target_alpm add dwm st dmenu xorg-server || : ;;
+	dwm)
+		target_alpm add apiwow-dwm || target_alpm add dwm st dmenu xorg-server || :
+		# dwm is an X client, not a display manager or an X server - nothing
+		# here was ever going to run it. xorg-xinit provides startx/xinit,
+		# and both need a .xinitrc telling them what to exec once the X
+		# server is up; without one, `startx` falls back to a default that
+		# does not exist on this image, and running `dwm` directly just
+		# gets "cannot open display" because there is no X server behind
+		# it yet. Written for every login that has a home directory, root
+		# included, since dwm is the one desktop choice here with no
+		# display manager offering an alternative way in.
+		for _xh in "$TARGET/root" "$TARGET/home/$A_USER"; do
+			[ -n "$A_USER" ] || [ "$_xh" != "$TARGET/home/" ] || continue
+			[ -d "$_xh" ] || continue
+			printf '#!/bin/sh\nexec dwm\n' >"$_xh/.xinitrc"
+			chmod 755 "$_xh/.xinitrc"
+		done
+		[ -n "$A_USER" ] && \
+			chroot_run "chown $A_USER:$A_USER /home/$A_USER/.xinitrc" 2>/dev/null || :
+		;;
 	none)  logit "no desktop requested" ;;
 	esac
 
@@ -1603,8 +1622,38 @@ seed_system_conf() {
 			[ -f "$r" ] || continue
 			grep -q '^enabled = yes' "$r" 2>/dev/null && nf=yes
 		done
-		printf 'SYS_ALLOW_NONFREE="%s"\n' "$nf"
+		printf 'SYS_ALLOW_NONFREE="%s"\n\n' "$nf"
+
+		# What was actually declared, not re-detected - install.conf already
+		# decided A_GPU=auto/A_MICROCODE=auto down to a real value earlier in
+		# this same run, and arctic-rebuild's own "auto" only exists so an
+		# edited system.conf can ask for fresh detection later; the value
+		# this install actually used is what belongs in the seed.
+		case "$A_NET" in
+		wifi)
+			printf 'SYS_NET_MODE="wifi"\n'
+			printf 'SYS_WIFI_SSID="%s"\n' "$A_WIFI_SSID"
+			printf 'SYS_WIFI_PSK="%s"\n' "$A_WIFI_PSK"
+			printf 'SYS_WIFI_IFACE="%s"\n' "$A_WIFI_IFACE"
+			printf 'SYS_IP=""\nSYS_GATEWAY=""\nSYS_DNS=""\n' ;;
+		static)
+			printf 'SYS_NET_MODE="static"\n'
+			printf 'SYS_WIFI_SSID=""\nSYS_WIFI_PSK=""\nSYS_WIFI_IFACE=""\n'
+			printf 'SYS_IP="%s"\n' "$A_IP"
+			printf 'SYS_GATEWAY="%s"\n' "$A_GATEWAY"
+			printf 'SYS_DNS="%s"\n' "$A_DNS" ;;
+		*)
+			printf 'SYS_NET_MODE=""\n'
+			printf 'SYS_WIFI_SSID=""\nSYS_WIFI_PSK=""\nSYS_WIFI_IFACE=""\n'
+			printf 'SYS_IP=""\nSYS_GATEWAY=""\nSYS_DNS=""\n' ;;
+		esac
+		printf 'SYS_MAC_RANDOMIZE="%s"\n\n' "${A_MAC_RANDOMIZE:-no}"
+		printf 'SYS_GPU="%s"\n' "${A_GPU:-auto}"
+		printf 'SYS_MICROCODE="%s"\n\n' "${A_MICROCODE:-auto}"
+		printf 'SYS_BOOTLOADER="%s"\n' "$A_BOOTLOADER"
+		printf 'SYS_BOOT_TIMEOUT="%s"\n' "$A_BOOT_TIMEOUT"
 	} >"$f"
+	chmod 600 "$f"
 	logit "seeded $f"
 }
 
@@ -1892,8 +1941,26 @@ EOF
 			chmod 600 "$f"
 			# Same reason as the carry-across case just above: rc.d/wifi
 			# needs its own wpa_supplicant config, in wpa_supplicant's
-			# format, not NetworkManager's.
-			_wif=${A_WIFI_IFACE:-wlan0}
+			# format, not NetworkManager's. A_WIFI_IFACE left unset used to
+			# fall back to the literal string "wlan0" - correct on plenty of
+			# machines by coincidence, wrong on any with a different or
+			# second wireless adapter, and silently so: the profile still
+			# got written, rc.d/wifi's own glob just never matched a real
+			# interface at boot, so the connection that worked during
+			# install never came back after reboot. Detected the same way
+			# wifi-connect itself finds one - the first interface directory
+			# carrying a "wireless" subdirectory in sysfs - with "wlan0" only
+			# as a last-resort guess when nothing is actually present yet.
+			_wif=$A_WIFI_IFACE
+			if [ -z "$_wif" ]; then
+				for _wd in /sys/class/net/*/wireless; do
+					[ -d "$_wd" ] || continue
+					_wif=${_wd%/wireless}
+					_wif=${_wif##*/}
+					break
+				done
+				_wif=${_wif:-wlan0}
+			fi
 			_wc="$TARGET/etc/wpa_supplicant-$_wif.conf"
 			{
 				printf 'ctrl_interface=/run/wpa_supplicant\n'
@@ -2069,7 +2136,11 @@ EOF
 
 # ----------------------------------------------------------------------- main
 
-need_root 2>/dev/null || { echo "Must be run as root." >&2; exit 1; }
+# Not need_root() from libalpm.sh: that calls die(), which exits the whole
+# script from inside this call - "need_root 2>/dev/null" redirected that
+# exit's own error message to /dev/null along with it, so a non-root run
+# exited silently instead of ever reaching the fallback message below.
+[ "$(id -u)" = 0 ] || { echo "Must be run as root." >&2; exit 1; }
 
 FORCE=""
 CHECKONLY=""
