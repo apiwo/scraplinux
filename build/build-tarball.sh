@@ -145,6 +145,17 @@ unpack_pkg() {
 # target's own binaries.
 BASE_EXPLICIT="glibc toybox busybox zsh doas e2fsprogs util-linux dosfstools onetrueawk xz libarchive"
 BASE_SET=$(pkg_deps $BASE_EXPLICIT)
+# e2fsprogs depends on util-linux-libs, which BASE_EXPLICIT's own util-linux
+# already replaces (same libmount/libblkid/libuuid, see its recipe) - this
+# walk has no idea what replaces= means, so both ended up in the set and
+# both got unpacked, each claiming ownership of the same files in the
+# tarball's own alpm database. Drop the one util-linux already covers.
+# BASE_SET is newline-separated (pkg_deps prints one name per line), not
+# space-separated - grep -x, not a case glob built on spaces.
+if printf '%s\n' $BASE_SET | grep -qx util-linux && \
+   printf '%s\n' $BASE_SET | grep -qx util-linux-libs; then
+	BASE_SET=$(printf '%s\n' $BASE_SET | grep -vx util-linux-libs)
+fi
 printf '   %s requested, %s with dependencies\n' \
 	"$(printf '%s\n' $BASE_EXPLICIT | wc -l | tr -d ' ')" \
 	"$(printf '%s\n' $BASE_SET | wc -l | tr -d ' ')"
