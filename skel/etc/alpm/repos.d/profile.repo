@@ -1,6 +1,5 @@
 # Arctic Linux - profile repository
-# Profile packages install a whole working setup and configure it, rather than
-# being a plain package. alpm warns before installing one.
+# Whole-environment meta packages - a desktop, an audio stack, in one name.
 name = profile
 url = https://raw.githubusercontent.com/apiwo/arctic-linux-pkgs/main/ALL/profile
 mirror = https://raw.githubusercontent.com/apiwo/arctic-linux-pkgs/main/ALL/profile

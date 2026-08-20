@@ -1,24 +1,39 @@
 #!/bin/sh
-# Arctic Linux - reconnect wireless from a saved wifi-connect profile on boot.
+# Arctic Linux - reconnect wireless from network.conf on boot.
 #
-# wifi-connect already writes a real, working wpa_supplicant config to
-# /etc/wpa_supplicant-<iface>.conf every time it associates - that file is
-# not a live-image-only artifact, it lands on the installed system too (see
-# arctic-install carrying it across in configure_network()). What was
-# missing was anything that read it back on a normal boot: the live image
-# gets its wireless from wifi-connect being run by hand, and a fresh install
-# had no equivalent at all, so a laptop that connected once during install
-# came up with no wireless on every boot after. This is that equivalent -
-# the same wpa_supplicant + udhcpc pairing wifi-connect itself uses, just
-# driven from a saved file instead of a prompt.
+# wifi-connect writes a saved SSID/PSK to /etc/arctic/network.conf every
+# time it associates. This regenerates a real wpa_supplicant config from
+# that and brings the link up the same way wifi-connect's own connect()
+# does - the same wpa_supplicant + udhcpc pairing, just driven from a
+# saved file instead of a prompt. rc.boot starts this backgrounded and
+# does not wait on it: the login prompt is never held up by an
+# association or a DHCP lease.
 NAME=wifi
 CTRL_DIR=/run/wpa_supplicant
+CONF_LIB=/etc/arctic/conf.lib
+NET_CONF=/etc/arctic/network.conf
+
+conf_escape() {
+	printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+}
 
 start() {
+	[ -f "$CONF_LIB" ] && [ -f "$NET_CONF" ] || return 0
+	# shellcheck disable=SC1090
+	. "$CONF_LIB"
+
+	ssid=$(conf_get1 "$NET_CONF" wifi.ssid)
+	[ -n "$ssid" ] || return 0
+	psk=$(conf_get1 "$NET_CONF" wifi.psk)
+	iface=$(conf_get1 "$NET_CONF" wifi.iface)
+	[ -n "$iface" ] || iface=$(for i in /sys/class/net/*; do
+		[ -d "$i/wireless" ] && { printf '%s\n' "${i##*/}"; break; }
+	done)
+	[ -n "$iface" ] && [ -d "/sys/class/net/$iface" ] || return 0
+
 	# Same reason as wifi-connect's own unblock_rfkill(): a soft-blocked
 	# radio still creates its netdev, so this would otherwise look like a
-	# clean boot that just never found the network - not a hard failure of
-	# anything, an association that never had a working radio to run on.
+	# clean boot that just never found the network.
 	for k in /sys/class/rfkill/rfkill*; do
 		[ -d "$k" ] || continue
 		[ "$(cat "$k/type" 2>/dev/null)" = wlan ] || continue
@@ -26,52 +41,53 @@ start() {
 		echo 0 >"$k/soft" 2>/dev/null || :
 	done
 
-	_started=0
-	for conf in /etc/wpa_supplicant-*.conf; do
-		[ -f "$conf" ] || continue
-		iface=${conf#/etc/wpa_supplicant-}
-		iface=${iface%.conf}
-		[ -d "/sys/class/net/$iface" ] || continue
+	conf="/etc/wpa_supplicant-$iface.conf"
+	: >"$conf"; chmod 600 "$conf"
+	mkdir -p "$CTRL_DIR" 2>/dev/null
+	{
+		printf 'ctrl_interface=%s\n' "$CTRL_DIR"
+		printf 'ctrl_interface_group=0\n'
+		printf 'update_config=1\n'
+		printf 'network={\n'
+		printf '\tssid="%s"\n' "$(conf_escape "$ssid")"
+		if [ -n "$psk" ]; then
+			printf '\tpsk="%s"\n' "$(conf_escape "$psk")"
+		else
+			printf '\tkey_mgmt=NONE\n'
+		fi
+		printf '}\n'
+	} >"$conf"
 
-		ip link set lo up 2>/dev/null
-		ip link set "$iface" up 2>/dev/null
+	ip link set lo up 2>/dev/null
+	ip link set "$iface" up 2>/dev/null
 
-		# Same reason as wifi-connect's own connect(): a leftover process
-		# from an earlier boot or an earlier run of wifi-connect fighting
-		# a fresh one over the same nl80211 device fails both.
-		pkill -f "wpa_supplicant.*-i *$iface" 2>/dev/null
+	# Same reason as wifi-connect's own connect(): a leftover process from
+	# an earlier boot fighting a fresh one over the same nl80211 device
+	# fails both.
+	pkill -f "wpa_supplicant.*-i *$iface" 2>/dev/null
+	sleep 1
+
+	wpa_supplicant -B -i "$iface" -c "$conf" >/dev/null 2>&1
+
+	# wpa_supplicant -B returns the moment it has forked, well before
+	# association - the exact same race wifi-connect's own connect()
+	# guards against. Give it a real window rather than assuming.
+	_n=0
+	while [ "$_n" -lt 15 ]; do
+		[ "$(cat "/sys/class/net/$iface/carrier" 2>/dev/null)" = 1 ] && break
+		_n=$((_n + 1))
 		sleep 1
-
-		mkdir -p "$CTRL_DIR" 2>/dev/null
-		wpa_supplicant -B -i "$iface" -c "$conf" >/dev/null 2>&1
-
-		# wpa_supplicant -B returns the moment it has forked, well before
-		# association - the exact same race wifi-connect's own connect()
-		# guards against. Give it a real window rather than assuming.
-		_n=0
-		while [ "$_n" -lt 15 ]; do
-			[ "$(cat "/sys/class/net/$iface/carrier" 2>/dev/null)" = 1 ] && break
-			_n=$((_n + 1))
-			sleep 1
-		done
-		[ "$(cat "/sys/class/net/$iface/carrier" 2>/dev/null)" = 1 ] || continue
-
-		udhcpc -b -i "$iface" -p "/run/udhcpc.$iface.pid" \
-			-s /usr/share/udhcpc/default.script >/dev/null 2>&1
-		_started=1
 	done
-	[ "$_started" = 1 ] || return 0
+	[ "$(cat "/sys/class/net/$iface/carrier" 2>/dev/null)" = 1 ] || return 0
 
-	# Same reason as rc.d/network: udhcpc -b forks immediately, so without
-	# this the service reports success while the interface is still
-	# addressless.
+	udhcpc -b -i "$iface" -p "/run/udhcpc.$iface.pid" \
+		-s /usr/share/udhcpc/default.script >/dev/null 2>&1
+
+	# udhcpc -b forks immediately, so without this the service reports
+	# success while the interface is still addressless.
 	_n=0
 	while [ "$_n" -lt 12 ]; do
-		for conf in /etc/wpa_supplicant-*.conf; do
-			[ -f "$conf" ] || continue
-			iface=${conf#/etc/wpa_supplicant-}; iface=${iface%.conf}
-			ip -4 addr show dev "$iface" 2>/dev/null | grep -q 'inet ' && return 0
-		done
+		ip -4 addr show dev "$iface" 2>/dev/null | grep -q 'inet ' && return 0
 		sleep 1
 		_n=$((_n + 1))
 	done

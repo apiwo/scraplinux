@@ -57,12 +57,12 @@ find_bootdir() {
 
 BOOTDIR=$(find_bootdir) || { echo "arctic-boot-generations: no boot directory found" >&2; exit 1; }
 CONF="$BOOTDIR/limine.conf"
-[ -f "$CONF" ] || { echo "arctic-boot-generations: no $CONF - run arctic-boot-strap first" >&2; exit 1; }
+[ -f "$CONF" ] || { echo "arctic-boot-generations: no $CONF - run arctic-rebuild first" >&2; exit 1; }
 
 # Reuse the exact kernel path and command line the main entry already uses,
 # so a generation entry differs from it only by arctic.generation=N. Parsing
 # it back out of limine.conf rather than recomputing it means these cannot
-# drift apart from whatever arctic-boot-strap decided.
+# drift apart from whatever arctic-rebuild decided.
 kpath=$(awk '/^[[:space:]]*kernel_path:/{sub(/^[^:]*:[[:space:]]*/,""); print; exit}' "$CONF")
 kcmd=$(awk '/^[[:space:]]*kernel_cmdline:/{sub(/^[^:]*:[[:space:]]*/,""); print; exit}' "$CONF")
 mods=$(awk '/^[[:space:]]*module_path:/{print}' "$CONF")
@@ -109,7 +109,7 @@ awk -v e="$END" 'f{print} $0==e{f=1}' "$CONF" >>"$tmp"
 mv -f "$tmp" "$CONF"
 
 # Older Limine reads limine.cfg; keep the two in step the same way
-# arctic-boot-strap does.
+# arctic-rebuild does.
 if [ -f "$BOOTDIR/limine.cfg" ]; then
 	sed 's|^/Arctic|:Arctic|; s|^    \([a-z_]*\): |    \1=|' "$CONF" \
 		>"$BOOTDIR/limine.cfg" 2>/dev/null || :

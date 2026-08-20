@@ -1,0 +1,67 @@
+# Arctic Linux - shared reader/writer for the declarative files under
+# /etc/arctic/ (pkgs.conf, network.conf, users.conf, services.conf,
+# hardware.conf, identity.conf). One grammar for all of them, so nothing
+# needs a `. file` shell-source - no quoting/injection footgun - just to
+# read a value something else wrote:
+#
+#   block.name[
+#   value one per line
+#   another value
+#   ]
+#
+#   another.block[
+#   value
+#   ]
+#
+#   ;;
+#
+# The trailing lone ";;" line is a hard end-of-file sentinel: a reader can
+# check for it and tell a truncated/interrupted write from a genuinely
+# empty file.
+#
+# shellcheck shell=sh disable=SC2039
+
+# conf_get <file> <block.name>  -  one value per line on stdout
+conf_get() {
+	[ -f "$1" ] || return 0
+	awk -v want="$2[" '
+		$0 == want { grab=1; next }
+		grab && $0 == "]" { grab=0; next }
+		grab && $0 ~ /^\/\// { next }
+		grab { print }
+	' "$1"
+}
+
+# conf_get1 <file> <block.name>  -  first value only, for single-value blocks
+conf_get1() {
+	conf_get "$1" "$2" | head -n1
+}
+
+# conf_set <file> <block.name>  -  reads new values from stdin, one per
+# line, and rewrites just that block in place. Creates the block (and the
+# file, and its trailing ;;) if either does not exist yet. Every other
+# block, and the trailing ;;, are passed through unchanged.
+conf_set() {
+	_cs_file=$1 _cs_block=$2
+	_cs_new=$(cat)
+	[ -f "$_cs_file" ] || printf '\n;;\n' >"$_cs_file"
+	awk -v block="$_cs_block[" -v newvals="$_cs_new" '
+		BEGIN { n = split(newvals, arr, "\n") }
+		function emit() {
+			print block
+			for (i = 1; i <= n; i++) if (arr[i] != "") print arr[i]
+			print "]"
+		}
+		$0 == block { emit(); skip = 1; seen = 1; next }
+		skip && $0 == "]" { skip = 0; next }
+		skip { next }
+		/^;;$/ && !seen { emit(); print ""; seen = 1 }
+		{ print }
+		END { if (!seen) { emit(); print ""; print ";;" } }
+	' "$_cs_file" >"$_cs_file.new" && mv "$_cs_file.new" "$_cs_file" && chmod 600 "$_cs_file"
+}
+
+# conf_set1 <file> <block.name> <value>  -  convenience for single-value blocks
+conf_set1() {
+	printf '%s\n' "$3" | conf_set "$1" "$2"
+}

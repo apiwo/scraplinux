@@ -85,7 +85,8 @@ pd=$PKGDIRS/arctic-base; rm -rf "$pd"
 mkdir -p "$pd/usr/share/arctic" "$pd/var/lib/arctic"
 cp -a "$SRCTREE/skel/etc" "$pd/etc"
 cp -a "$SRCTREE/skel/usr/." "$pd/usr/"
-rm -rf "$pd/etc/alpm"   # alpm owns those files
+rm -rf "$pd/etc/alpm"          # alpm owns those files
+rm -f "$pd/etc/busybox.conf"   # busybox owns that file
 chmod +x "$pd/etc/rc.boot" "$pd/etc/rc.shutdown" "$pd/etc/rc.d"/* "$pd/usr/bin"/*
 for f in "$SRCTREE"/branding/ascii/*; do
 	[ -f "$f" ] && install -Dm644 "$f" "$pd/usr/share/arctic/ascii/$(basename "$f")"

@@ -1,59 +1,54 @@
 # Arctic Linux
 
-**Arctic Linux - A1**
-
 glibc, LLVM, a BSD-style userland, busybox init, zsh, doas, and its own
-package manager (alpm).
+package manager (alpm). Installed by hand, the way Arch or LFS is - no
+guided installer, no ISO.
 
 Full docs: **[arctic-docs.apiwow.net](https://arctic-docs.apiwow.net)**
 
 ## Install
 
-Boot the ISO, edit the config, run one command:
+No ISO. Boot any live Linux, partition and format by hand, then:
 
 ```sh
-vi /etc/arctic/install.conf
-arctic-install
+tar -xJf arctic-linux-def-tarball.tar.xz -C /mnt
+/mnt/alpm-strap /mnt
+/mnt/usr/bin/genfstab /mnt >> /mnt/etc/fstab
+/mnt/arctic-chroot /mnt
 ```
 
-Set `A_DISK=/dev/sdX` in the config and that one command partitions,
-formats, mounts, installs, and sets up the bootloader. Leave it commented
-out and set `A_ROOT_PART=/dev/sdX2` instead to use partitions you made
-yourself. Either way, `arctic-install` shows what it is about to do and
-asks for confirmation before it touches anything.
+Inside chroot: `passwd`, `adduser <name>`, `alpm add arctic-base`,
+`alpm add arctic-<flavor>-kernel`, `alpm add limine`. Exit, then run
+`arctic-rebuild` as root to activate the kernel and write the bootloader
+config, and deploy it by hand (`limine bios-install /dev/sdX`, or copy the
+EFI binaries and register one with `efibootmgr`). Reboot.
+
+An OpenRC flavor of the tarball ships alongside the default (busybox
+init) one, with OpenRC already wired up as init instead.
+
+Full walkthrough, including partitioning and encryption:
+**[arctic-docs.apiwow.net](https://arctic-docs.apiwow.net)**
 
 ## Configure
 
-Everything in `install.conf` is commented out by default — uncomment what
-you want:
+The base tarball wires up only what boots the machine - devices, mounts,
+core init. Everything else (display manager, audio, desktop) is `alpm
+add` plus one file. Six small files under `/etc/arctic/` cover what used
+to be one big config:
 
-```sh
-A_DESKTOP=niri
-A_USER=you
-A_USERPASS=...
-A_ENCRYPT=yes
-A_INIT=nitro
-A_EXTRA=git tmux ripgrep
+```
+pkgs.conf       mirrors what's explicitly installed - never hand-edited
+network.conf    wifi-connect writes this; rc.d/wifi reads it back at boot
+users.conf      declared accounts, additive only
+services.conf   the enabled service list
+hardware.conf   gpu, microcode, bootloader, boot timeout
+identity.conf   hostname, timezone, locale, keymap
 ```
 
-One of them is not optional: root ships locked, so an install has to be
-given a way in. Set `A_ROOTPASS`, or `A_USER` with `A_USERPASS`, or
-authorise a key with `A_SSH=y` and `A_SSH_KEYS`. `arctic-install` refuses a
-config that sets none of them rather than producing a system nobody can log
-into.
-
-`A_INIT` takes **initialization** (the default — Arctic's own fork of nitro),
-busybox, openrc, sysvinit, runit, dinit or nitro. Each choice installs that
-init's own tools and nothing of the others'. Services are declared once in
-`/etc/rc.d` and translated into whichever init you pick, so `service start
-sshd` means the same thing on all of them.
-
-Once installed, the system stays declarative through
-`/etc/arctic/system.conf` + `arctic-rebuild`: list the packages and services
-that should exist, run `arctic-rebuild`, and the system matches the file.
+Edit one, then reconcile it:
 
 ```sh
-vi /etc/arctic/system.conf
+vi /etc/arctic/identity.conf
 arctic-rebuild
 ```
 
@@ -62,10 +57,11 @@ to clean up.
 
 ## Wireless
 
-On the installation image, run `wifi-connect` with no arguments: it scans,
-lists what is in range, asks which interface and which network, and takes the
-passphrase with the characters masked. An installed system uses NetworkManager
-(`doas nmtui`).
+`wifi-connect` with no arguments scans, lists what is in range, asks
+which interface and which network, and takes the passphrase with the
+characters masked. It remembers a successful connect in
+`/etc/arctic/network.conf`, so every boot after reconnects on its own,
+in the background, without holding up the login prompt.
 
 ## Packages
 

@@ -112,7 +112,7 @@ resolve() {
 	return 1
 }
 
-need_conf() { [ -f "$CONF" ] || die "no $CONF - run arctic-boot-strap first"; }
+need_conf() { [ -f "$CONF" ] || die "no $CONF - run arctic-rebuild first"; }
 
 cmd_list() {
 	run=$(running)

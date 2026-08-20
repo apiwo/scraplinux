@@ -1,14 +1,10 @@
 #!/bin/sh
 # Arctic Linux - bring up wired DHCP on whatever interface comes up.
 #
-# Live/installer image only. The installed system's networking (DHCP,
-# static, wifi) is NetworkManager's job now (see ports/main/networkmanager
-# and arctic-install's configure_network()) - arctic-install never enables
-# this service, only iso/mkiso does, for the live session itself. This
-# stays deliberately dumb: no wifi branch (that's `wifi-connect` on the live
-# image), no static branch (the live session has no config to read one
-# from) - just "find a wired interface, DHCP it", enough to have working
-# network out of the box before you've even looked at install.conf.
+# Deliberately dumb: no wifi branch (that's rc.d/wifi, reading
+# network.conf), no static config - just "find a wired interface, DHCP
+# it". A machine that wants a static address configures it by hand;
+# nothing here is meant to replace that.
 NAME=network
 
 pick_iface() {

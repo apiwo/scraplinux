@@ -180,14 +180,49 @@ good
 
 # --------------------------------------------------------------------- filesystems
 begin "Checking filesystems"
+# Not "fsck -A": that hands whatever /etc/fstab literally says - usually
+# UUID=... - straight to the per-type helper. e2fsck resolves that itself
+# via its own libblkid link; dosfstools' fsck.fat does not and just tries
+# to open the string "UUID=..." as a path, failing every single boot with
+# a separate FAT /boot (every UEFI install, every BIOS+Limine one) with
+# nothing more specific than "open: No such file or directory" and a
+# forced trip to the repair shell for a filesystem that was never
+# actually broken. Resolve every entry to a real device with findfs
+# first, the same way the initramfs itself has to for root=.
+fsck_all() {
+	_fa_extra=$1
+	_fa_rc=0
+	while read -r _fa_dev _fa_mnt _fa_type _fa_opts _fa_dump _fa_pass; do
+		case "$_fa_dev" in ''|\#*) continue ;; esac
+		[ "${_fa_pass:-0}" -gt 0 ] 2>/dev/null || continue
+		case "$_fa_dev" in
+		UUID=*|LABEL=*|PARTUUID=*) _fa_real=$(findfs "$_fa_dev" 2>/dev/null) ;;
+		*) _fa_real=$_fa_dev ;;
+		esac
+		[ -n "$_fa_real" ] || { _fa_real=$_fa_dev; }
+		# shellcheck disable=SC2086
+		fsck -t "$_fa_type" -a $_fa_extra "$_fa_real" 2>/dev/null
+		_fa_this=$?
+		# fsck's own exit codes: 0 clean, 1 errors corrected - both are a
+		# successful "-a" run, not something to act on. A dirty bit left
+		# over from any hard power-off is completely routine and fsck.fat
+		# fixes it on its own every time; treating exit 1 as a failure
+		# meant that ordinary, expected recovery sent every single boot
+		# after an unclean shutdown to the repair shell regardless. Only
+		# 4 and up ("errors left uncorrected" and worse) mean anything
+		# actually needs a human.
+		[ "$_fa_this" -ge 4 ] && [ "$_fa_this" -gt "$_fa_rc" ] && _fa_rc=$_fa_this
+	done </etc/fstab
+	return "$_fa_rc"
+}
 if [ -f /forcefsck ] || grep -q ' forcefsck' /proc/cmdline 2>/dev/null; then
-	fsck -A -T -a 2>/dev/null; rm -f /forcefsck
+	fsck_all -f; rm -f /forcefsck
 else
 	# Only drop to a repair shell when there is a console to type at. During
 	# sysinit stdin is not a terminal, so this would otherwise read EOF and
 	# fall straight through - or worse, block the whole boot before any
 	# service has started, with nothing on screen explaining why.
-	fsck -A -T -a -P 2>/dev/null || {
+	fsck_all "" || {
 		rc_log "fsck reported errors"
 		bad "fsck wants attention"
 		if [ -t 0 ] && [ -c /dev/console ]; then
@@ -335,17 +370,17 @@ done
 # each is not interleaved with another service's own output) - only the
 # actual work overlaps, not the reporting of it.
 #
-# network/wifi/NetworkManager specifically are not waited on at all here -
-# getty on the console is a respawn entry, not part of this sysinit script,
-# but busybox init still does not start it until sysinit exits, so waiting
-# on an association or a DHCP lease here meant the login prompt itself sat
+# network/wifi specifically are not waited on at all here - getty on the
+# console is a respawn entry, not part of this sysinit script, but busybox
+# init still does not start it until sysinit exits, so waiting on an
+# association or a DHCP lease here meant the login prompt itself sat
 # behind however long the radio took to come up, on every single boot,
 # whether or not anyone at the console cared about the network yet. They
 # still start in the first loop below like everything else; they are just
 # left out of the second loop that blocks on completion, and a detached
 # watcher reports how each one actually went into the boot log once it
 # finishes, asynchronously, after the prompt is already up.
-_svc_deferred=" network wifi NetworkManager "
+_svc_deferred=" network wifi "
 if [ -d /etc/arctic/services ]; then
 	mkdir -p /run/arctic/svc-out
 	: >/run/arctic/svc-pids

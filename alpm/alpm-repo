@@ -40,7 +40,16 @@ gen() {
 	} >"$tmp"
 
 	n=0
-	for f in "$d"/*.alpmz; do
+	# Fed in ascending version-release order (sort -V on the filename,
+	# which embeds both) so that when two builds of the same package sit
+	# in the directory at once, the later one processed - the actually
+	# newer one - is what ends up in the index. Without this, a plain
+	# directory-order pass indexed both as separate lines with the same
+	# name, and idx_lookup()'s "first match wins" picked whichever
+	# sorted first alphabetically - the older release, by accident,
+	# often enough that a rebuilt fix silently never reached anyone
+	# resolving that name.
+	for f in $(printf '%s\n' "$d"/*.alpmz | sort -V); do
 		[ -f "$f" ] || continue
 		pi=$(extract_pkginfo "$f") || { warn "$(basename "$f"): no .PKGINFO, skipped"; continue; }
 		echo "$pi" >"$tmp.pi"
@@ -56,11 +65,16 @@ gen() {
 		dsz=$(wc -c <"$f" | tr -d ' ')
 		sum=$(sha256 "$f")
 		printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-			"$nm" "$ver" "$rel" "$ar" "$dsz" "$isz" "$sum" "$dep" "$dsc" >>"$tmp"
-		n=$((n+1))
+			"$nm" "$ver" "$rel" "$ar" "$dsz" "$isz" "$sum" "$dep" "$dsc" >>"$tmp.raw"
 		printf '  %s+%s %s-%s-%s\n' "$A_MINT" "$C_R" "$nm" "$ver" "$rel"
 	done
 	rm -f "$tmp.pi"
+	n=0
+	if [ -f "$tmp.raw" ]; then
+		awk -F'\t' '{line[$1]=$0} END{for (k in line) print line[k]}' "$tmp.raw" >>"$tmp"
+		n=$(cut -f1 "$tmp.raw" | sort -u | wc -l | tr -d ' ')
+		rm -f "$tmp.raw"
+	fi
 	mv "$tmp" "$idx"
 
 	# A detached checksum so clients can spot a truncated index. It says

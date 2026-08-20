@@ -264,10 +264,6 @@ chmod 600 "$pd/etc/shadow"
 for d in ascii limine plasma wallpaper icons sddm misc; do
 	[ -d "$SRCTREE/branding/$d" ] && cp -a "$SRCTREE/branding/$d" "$pd/usr/share/arctic/"
 done
-install -Dm755 "$SRCTREE/installer/arctic-install"      "$pd/usr/bin/arctic-install"
-install -Dm755 "$SRCTREE/installer/arctic-boot-strap" "$pd/usr/bin/arctic-boot-strap"
-install -Dm755 "$SRCTREE/installer/arctic-chroot"     "$pd/usr/bin/arctic-chroot"
-install -Dm644 "$SRCTREE/installer/lib/tui.sh"        "$pd/usr/lib/arctic/tui.sh"
 emit "$pd" arctic-base 1.0.0 main \
 	"Arctic base configuration, init scripts and branding" "BSD-2-Clause" \
 	"https://github.com/apiwo/arctic-linux" "busybox toybox zsh doas alpm libxcrypt"

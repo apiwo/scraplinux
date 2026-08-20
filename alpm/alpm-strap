@@ -1,0 +1,32 @@
+#!/bin/sh
+# alpm-strap <target-root>  -  run once, right after extracting the base
+# tarball onto <target-root> and before anything else. alpm itself ships
+# already installed in the tarball; this only has to get fresh repo
+# indexes into the extracted tree so the first `alpm add` has something
+# to resolve against.
+#
+# shellcheck shell=sh disable=SC2039
+
+set -u
+T=${1:?usage: alpm-strap <target-root>}
+
+[ -x "$T/usr/bin/alpm" ] || {
+	echo "alpm-strap: $T doesn't look like an extracted Arctic tarball (no usr/bin/alpm)" >&2
+	exit 1
+}
+
+mkdir -p \
+	"$T/var/lib/alpm/local" "$T/var/lib/alpm/sync" \
+	"$T/var/lib/alpm/hold" "$T/var/lib/alpm/snapshots" \
+	"$T/var/cache/alpm/pkg" "$T/var/cache/alpm/src" "$T/var/cache/alpm/build"
+
+# libalpm.sh keeps ALPM_CONF/ALPM_REPOD host-absolute even under --root by
+# default - correct for the old installer, which ran from a live Arctic
+# session that already had real repo config at /etc/alpm. There is no such
+# host here: whatever booted this is some other live Linux with no
+# /etc/alpm at all, so the target's own copies have to be named explicitly.
+ALPM_ROOT="$T" \
+ALPM_CONF="$T/etc/alpm/alpm.conf" \
+ALPM_REPOD="$T/etc/alpm/repos.d" \
+ALPM_YES=1 \
+	"$T/usr/bin/alpm" fetch all

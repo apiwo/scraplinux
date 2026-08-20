@@ -17,9 +17,11 @@ didn't take; `arctic-shell` couldn't run anything it had just installed.
 That build is withdrawn everywhere it was listed. Reset to a plain `A1`:
 no qualifier claiming more verification than this has actually had.
 
-Whatever the label is, one string is what the ISO filename, the volume id,
-`/etc/arctic-release`, the boot banner and `arcticfetch` all show - nothing
-spells its own variation of it.
+This round moved to tarball-only distribution - no ISO, no guided
+installer, manual partitioning/format/chroot instead. Tarball filenames
+carry no version (`arctic-linux-def-tarball.tar.xz`, stable across
+releases); the version lives in the release tag and in
+`/etc/arctic-release`, which `arcticfetch` reads.
 
 ## Core system
 
@@ -53,29 +55,26 @@ spells its own variation of it.
 - Kernel 7.1.3 (Gentoo dist-kernel config + Arctic delta: no BTF/DWARF, no
   module signing, storage/USB/squashfs/overlayfs in-tree). Flavors: base,
   libre, small (monolithic, no module loader), lts, rt, hardened.
-- Arctic-minimal ISO, hybrid BIOS+UEFI, boot-tested in QEMU: Limine → kernel →
-  initramfs → squashfs+tmpfs overlay → switch_root → busybox init → zsh.
+- Two base tarballs, no ISO: `arctic-linux-def-tarball.tar.xz` (busybox
+  init) and an OpenRC flavor with OpenRC already wired up as init instead.
+  Extract onto a formatted target, `alpm-strap` it, chroot in, `alpm add`
+  the rest by hand.
 - alpm: fetch, dependency resolution, ins/reins/del/del+deps with orphan
   cleanup, ins -nomod + commit for staged installs, verify, rollback
   (btrfs-snapshot and file-replace based), doctor, why, owns, search, stats.
   POSIX sh, and it stays that way.
-- **Networking**: NetworkManager + nmtui, replacing iwd/iwctl entirely
-  (`ports/main/networkmanager`, built without systemd/selinux/polkit -
-  `doas nmtui` is how you reconfigure it as a regular user). wpa_supplicant
-  is its wifi backend, not a competing option any more. `arctic-install`
-  writes connection profiles straight into
-  `/etc/NetworkManager/system-connections/*.nmconnection` for A_NET=wifi/
-  static; A_NET=dhcp/offline leaves NetworkManager to auto-configure a wired
-  link itself, same as the old rc.d/network default did. The live/installer
-  image does **not** carry NetworkManager - too big a dependency tree to
-  hand-build this early - it ships wpa_supplicant, `iw` and `wifi-connect`
-  instead, which is enough to get an install-time link up. `wifi-connect`
-  with no arguments scans, lists what is in range, asks which interface and
-  which network, and reads the passphrase with asterisks. It needed an SSID
-  typed exactly right from memory before, because `iw` was never on the image
-  and nothing else there could list a network.
-  rc.d/network still exists but is live-image-only now (wired DHCP, no
-  wifi/static branches); installed systems never enable it.
+- **Networking**: one stack, live and installed alike - wpa_supplicant +
+  udhcpc, driven by `wifi-connect`. No NetworkManager anywhere in the base
+  system; two networking stacks that could disagree about which one owned
+  the radio is gone as a category of bug, not just a specific instance of
+  one. `wifi-connect` with no arguments scans, lists what is in range, asks
+  which interface and which network, reads the passphrase with asterisks,
+  and on a successful connect writes the SSID/PSK/interface to
+  `/etc/arctic/network.conf`. `rc.d/wifi` reads that back on every boot and
+  reconnects - started in the background by rc.boot, never waited on, so
+  an association or a DHCP lease never holds up the login prompt.
+  `rc.d/network` handles plain wired DHCP the same way, no wifi/static
+  branches of its own.
 
 ## Packages and repositories
 
@@ -132,43 +131,59 @@ disabled. GitHub is the only mirror that is current. Either the quota goes
 up or the binaries stop being mirrored - they are served from GitHub in
 either case, which is what `/etc/alpm/repos.d` points at.
 
-## Installer
+## Install
 
-Fully declarative, no menus. Edit `/etc/arctic/install.conf`, run
-`arctic-install`. Setting `A_DISK=/dev/sdX` partitions, formats, installs
-the base system and the bootloader in one shot, after a confirmation
-prompt; leaving it unset and setting `A_ROOT_PART`/`A_BOOT_PART` instead
-uses partitions made ahead of time. Either way there is no target
-directory to mount and keep in sync by hand — that is internal to the
-tool now.
+No ISO, no guided installer - `arctic-install` and `arctic-boot-strap` are
+both gone outright, no compat stub. Install is manual, KISS-Linux-style:
+boot any live Linux, partition and format by hand, extract a base
+tarball onto the target, bootstrap alpm into it, chroot in, install the
+rest with ordinary `alpm add`, run one finishing command, deploy the
+bootloader by hand, reboot. See the main site's install guide for the
+exact command sequence.
 
-A config has to leave a way in. root ships locked and a user created without
-a password is locked as well, so `arctic-install` refuses a config that sets
-neither `A_ROOTPASS` nor `A_USERPASS` nor an authorised ssh key - the
-alternative is an install that finishes cleanly and cannot be logged into,
-which is only discovered after the medium has been put away.
+Two new small tools carry the weight the old installer used to:
 
-`arctic-install` and `arctic-boot-strap` are the only install-time
-binaries. The old interactive `arctic-conf`/`arctic-boot-conf` TUI tools
-are gone — partitioning logic moved into `arctic-install` itself, driven
-by the config file instead of menu answers.
+- `alpm-strap <target-root>` — run once, right after extracting the
+  tarball. alpm itself ships pre-installed in the tarball; this only
+  syncs fresh repo indexes into the extracted tree, passing
+  `ALPM_CONF`/`ALPM_REPOD` explicitly rather than relying on their
+  default host-absolute paths (correct for the old installer, which ran
+  from a live Arctic session that already had real repo config at
+  `/etc/alpm` - there is no such host here, whatever booted this tarball
+  is some other live Linux with no `/etc/alpm` at all).
+- `genfstab <target-root>` — its own tiny package (`alpm add genfstab`),
+  not bundled raw. Writes `/etc/fstab` from `/proc/mounts`, same
+  UUID-first logic the old installer's `genfstab()` had (never
+  `PARTUUID=` - the initramfs resolves `root=` with busybox `findfs`,
+  which only understands `LABEL=`/`UUID=`). Has to run before chroot, not
+  after: it reads the outer mount table, which a chroot has no view of
+  without `/proc` bind-mounted first.
 
-Declarative system management on top of that, once installed:
+`arctic-chroot` is unchanged (still bind-mounts `/proc /sys /dev /run`,
+still has the chroot backspace fix), just relocated out of the deleted
+`installer/` directory into the tarball's own bundled tools.
 
-- `arctic-rebuild` — reconciles the running system to `/etc/arctic/system.conf`
-  (installs what's newly listed, removes what's no longer listed, same
-  relationship NixOS's `configuration.nix` has to `nixos-rebuild switch`).
-  Covers identity, user accounts, packages and services as well as
-  networking (`SYS_NET_MODE` dhcp/static/wifi, writing the same
-  NetworkManager keyfiles `arctic-install` does), the graphics driver and
-  microcode (`SYS_GPU`/`SYS_MICROCODE`, `auto` resolving the same way
-  install time does), and the nonfree-repo flag - a declared bootloader
-  that doesn't match the running one is reported, not switched. Every
-  successful run snapshots and records a generation, so `arctic-generation
-  switch`/the boot menu can put a bad rebuild back. `alpm system upgrade`
-  runs this at the end, so a package upgrade and a config change converge
-  through one command. First run with an empty config seeds it from what's
-  actually installed instead of removing everything.
+Declarative system management, once installed - now six small files
+under `/etc/arctic/` instead of one big `system.conf`, each with one job:
+`pkgs.conf` (a pure mirror of what's explicitly installed, kept in step
+by alpm itself - never a reconcile target, which is what once let a
+system upgrade quietly remove hand-installed packages), `network.conf`
+(written by `wifi-connect` on a successful connect, read back by
+`rc.d/wifi` at every boot), `users.conf`, `services.conf`,
+`hardware.conf` (gpu/microcode/bootloader/boot timeout), `identity.conf`
+(hostname/timezone/locale/keymap). See `conf.lib` for the file format - a
+bracketed block grammar, no shell-sourcing needed to read a value.
+
+- `arctic-rebuild` — reconciles the running system against those five
+  declarative files (never `pkgs.conf` - see above). Also does what
+  `arctic-boot-strap` used to do for an already-installed system:
+  activates any kernel package still marked `-nomod` from a chroot
+  install (`alpm commit`), and writes `limine.conf`/`grub.cfg` from the
+  real `/etc/fstab`/`/etc/crypttab` - never runs the actual deploy
+  command, that stays manual. A declared bootloader that doesn't match
+  the one actually installed is reported, not switched. Every successful
+  run snapshots and records a generation. First run on an empty file
+  seeds it from what's actually there instead of wiping it.
 - `arctic-shell [--network] [--keep] <pkgs> [-- cmd | - cmd]` — ephemeral
   package environments, content-addressed by package set so the same request
   reuses a previous build. Every invocation also sweeps the cache directory
@@ -177,6 +192,13 @@ Declarative system management on top of that, once installed:
   finds with no live process still holding it.
 - `arctic gc` — prunes the package cache, orphaned deps, and unused shell
   environments.
+
+Networking has one stack now, not two: no NetworkManager anywhere in the
+base system. `wifi-connect` (wpa_supplicant + udhcpc) is it, live and
+installed alike - one code path instead of a live-only tool and an
+installed-only daemon that could disagree about which one owned the
+radio, which was the actual cause of wifi settings not carrying across
+an install and of some of the slow-boot reports.
 
 ## Init systems
 

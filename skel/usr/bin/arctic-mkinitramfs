@@ -15,11 +15,11 @@
 #
 # alpm calls this after every kernel install and after installing a driver
 # that touches the boot path (see alpm's tx handling and
-# ports/nonfree/nvidia-drivers/install); arctic-install calls it once at the
-# end of a fresh install. All of those call sites already guard with
-# `have arctic-mkinitramfs`, so before this existed they silently did
-# nothing - which is why a from-scratch encrypted install could not
-# actually boot.
+# ports/nonfree/nvidia-drivers/install); it is also run by hand, inside
+# chroot, right after `alpm add` on a fresh manual install. All call sites
+# already guard with `have arctic-mkinitramfs`, so before this existed
+# they silently did nothing - which is why a from-scratch encrypted
+# install could not actually boot.
 # shellcheck shell=sh disable=SC2039
 
 set -u
@@ -81,8 +81,9 @@ done
 # support Arctic's kernel config leaves as modules instead of building in;
 # everything else it needs - device-mapper itself, AES, CBC, XTS, SHA256 -
 # is already compiled directly into the kernel) if something actually asked
-# for it. crypttab with a real (non-comment) line is arctic-install's own
-# signal that the target has an encrypted volume.
+# for it. crypttab with a real (non-comment) line is the signal that the
+# target has an encrypted volume - written by hand, same as the rest of
+# /etc on a manual install.
 NEED_LUKS=0
 if [ -s /etc/crypttab ] && grep -qv '^[[:space:]]*#\|^[[:space:]]*$' /etc/crypttab 2>/dev/null; then
 	if cs=$(command -v cryptsetup); then
@@ -149,10 +150,10 @@ UUID=*|PARTUUID=*|LABEL=*|PARTLABEL=*)
 		sleep 1; n=\$((n+1))
 	done
 	# findfs implements LABEL= and UUID= and nothing else, so a PARTUUID=
-	# spec - which is what every install before this wrote - never resolves
-	# and the machine stops here. arctic-install writes the root filesystem
-	# with the label below, so there is one more thing worth trying before
-	# giving up on a system that is otherwise perfectly installed.
+	# spec never resolves and the machine stops here - genfstab itself
+	# never writes one, but an fstab edited or carried over by hand still
+	# can. One more thing worth trying before giving up on a system that
+	# is otherwise perfectly installed.
 	if [ -z "\$_dev" ]; then
 		case "\$ROOT" in
 		PARTUUID=*|PARTLABEL=*)

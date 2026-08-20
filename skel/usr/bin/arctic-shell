@@ -112,17 +112,18 @@ if [ ! -d "$ENVROOT/usr" ]; then
 	note "building it - this only happens once per package set"
 	mkdir -p "$ENVROOT/var/lib/alpm/sync"
 	# ALPM_DB follows ALPM_ROOT, so a scratch root starts with no sync index
-	# of its own - copy the one this session already has, same as
-	# arctic-install does before its first target_alpm call. ALPM_CONF/
-	# ALPM_REPOD stay host-absolute regardless (see libalpm.sh), so the repo
+	# of its own - copy the one this session already has, same job
+	# alpm-strap does for a freshly extracted tarball. ALPM_CONF/ALPM_REPOD
+	# stay host-absolute regardless (see libalpm.sh), so the repo
 	# definitions themselves do not need copying in, only the index.
 	cp -a /var/lib/alpm/sync/. "$ENVROOT/var/lib/alpm/sync/" 2>/dev/null || :
 	# Arctic is merged-/usr - /bin, /sbin, /lib are symlinks into usr/, and
 	# /lib64 -> usr/lib (not usr/lib64 - glibc has no separate lib64 here,
 	# but the host gcc used for every native build still bakes in
 	# /lib64/ld-linux-x86-64.so.2 as the interpreter regardless). A plain
-	# package install has nowhere to create these; arctic-install sets them up
-	# by hand for the same reason before its first install.
+	# package install has nowhere to create these; set them up by hand for
+	# the same reason a fresh manual install does before its first
+	# `alpm add`.
 	mkdir -p "$ENVROOT/usr/bin" "$ENVROOT/usr/sbin" "$ENVROOT/usr/lib"
 	for l in bin sbin lib; do
 		[ -e "$ENVROOT/$l" ] || ln -s "usr/$l" "$ENVROOT/$l"

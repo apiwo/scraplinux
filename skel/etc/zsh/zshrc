@@ -204,12 +204,5 @@ ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=238'
 # Anything dropped in here is picked up automatically.
 for f in /etc/zsh/zshrc.d/*.zsh(N); do source $f; done
 
-# No greeting here any more. It printed a wifi-connect reminder on the first
-# shell of a login session - meant for the live image only, gated on
-# /etc/arctic-release having no INSTALLED= line - but wifi-connect is not
-# the installed system's wireless tool (NetworkManager is, unconditionally,
-# as of a2.4's PKGS_NET; see warn_if_networkmanager in wifi-connect for what
-# happens when the two fight over the same radio) and the gate printed it
-# there anyway often enough that the honest fix is not printing it at all.
-# The live image's arctic-welcome (iso/mkiso) covers the same ground already,
-# once, before a shell is even reached.
+# No greeting here any more. arctic-firstboot covers the same ground once,
+# on the first real boot, rather than printing something on every shell.

@@ -1,8 +1,8 @@
 #!/bin/sh
-# The system message bus. NetworkManager (and so nmtui/nmcli) cannot start
-# without it - it registers itself on this bus, and connecting to a bus that
-# was never started is exactly the "failed to initialize dbus" error this
-# used to give back when iwd was the one registering.
+# The system message bus. pipewire, bluetoothd and the display managers
+# register themselves on it at startup - connecting to a bus that was
+# never started is exactly the "failed to initialize dbus" error this
+# used to give back.
 #
 # dbus-daemon --system refuses to start at all without a machine ID at
 # /etc/machine-id (or /var/lib/dbus/machine-id) - nothing on Arctic ever

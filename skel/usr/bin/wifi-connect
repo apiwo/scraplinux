@@ -1,10 +1,12 @@
 #!/bin/sh
-# wifi-connect - bring up WPA2-Personal wireless on the live/installer image.
+# wifi-connect - bring up WPA2-Personal wireless, and remember it.
 #
-# NetworkManager + nmtui is the installed system's real wireless story (see
-# ports/main/networkmanager), but that is a much bigger dependency tree than
-# the live bootstrap stage builds - wpa_supplicant alone is enough to get an
-# install-time link up.
+# The only wireless tool Arctic has - there is no NetworkManager here, on
+# purpose: one wpa_supplicant + udhcpc path, live before install and every
+# boot after it, instead of two stacks that can disagree about which one
+# owns the radio. A successful connect is written to network.conf; rc.boot
+# reads that back to reconnect at every boot, in the background, without
+# holding up login the way a D-Bus-activated service would.
 #
 #   wifi-connect                        pick an interface and a network
 #   wifi-connect <ssid> <psk> [iface]   connect without being asked anything
@@ -16,10 +18,9 @@
 # possible to see that a key press registered. Typing an SSID exactly right
 # from memory, on a machine with no other network, was the previous way in.
 #
-# Enterprise/802.1X networks are not supported here - wpa_supplicant is built
-# WPA2-Personal only on the live image, with no TLS backend. Use a wired
-# connection or a phone hotspot for those and set 802.1X up properly after
-# install, through NetworkManager.
+# Enterprise/802.1X networks are not supported here - wpa_supplicant is
+# built WPA2-Personal only, with no TLS backend. Use a wired connection or
+# a phone hotspot for those.
 # shellcheck shell=sh disable=SC2039
 set -u
 
@@ -33,17 +34,16 @@ say()  { printf '%s::%s %s\n' "$TEAL$BOLD" "$R" "$*"; }
 ok()   { printf '  %s✓%s  %s\n' "$MINT$BOLD" "$R" "$*"; }
 oops() { printf '%s!!%s %s\n' "$RED$BOLD" "$R" "$*" >&2; }
 
-# The live image logs straight in as root, so wifi-connect never needed to
-# think about privilege - every command it runs (ip link, iw scan,
-# wpa_supplicant, udhcpc) genuinely does need root or CAP_NET_ADMIN, it just
-# always already had it. A real install's default login is the account
-# arctic-install created, not root, and none of those commands said so when
-# they failed: `iw scan` came back "command failed: Operation not permitted
-# (-1)", which parse_scan happily turned into an empty list and wifi-connect
+# A live/installer session logs straight in as root, so wifi-connect never
+# needed to think about privilege there - every command it runs (ip link,
+# iw scan, wpa_supplicant, udhcpc) genuinely does need root or
+# CAP_NET_ADMIN, it just always already had it. Run as a normal user on an
+# installed system, none of those commands said so when they failed:
+# `iw scan` came back "command failed: Operation not permitted (-1)",
+# which parse_scan happily turned into an empty list and wifi-connect
 # reported as "no networks found - move closer, or check the antenna" - a
-# permissions error with a diagnosis about signal strength. Re-exec through
-# doas once here instead, the same way the live image effectively always
-# ran this.
+# permissions error with a diagnosis about signal strength. Re-exec
+# through doas once here instead.
 if [ "$(id -u)" != 0 ]; then
 	if command -v doas >/dev/null 2>&1; then
 		exec doas "$0" "$@"
@@ -108,10 +108,9 @@ check_regdomain() {
 }
 
 # "no networks found" was one message for at least three different causes -
-# NetworkManager holding the radio (warn_if_networkmanager catches that one
-# specifically), a soft-blocked radio that still creates its netdev and
-# still fails to transmit, a regulatory domain that will not let it, or
-# genuinely nothing in range. Printing the actual state instead of a single
+# a soft-blocked radio that still creates its netdev and still fails to
+# transmit, a regulatory domain that will not let it, or genuinely nothing
+# in range. Printing the actual state instead of a single
 # guess is what turns the next report of this into "here is what rfkill and
 # iw actually said" instead of another screenshot of the same five words.
 diagnose_no_networks() {
@@ -167,28 +166,6 @@ check_iface() {
 	case "$1" in */*) oops "bad interface name: $1"; exit 1 ;; esac
 	[ -d "/sys/class/net/$1" ] || { oops "no such interface: $1"; exit 1; }
 	[ -d "/sys/class/net/$1/wireless" ] || { oops "$1 is not a wireless interface"; exit 1; }
-}
-
-# NetworkManager runs its own wpa_supplicant against a device the moment it
-# is managing it - unconditionally, on every installed system - and a raw
-# `iw scan` issued while that is happening fails on most drivers with
-# "Device or resource busy". The scan then returns nothing at all, which
-# used to be reported as "no networks found - move closer, or check the
-# antenna": a wrong diagnosis for two programs fighting over one radio,
-# not a signal problem. wifi-connect is the live image's tool; nmtui is the
-# installed system's, and this is skipped entirely where nmcli is not even
-# installed - the live image never has this conflict to warn about.
-warn_if_networkmanager() {
-	command -v nmcli >/dev/null 2>&1 || return 0
-	_nm=$(nmcli -t -f GENERAL.STATE device show "$1" 2>/dev/null)
-	case "$_nm" in
-	*unmanaged*|'') return 0 ;;
-	esac
-	oops "NetworkManager is already managing $1"
-	printf '     %sthis is the installed system'"'"'s wireless tool now - run%s\n' "$GREY" "$R"
-	printf '     %sdoas nmtui%s instead. wifi-connect and NetworkManager fighting over\n' "$BOLD" "$GREY"
-	printf '     the same radio is why a scan just found nothing.%s\n' "$R"
-	exit 1
 }
 
 # A scan takes a few seconds and says nothing while it runs, which reads as a
@@ -431,14 +408,16 @@ connect() {
 		[ -n "$gw" ] && ok "gateway   $gw"
 		ns=$(awk '/^nameserver/{printf "%s ", $2}' /etc/resolv.conf 2>/dev/null)
 		[ -n "$ns" ] && ok "resolver  $ns"
-		# The live image's own next step, not an installed system's - an
-		# already-installed machine telling you to go install it is exactly
-		# the "still acts like the live ISO" bug. /etc/arctic-release
-		# carries an INSTALLED= line the moment arctic-install has run;
-		# nothing does before that.
-		if ! grep -q '^INSTALLED=' /etc/arctic-release 2>/dev/null; then
-			printf '\n  %sReady. Edit /etc/arctic/install.conf, then run arctic-install.%s\n' \
-				"$GREY" "$R"
+
+		# Remember it. rc.boot reads this back to reconnect at every boot
+		# without needing wifi-connect run by hand again.
+		if [ -f /etc/arctic/conf.lib ]; then
+			# shellcheck disable=SC1091
+			. /etc/arctic/conf.lib
+			mkdir -p /etc/arctic 2>/dev/null
+			conf_set1 /etc/arctic/network.conf wifi.ssid "$_ssid"
+			conf_set1 /etc/arctic/network.conf wifi.psk "$_psk"
+			conf_set1 /etc/arctic/network.conf wifi.iface "$_if"
 		fi
 	else
 		oops "associated, but DHCP failed"
@@ -471,7 +450,6 @@ interactive() {
 		[ -n "$iface" ] || { oops "no interface number $pick"; exit 1; }
 	fi
 	check_iface "$iface"
-	warn_if_networkmanager "$iface"
 
 	# 2. what is in range
 	tmp=/tmp/.wifi-scan.$$
@@ -542,7 +520,6 @@ check_iface "$iface"
 
 if [ "$mode" = scan ] || [ "$mode" = list ]; then
 	command -v iw >/dev/null 2>&1 || { oops "iw is not installed - cannot scan (alpm add iw)"; exit 1; }
-	warn_if_networkmanager "$iface"
 	tmp=/tmp/.wifi-scan.$$
 	scan_with_spinner "$iface" "$tmp"
 	if [ "$mode" = list ]; then
