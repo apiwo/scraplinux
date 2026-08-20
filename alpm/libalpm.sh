@@ -3,7 +3,7 @@
 # POSIX sh only. Must run under busybox ash with no GNU utilities present.
 # shellcheck shell=sh disable=SC2039
 
-ALPM_VERSION="1.4.9"
+ALPM_VERSION="1.4.11"
 ALPM_FORMAT="2"
 
 : "${ALPM_ROOT:=/}"

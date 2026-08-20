@@ -169,6 +169,13 @@ done
 if [ "$FLAVOR" = openrc ]; then
 	step "adding openrc"
 	OPENRC_SET=$(pkg_deps openrc)
+	# openrc depends on util-linux-libs too - same fix as BASE_SET above,
+	# same reason: util-linux (already bundled via BASE_EXPLICIT) replaces
+	# it, and this walk still has no idea what replaces= means.
+	if printf '%s\n' $BASE_SET | grep -qx util-linux && \
+	   printf '%s\n' $OPENRC_SET | grep -qx util-linux-libs; then
+		OPENRC_SET=$(printf '%s\n' $OPENRC_SET | grep -vx util-linux-libs)
+	fi
 	for p in $OPENRC_SET; do
 		reason=dep
 		[ "$p" = openrc ] && reason=explicit
