@@ -44,7 +44,16 @@ WORK=$(mktemp -d /tmp/arctic-mkinitramfs.XXXXXX) || exit 1
 trap 'rm -rf "$WORK"' EXIT INT TERM
 
 mkdir -p "$WORK/bin" "$WORK/lib" "$WORK/dev" "$WORK/proc" "$WORK/sys" \
-	"$WORK/run" "$WORK/newroot" "$WORK/lib/modules/$KVER"
+	"$WORK/run" "$WORK/newroot" "$WORK/lib/modules/$KVER" "$WORK/usr/lib"
+# Every Arctic binary is linked against the merged-usr layout and carries
+# INTERP=/lib64/ld-linux-x86-64.so.2 regardless - but copylibs() below places
+# what it copies at the *resolved* path, /usr/lib, since that is what
+# Arctic's own ldd wrapper reports. Without this symlink the dynamic linker
+# busybox was actually built to ask for is nowhere in the initramfs, and the
+# kernel's exec of /init - a shebang into busybox - fails with ENOENT before
+# a single line of the script ever runs: "Failed to execute /init (error
+# -2)", indistinguishable from /init itself being missing.
+ln -sf usr/lib "$WORK/lib64"
 
 # Copy a dynamically linked binary's shared libraries in alongside it, using
 # Arctic's own ldd (a wrapper around the real loader's --list, since there is
