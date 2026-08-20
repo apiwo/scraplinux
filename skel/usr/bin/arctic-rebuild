@@ -5,8 +5,9 @@
 #   arctic-rebuild --dry-run   show what would change, do nothing
 #
 # The declarative core of Arctic: system.conf lists everything the machine
-# should be - hostname, timezone, locale, keymap, user accounts, packages
-# and services - and this makes the real system match it. This is the same
+# should be - hostname, timezone, locale, keymap, networking, the graphics
+# driver and microcode, user accounts, packages and services - and this
+# makes the real system match it. This is the same
 # relationship NixOS's configuration.nix has to `nixos-rebuild switch`, built
 # on top of alpm rather than replacing it: every install/removal here is a
 # completely ordinary `alpm add`/`alpm rem -d` call, snapshotted the exact
@@ -21,10 +22,12 @@
 #
 # What this does NOT do: user accounts are additive only (a declared user
 # that does not exist is created; an existing account not declared is left
-# alone rather than deleted - see SYS_USERS in system.conf for why). There
-# is also no "outputs" concept the way a Nix flake exposes reusable modules
-# and packages to other configurations - system.conf describes one machine,
-# not a library other machines import from.
+# alone rather than deleted - see SYS_USERS in system.conf for why). A
+# declared bootloader that does not match the running one is reported, not
+# switched - that means reinstalling boot sectors, which is `arctic-boot-strap`,
+# run by hand. There is also no "outputs" concept the way a Nix flake exposes
+# reusable modules and packages to other configurations - system.conf
+# describes one machine, not a library other machines import from.
 # shellcheck shell=sh disable=SC2039
 
 set -u
@@ -99,6 +102,30 @@ current_tz() {
 current_locale() { awk -F= '$1=="LANG"{print $2; exit}' /etc/locale.conf 2>/dev/null; }
 current_keymap() { awk -F= '$1=="KEYMAP"{print $2; exit}' /etc/vconsole.conf 2>/dev/null; }
 
+# Same detection install.conf's A_GPU=auto / A_MICROCODE=auto run at install
+# time, kept here so "auto" means the same thing again on every rebuild
+# rather than pinning whatever the machine had installed with.
+detect_gpu() {
+	if [ -d /sys/bus/pci/devices ]; then
+		v=$(lspci 2>/dev/null | grep -iE 'vga|3d|display')
+		case "$v" in
+		*NVIDIA*|*nVidia*)          echo nvidia ;;
+		*AMD*|*ATI*|*"Advanced Micro"*) echo amd ;;
+		*Intel*)                    echo intel ;;
+		*)                          echo generic ;;
+		esac
+	else
+		echo generic
+	fi
+}
+detect_microcode() {
+	case "$(grep -m1 '^vendor_id' /proc/cpuinfo 2>/dev/null)" in
+	*GenuineIntel*) echo intel-ucode ;;
+	*AuthenticAMD*) echo amd-ucode ;;
+	*)              echo none ;;
+	esac
+}
+
 SYS_DESCRIPTION=""
 SYS_HOSTNAME=""
 SYS_TZ=""
@@ -109,6 +136,18 @@ SYS_USERS=""
 SYS_SERVICES=""
 SYS_PACKAGES=""
 SYS_ALLOW_NONFREE="no"
+SYS_NET_MODE=""
+SYS_WIFI_SSID=""
+SYS_WIFI_PSK=""
+SYS_WIFI_IFACE=""
+SYS_IP=""
+SYS_GATEWAY=""
+SYS_DNS=""
+SYS_MAC_RANDOMIZE="no"
+SYS_GPU="auto"
+SYS_MICROCODE="auto"
+SYS_BOOTLOADER=""
+SYS_BOOT_TIMEOUT=""
 if [ -f "$CONF" ]; then
 	# shellcheck disable=SC1090
 	. "$CONF"
@@ -124,9 +163,15 @@ cur_svcs=$(enabled_services)
 # mean "wipe the hostname". A machine that already went through
 # arctic-install has this seeded from the install itself; this path mainly
 # covers a machine from before system.conf existed, or a deleted file.
+# SYS_GPU/SYS_MICROCODE/SYS_MAC_RANDOMIZE are not in this list on purpose,
+# the same reason SYS_ALLOW_NONFREE above is not: they default to a real,
+# non-empty value ("auto", "no") rather than to "unmanaged", so checking
+# them here would make every fresh system.conf read as non-empty before a
+# single field was ever actually set.
 all_empty=1
 for v in "$SYS_DESCRIPTION" "$SYS_HOSTNAME" "$SYS_TZ" "$SYS_LOCALE" "$SYS_LANG" \
-         "$SYS_KEYMAP" "$SYS_USERS" "$SYS_SERVICES" "$SYS_PACKAGES"; do
+         "$SYS_KEYMAP" "$SYS_USERS" "$SYS_SERVICES" "$SYS_PACKAGES" \
+         "$SYS_NET_MODE" "$SYS_BOOTLOADER"; do
 	[ -n "$(printf '%s' "$v" | tr -d '[:space:]')" ] && all_empty=0
 done
 
@@ -156,7 +201,15 @@ if [ "$all_empty" = 1 ]; then
 			[ -f "$r" ] || continue
 			grep -q '^enabled = yes' "$r" 2>/dev/null && nf=yes
 		done
-		printf 'SYS_ALLOW_NONFREE="%s"\n' "$nf"
+		printf 'SYS_ALLOW_NONFREE="%s"\n\n' "$nf"
+		# Left unmanaged on purpose: writing out whatever NetworkManager
+		# profile is already there risks putting a live password into a
+		# freshly-seeded file nobody asked to have it recorded. Set
+		# SYS_NET_MODE by hand to bring networking under this file.
+		printf 'SYS_NET_MODE=""\nSYS_WIFI_SSID=""\nSYS_WIFI_PSK=""\nSYS_WIFI_IFACE=""\n'
+		printf 'SYS_IP=""\nSYS_GATEWAY=""\nSYS_DNS=""\nSYS_MAC_RANDOMIZE="no"\n\n'
+		printf 'SYS_GPU="auto"\nSYS_MICROCODE="auto"\n\n'
+		printf 'SYS_BOOTLOADER=""\nSYS_BOOT_TIMEOUT=""\n'
 	} >"$CONF"
 	printf '  %sWrote %s. Nothing was changed this run.%s\n' "$GREY" "$CONF" "$R"
 	exit 0
@@ -192,11 +245,92 @@ for r in /etc/alpm/repos.d/*nonfree*.repo; do
 done
 [ "$SYS_ALLOW_NONFREE" != "$nf_now" ] && nonfree_change="$nf_now -> $SYS_ALLOW_NONFREE"
 
+# ------------------------------------------------------------------ networking
+# Same NetworkManager keyfiles arctic-install itself writes at
+# configure_network() - one profile per mode, rewritten only when what is
+# declared actually differs from what is already on disk. Nothing here
+# deletes a profile in a different mode: a machine with both a static
+# arctic-wired and a saved arctic-wifi profile keeps both, and NetworkManager
+# picks whichever is actually plugged in or in range, same as install time.
+NM_DIR=/etc/NetworkManager/system-connections
+wifi_change="" wired_change=""
+case "$SYS_NET_MODE" in
+wifi)
+	if [ -n "$SYS_WIFI_SSID" ]; then
+		f="$NM_DIR/arctic-wifi.nmconnection"
+		cur_ssid="" cur_psk=""
+		if [ -f "$f" ]; then
+			cur_ssid=$(awk -F= '$1=="ssid"{print $2}' "$f")
+			cur_psk=$(awk -F= '$1=="psk"{print $2}' "$f")
+		fi
+		{ [ "$cur_ssid" != "$SYS_WIFI_SSID" ] || [ "$cur_psk" != "$SYS_WIFI_PSK" ]; } && \
+			wifi_change="$SYS_WIFI_SSID"
+	fi
+	;;
+static)
+	if [ -n "$SYS_IP" ]; then
+		f="$NM_DIR/arctic-wired.nmconnection"
+		cur_ip=""
+		[ -f "$f" ] && cur_ip=$(awk -F= '$1=="address1"{print $2; exit}' "$f" | cut -d, -f1)
+		[ "$cur_ip" != "$SYS_IP" ] && wired_change="$SYS_IP"
+	fi
+	;;
+esac
+
+mac_change=""
+MAC_CONF=/etc/NetworkManager/conf.d/mac-randomization.conf
+case "$SYS_MAC_RANDOMIZE" in
+y|yes) [ -f "$MAC_CONF" ] || mac_change=on ;;
+*)     [ -f "$MAC_CONF" ] && mac_change=off ;;
+esac
+
+# ---------------------------------------------------------------------- hardware
+# Same detect_gpu/detect_microcode "auto" install.conf uses. nvidia is
+# deliberately not driven from here: install.conf's own A_GPU=nvidia path
+# also loads gcc-libs/libglvnd/gmake, writes modprobe config through
+# alpm-nvidia-configure and needs a reboot to take effect - real changes to
+# what the kernel loads, not a package list. That belongs to a fresh install
+# or to running alpm-nvidia-configure by hand, not to an unattended rebuild.
+gpu=$SYS_GPU; [ "$gpu" = auto ] && gpu=$(detect_gpu)
+gpu_pkgs="" gpu_note=""
+case "$gpu" in
+nvidia) gpu_note="nvidia driver reconciliation is not done here - see alpm-nvidia-configure" ;;
+*)
+	for p in mesa vulkan-loader; do
+		in_list "$p" $cur_pkgs || gpu_pkgs="$gpu_pkgs $p"
+	done
+	;;
+esac
+
+uc=$SYS_MICROCODE; [ "$uc" = auto ] && uc=$(detect_microcode)
+uc_pkg=""
+[ "$uc" != none ] && ! in_list "$uc" $cur_pkgs && uc_pkg=$uc
+
+# ------------------------------------------------------------------ bootloader
+# The bootloader itself is never switched from here: changing it means
+# reinstalling boot sectors on a disk that already has data on it, and doing
+# that unattended on every rebuild is a different risk profile than
+# installing a package. Detected and reported so drift is visible; applying
+# it is `arctic-boot-strap`, run by hand, the same as repairing one from a
+# chroot always has been.
+boot_note=""
+if [ -n "$SYS_BOOTLOADER" ]; then
+	cur_loader=""
+	[ -f /boot/limine.conf ] && cur_loader=limine
+	[ -f /boot/grub/grub.cfg ] && cur_loader=grub
+	[ -n "$cur_loader" ] && [ "$cur_loader" != "$SYS_BOOTLOADER" ] && \
+		boot_note="declared $SYS_BOOTLOADER, running $cur_loader - switch by hand with arctic-boot-strap"
+fi
+
 # --------------------------------------------------------------------- packages
 to_install=""
 for p in $SYS_PACKAGES; do
 	in_list "$p" $cur_pkgs || to_install="$to_install $p"
 done
+# The hardware profile's own packages are managed the same way as anything
+# else in SYS_PACKAGES from here on - one install list, one transaction.
+to_install="$to_install$gpu_pkgs"
+[ -n "$uc_pkg" ] && to_install="$to_install $uc_pkg"
 to_remove=""
 for p in $cur_pkgs; do
 	in_list "$p" $SYS_PACKAGES || to_remove="$to_remove $p"
@@ -210,8 +344,9 @@ for s in $cur_svcs; do
 	in_list "$s" $SYS_SERVICES || svc_disable="$svc_disable $s"
 done
 
-if [ -z "$to_install$to_remove$svc_enable$svc_disable$identity_changes$users_to_create$nonfree_change" ]; then
+if [ -z "$to_install$to_remove$svc_enable$svc_disable$identity_changes$users_to_create$nonfree_change$wifi_change$wired_change$mac_change" ]; then
 	note "already matches $CONF - nothing to do"
+	[ -n "$boot_note" ] && printf '  %s%s%s\n' "$AMB" "$boot_note" "$R"
 	exit 0
 fi
 
@@ -219,10 +354,15 @@ note "reconciling against $CONF"
 [ -n "$identity_changes" ]  && change "~" "identity:${identity_changes}"
 [ -n "$users_to_create" ]   && change "+" "create users:${users_to_create}"
 [ -n "$nonfree_change" ]    && change "~" "nonfree repos: $nonfree_change"
+[ -n "$wifi_change" ]       && change "~" "wifi profile: $wifi_change"
+[ -n "$wired_change" ]      && change "~" "static address: $wired_change"
+[ -n "$mac_change" ]        && change "~" "MAC randomization: $mac_change"
 [ -n "$to_install" ]        && change "+" "install:${to_install}"
 [ -n "$to_remove" ]         && change "-" "remove: ${to_remove}"
 [ -n "$svc_enable" ]        && change "+" "enable services: ${svc_enable}"
 [ -n "$svc_disable" ]       && change "-" "disable services:${svc_disable}"
+[ -n "$gpu_note" ]          && printf '  %s%s%s\n' "$AMB" "$gpu_note" "$R"
+[ -n "$boot_note" ]         && printf '  %s%s%s\n' "$AMB" "$boot_note" "$R"
 
 [ "$DRYRUN" = 1 ] && { printf '  %s(dry run - nothing changed)%s\n' "$GREY" "$R"; exit 0; }
 
@@ -265,6 +405,58 @@ fi
 if [ -n "$SYS_KEYMAP" ] && [ "$SYS_KEYMAP" != "$(current_keymap)" ]; then
 	printf 'KEYMAP=%s\n' "$SYS_KEYMAP" >/etc/vconsole.conf
 	loadkmap </usr/share/keymaps/"$SYS_KEYMAP".bmap 2>/dev/null || :
+fi
+
+# Networking - the same keyfile format arctic-install writes at install time.
+nm_touched=0
+if [ -n "$wifi_change" ]; then
+	mkdir -p "$NM_DIR"
+	f="$NM_DIR/arctic-wifi.nmconnection"
+	{
+		printf '[connection]\n'
+		printf 'id=%s\n' "$SYS_WIFI_SSID"
+		printf 'uuid=%s\n' "$(cat /proc/sys/kernel/random/uuid 2>/dev/null || date +%s)"
+		printf 'type=wifi\n'
+		printf 'autoconnect=true\n'
+		[ -n "$SYS_WIFI_IFACE" ] && printf 'interface-name=%s\n' "$SYS_WIFI_IFACE"
+		printf '\n[wifi]\nmode=infrastructure\nssid=%s\n' "$SYS_WIFI_SSID"
+		if [ -n "$SYS_WIFI_PSK" ]; then
+			printf '\n[wifi-security]\nkey-mgmt=wpa-psk\npsk=%s\n' "$SYS_WIFI_PSK"
+		fi
+		printf '\n[ipv4]\nmethod=auto\n\n[ipv6]\nmethod=auto\n'
+	} >"$f"
+	chmod 600 "$f"
+	nm_touched=1
+fi
+if [ -n "$wired_change" ]; then
+	mkdir -p "$NM_DIR"
+	f="$NM_DIR/arctic-wired.nmconnection"
+	{
+		printf '[connection]\n'
+		printf 'id=arctic-wired\n'
+		printf 'uuid=%s\n' "$(cat /proc/sys/kernel/random/uuid 2>/dev/null || date +%s)"
+		printf 'type=ethernet\n'
+		printf 'autoconnect=true\n'
+		printf '\n[ipv4]\nmethod=manual\n'
+		printf 'address1=%s,%s\n' "$SYS_IP" "$SYS_GATEWAY"
+		[ -n "$SYS_DNS" ] && printf 'dns=%s;\n' "$(printf '%s' "$SYS_DNS" | tr ' ' ';')"
+		printf '\n[ipv6]\nmethod=auto\n'
+	} >"$f"
+	chmod 600 "$f"
+	nm_touched=1
+fi
+if [ -n "$mac_change" ]; then
+	mkdir -p "$(dirname "$MAC_CONF")"
+	if [ "$mac_change" = on ]; then
+		printf '[connection]\nwifi.cloned-mac-address=stable\n' >"$MAC_CONF"
+	else
+		rm -f "$MAC_CONF"
+	fi
+	nm_touched=1
+fi
+if [ "$nm_touched" = 1 ] && service status NetworkManager >/dev/null 2>&1; then
+	service restart NetworkManager >/dev/null 2>&1 || \
+		printf '  %sNetworkManager did not restart - profile written, apply it by hand%s\n' "$AMB" "$R" >&2
 fi
 
 # Users - additive only. See system.conf's own comment on SYS_USERS for why
