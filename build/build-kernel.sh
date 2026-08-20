@@ -55,6 +55,14 @@ arctic_s MODULE_SIG_KEY ""
 arctic_s SYSTEM_TRUSTED_KEYS ""
 arctic_s SYSTEM_REVOCATION_KEYS ""
 
+# net.ipv4.ping_group_range (skel/etc/sysctl.conf) only does anything with
+# this on: unprivileged ICMP echo goes through a SOCK_DGRAM ping socket
+# gated by that range, not a raw socket needing CAP_NET_RAW. Without it,
+# ping falls back to a raw socket regardless of the sysctl, and any user
+# other than root gets a permission error - the Gentoo dist-kernel config
+# this starts from does not set it.
+arctic_y PING
+
 # Live ISO needs these before any module can be loaded.
 arctic_y SQUASHFS
 arctic_y SQUASHFS_XZ
