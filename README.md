@@ -1,6 +1,6 @@
 # Arctic Linux
 
-**Arctic Linux - A1 TESTING**
+**Arctic Linux - A2 TESTING**
 
 glibc, LLVM, a BSD-style userland, busybox init, zsh, doas, and its own
 package manager (alpm).

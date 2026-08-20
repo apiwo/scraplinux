@@ -4,7 +4,7 @@ What's built and working, what's known-broken, what's still source-only.
 Full docs live at arctic-docs.apiwow.net — this file is the terse engineering
 log, not a tutorial.
 
-Release label: **Arctic Linux - A1 TESTING** (`A1-TESTING`). Earlier schemes:
+Release label: **Arctic Linux - A2 TESTING** (`A2-TESTING`). Earlier schemes:
 `a1`-`a1.24`, `a2`-`a2.61` (one-dot), then a brief `main.bigfix.smallfix` +
 stability-suffix scheme (`3-SS`, `3.1-SS`) that claimed a maturity - "super
 stable" - the distro was not actually at: a fresh install of `3-SS` itself
@@ -156,11 +156,23 @@ Declarative system management on top of that, once installed:
 - `arctic-rebuild` — reconciles the running system to `/etc/arctic/system.conf`
   (installs what's newly listed, removes what's no longer listed, same
   relationship NixOS's `configuration.nix` has to `nixos-rebuild switch`).
-  First run with an empty config seeds it from what's actually installed
-  instead of removing everything.
+  Covers identity, user accounts, packages and services as well as
+  networking (`SYS_NET_MODE` dhcp/static/wifi, writing the same
+  NetworkManager keyfiles `arctic-install` does), the graphics driver and
+  microcode (`SYS_GPU`/`SYS_MICROCODE`, `auto` resolving the same way
+  install time does), and the nonfree-repo flag - a declared bootloader
+  that doesn't match the running one is reported, not switched. Every
+  successful run snapshots and records a generation, so `arctic-generation
+  switch`/the boot menu can put a bad rebuild back. `alpm system upgrade`
+  runs this at the end, so a package upgrade and a config change converge
+  through one command. First run with an empty config seeds it from what's
+  actually installed instead of removing everything.
 - `arctic-shell [--network] [--keep] <pkgs> [-- cmd | - cmd]` — ephemeral
   package environments, content-addressed by package set so the same request
-  reuses a previous build.
+  reuses a previous build. Every invocation also sweeps the cache directory
+  for an environment left mounted by a session that was killed outright,
+  unmounting (and, unless it was built `--keep`, removing) whatever it
+  finds with no live process still holding it.
 - `arctic gc` — prunes the package cache, orphaned deps, and unused shell
   environments.
 
@@ -211,6 +223,114 @@ produces is unpacked there and later builds compile and link against it
 paths point into the sysroot rather than at `/usr` on the build host.
 
 ## Known-fixed bugs worth remembering
+
+- **A2 TESTING: wifi worked on the live image and never on a real install,
+  for three independent reasons that all had to be found separately.**
+  `linux-firmware` is well over the free-tier mirror's size limit, so
+  `arctic-install`'s own `target_alpm add linux-firmware` 404d on every real
+  install while `warn_soft` swallowed the failure silently - the wireless
+  driver loaded and `wlan0` existed either way, but the radio itself had no
+  firmware to load. Fixed by copying the live medium's own curated
+  wireless-plus-console firmware set directly onto the target instead of
+  asking a mirror for a file it was never going to serve. Separately,
+  `wifi-connect` never had to think about privilege on the live image, which
+  logs in as root - a real install's default login is the account
+  `arctic-install` created, and `iw scan` came back "Operation not permitted
+  (-1)" there, which `wifi-connect` turned into "no networks found - move
+  closer, or check the antenna," a permissions error diagnosed as a range
+  problem. It re-execs itself through `doas` when not already root now, and
+  refuses with a real message if `doas` isn't there to do it. Third, a
+  soft-blocked radio still creates its netdev, so `iw scan` finding nothing
+  on a rfkilled card looked identical to no hardware being present;
+  rfkill is unblocked before every scan now. The wireless profile a real
+  install actually used is carried across to the installed system's own
+  `rc.d/wifi` + `wpa_supplicant` pairing (not handed to NetworkManager,
+  which would otherwise fight the same radio for it) and reconnects on
+  every boot after - this specific end-to-end flow, install over wifi then
+  reboot into a working connection with no manual steps, still needs a real
+  machine to confirm; QEMU has no wireless NIC emulation.
+
+- **A2 TESTING: `A_NTP` defaulted to yes and enabled a service nothing could
+  ever run.** `/etc/rc.d/ntpd` runs `/usr/bin/ntpd`, a standalone binary no
+  package in Arctic provides - busybox's own `ntpd` applet is a different
+  invocation entirely. Off by default now, same reasoning as microcode:
+  don't enable something nothing packages yet.
+
+- **A2 TESTING: backspace still moved the cursor forward inside
+  `arctic-chroot`, after an earlier fix for exactly that.** zsh's ZLE runs
+  the terminal in raw mode for its own line editing and never consults
+  `stty erase` - the earlier fix (`arctic-chroot` setting `stty erase ^?`)
+  only ever helped the `/bin/sh` fallback, not zsh. A separate zsh
+  `bindkey '^?'/'^H' backward-delete-char` had already been added in the
+  right place, and was silently undone eight lines later by a pre-existing
+  `bindkey '^H' backward-kill-word` - bindkey applies in order, so whichever
+  terminal actually sends `^H` for backspace still deleted a whole word.
+  `^W` already does word-delete in zsh's own emacs keymap by default; the
+  stray line added nothing and only broke the fix it came after. Verified
+  in QEMU: entering a chroot and sending both `^?` and `^H` now deletes one
+  character each, not a word.
+
+- **A2 TESTING: `arctic-shell` built a working package set into an
+  environment where none of the ordinary commands to use it worked.** `id`,
+  `which`, `ls`, `grep` and more failed with "error while loading shared
+  libraries: libcrypt.so.2: cannot open shared object file" inside the
+  interactive shell it drops into, immediately after reporting a clean
+  install. glibc dropped `crypt()` itself; `libxcrypt` provides it, and
+  every real install gets it as part of the base meta-package - but neither
+  busybox nor toybox declares it as a dependency, so alpm never pulled it
+  into the hand-picked `glibc busybox toybox` set an ephemeral environment
+  builds from. Added explicitly. Separately, a session killed outright
+  (SIGKILL, a host crash) took `/dev`, `/proc` and `/sys` down with it - the
+  exit trap that unmounts them before `rm -rf` only runs on a normal exit or
+  a caught signal - and what was left behind had to be found by hand from
+  `lsblk` and cleaned up manually, usually surfacing later as `rm: sys:
+  Device or resource busy` from something unrelated touching the same tree.
+  Every invocation now sweeps other environments under the cache directory
+  for a live mount with no running process holding its lock file, and
+  unmounts (and, unless built `--keep`, removes) what it finds. Verified in
+  QEMU: an environment fabricated to look like a crashed session is
+  unmounted and deleted by the next unrelated invocation; the same
+  fabricated as `--keep` is unmounted but left in place.
+
+- **A2 TESTING: a slow service held up every service after it, whether or
+  not either had anything to do with the other.** `rc.d/wifi` and
+  `rc.d/network` can each spend real seconds waiting on an association or a
+  lease; `sshd` or a display manager has no reason to wait on either.
+  Services now start together and are waited on in the same order they
+  started, so output stays in a fixed, readable order even though the work
+  itself overlaps. Also stopped keying a service's pid off an eval'd
+  `$n`-named variable - a name from `A_SERVICES` with a dash in it broke the
+  eval'd assignment instead of just failing to start.
+
+- **A2 TESTING: `alpm system fix` conflated "what's pending" with "apply
+  it," with no way to see the first without risking the second.** Split
+  into `alpm system get` (installed release, kernel, generation), `alpm
+  system check` (everything pending, package upgrades and fix-repository
+  corrections alike, never applying anything), and `alpm system upgrade`
+  (syncs, upgrades, updates the bootloader, applies corrections, and now
+  also reconciles against `system.conf` - a package upgrade and a
+  declarative config change wait on the same command instead of two).
+  `alpm system fix` is gone outright, not aliased - the listing and
+  applying logic it had moved into a shared internal helper the other two
+  both call, so they can never disagree about what counts as pending.
+
+- **A2 TESTING: `install.conf`'s networking, graphics driver, microcode and
+  bootloader settings only ever applied once, at install time.** Editing
+  `A_NET`/`A_WIFI_*`/`A_GPU`/`A_MICROCODE`/`A_BOOTLOADER` after install did
+  nothing, because nothing ever read them again. The same settings, same
+  shape, now live in `system.conf` as `SYS_NET_MODE`/`SYS_GPU`/
+  `SYS_MICROCODE`/`SYS_BOOTLOADER` and are reconciled by every
+  `arctic-rebuild`: a declared static address or wifi profile writes the
+  same NetworkManager keyfiles `arctic-install` itself writes (only
+  rewriting one when it actually differs from what's on disk), `auto`
+  GPU/microcode resolve through the same PCI/cpuinfo detection and fold the
+  right packages into the ordinary install list, and a declared bootloader
+  that doesn't match the running one is reported rather than switched -
+  changing it means reinstalling boot sectors on a disk that already has
+  data on it, which stays `arctic-boot-strap`, run by hand. Verified in
+  QEMU: a declared static address writes `arctic-wired.nmconnection` with
+  the right address/gateway/dns, and a second rebuild against the same file
+  reports nothing left to do.
 
 - **Alpha 3.1 SS: a real install still behaved like the live image - the
   first-login greeting told you to run `arctic-install` again, wifi-connect

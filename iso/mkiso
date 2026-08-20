@@ -46,8 +46,8 @@ BUILD_ID=$(date '+%Y.%m.%d')
 #
 # Not a permanent scheme, just an honest one for however long the distro is
 # being put together faster than it can be verified.
-VERSION_TAG="A1-TESTING"
-VERSION="Arctic Linux - A1 TESTING"
+VERSION_TAG="A2-TESTING"
+VERSION="Arctic Linux - A2 TESTING"
 LABEL="ARCTIC"
 
 case "$PROFILE" in
