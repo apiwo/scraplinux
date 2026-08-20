@@ -487,7 +487,9 @@ cd() {
 }
 
 cd "$srcdir"
-if command -v prepare >/dev/null 2>&1; then msg2 "prepare()"; prepare; fi
+if command -v prepare >/dev/null 2>&1; then
+	msg2 "prepare()"; set -x; prepare; set +x
+fi
 cd "$srcdir"
 # Some builds do not just link against the sysroot, they *run* what they just
 # linked. gobject-introspection is the common one: g-ir-scanner compiles a
@@ -505,15 +507,17 @@ if [ -d "$ALPM_SYSROOT/usr/lib" ]; then
 	export LD_LIBRARY_PATH="$ALPM_SYSROOT/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 fi
 
-if command -v build >/dev/null 2>&1; then msg2 "build()"; build; fi
+if command -v build >/dev/null 2>&1; then
+	msg2 "build()"; set -x; build; set +x
+fi
 cd "$srcdir"
 if command -v check >/dev/null 2>&1 && [ "${ALPM_CHECK:-0}" = "1" ]; then
-	msg2 "check()"; check || warn "tests failed"
+	msg2 "check()"; set -x; check || { set +x; warn "tests failed"; }; set +x
 fi
 cd "$srcdir"
 command -v package >/dev/null 2>&1 || die "recipe has no package() function"
 msg2 "package()"
-package
+set -x; package; set +x
 
 # Everything from here on is alpm-build's own bookkeeping - stripping,
 # .FILES, .PKGINFO - never a package's own build tooling, so there is no

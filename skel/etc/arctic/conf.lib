@@ -43,13 +43,20 @@ conf_get1() {
 # block, and the trailing ;;, are passed through unchanged.
 conf_set() {
 	_cs_file=$1 _cs_block=$2
-	_cs_new=$(cat)
+	# The new values go to a temp file and are read back with getline,
+	# not handed to awk as -v newvals="$(multi-line value)" - one true
+	# awk's own -v parser rejects a literal newline embedded in a -v
+	# value outright ("awk: newline in string"), so passing more than
+	# one value that way failed on every real install, silently on
+	# whatever awk tolerates it and loudly on the one Arctic ships.
+	_cs_tmp="$_cs_file.newvals.$$"
+	cat >"$_cs_tmp"
 	[ -f "$_cs_file" ] || printf '\n;;\n' >"$_cs_file"
-	awk -v block="$_cs_block[" -v newvals="$_cs_new" '
-		BEGIN { n = split(newvals, arr, "\n") }
-		function emit() {
+	awk -v block="$_cs_block[" -v valfile="$_cs_tmp" '
+		function emit(   line) {
 			print block
-			for (i = 1; i <= n; i++) if (arr[i] != "") print arr[i]
+			while ((getline line < valfile) > 0) if (line != "") print line
+			close(valfile)
 			print "]"
 		}
 		$0 == block { emit(); skip = 1; seen = 1; next }
@@ -59,6 +66,7 @@ conf_set() {
 		{ print }
 		END { if (!seen) { emit(); print ""; print ";;" } }
 	' "$_cs_file" >"$_cs_file.new" && mv "$_cs_file.new" "$_cs_file" && chmod 600 "$_cs_file"
+	rm -f "$_cs_tmp"
 }
 
 # conf_set1 <file> <block.name> <value>  -  convenience for single-value blocks

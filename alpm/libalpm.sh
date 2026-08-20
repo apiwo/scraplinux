@@ -3,7 +3,7 @@
 # POSIX sh only. Must run under busybox ash with no GNU utilities present.
 # shellcheck shell=sh disable=SC2039
 
-ALPM_VERSION="1.4.8"
+ALPM_VERSION="1.4.9"
 ALPM_FORMAT="2"
 
 : "${ALPM_ROOT:=/}"
@@ -395,6 +395,11 @@ dl_bar() {
 	  exit $_r ) &
 	_dlb_pid=$!
 	_dlb_t0=$(date '+%s')
+	# Most Arctic packages are a few hundred KB and finish inside a second -
+	# polling once a second meant the loop body ran at most once before the
+	# job exited, so the bar only ever drew a start frame and the final 100%
+	# frame with nothing real in between. A shorter poll draws several frames
+	# even for a transfer that fast.
 	while kill -0 "$_dlb_pid" 2>/dev/null; do
 		_dlb_got=$(_bytes "$_dlb_out.part")
 		_dlb_el=$(( $(date '+%s') - _dlb_t0 )); [ "$_dlb_el" -lt 1 ] && _dlb_el=1
@@ -406,7 +411,7 @@ dl_bar() {
 			_dlb_eta=0
 		fi
 		_bar_line "$_dlb_label" "$_dlb_got" "${_dlb_total:-0}" "$_dlb_rate" "$_dlb_eta"
-		sleep 1
+		sleep 0.2
 	done
 	if ! wait "$_dlb_pid"; then
 		rm -f "$_dlb_out.part"

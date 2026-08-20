@@ -42,7 +42,7 @@ bad()  { printf '   \033[31mfail\033[0m %s\n' "$*"; }
 # Write a .PKGINFO and roll the tarball. $1=pkgdir $2=name $3=ver $4=repo
 # $5=desc $6=license $7=url $8=deps
 emit() {
-	pd=$1 name=$2 ver=$3 repo=$4 desc=$5 lic=$6 url=$7 deps=$8
+	pd=$1 name=$2 ver=$3 repo=$4 desc=$5 lic=$6 url=$7 deps=$8 replaces=$9
 	[ -d "$pd" ] || { bad "$name: nothing staged"; return 1; }
 	isize=$(du -sk "$pd" 2>/dev/null | cut -f1); isize=$(( ${isize:-0} * 1024 ))
 
@@ -54,6 +54,7 @@ emit() {
 		printf 'isize = %s\nbuilddate = %s\nbuilder = mkpkgs.sh\nrepo = %s\n' \
 			"$isize" "$DATE" "$repo"
 		for d in $deps; do printf 'depend = %s\n' "$d"; done
+		for r in $replaces; do printf 'replaces = %s\n' "$r"; done
 	} >"$pd/.PKGINFO"
 
 	( cd "$pd" && find . -type f -o -type l ) | sed 's|^\.||' \
@@ -282,7 +283,7 @@ if [ "$n" -gt 4 ]; then
 	emit "$pd" util-linux 2.41.5 main \
 		"Partitioning and block device tools: cfdisk, sfdisk, wipefs, lsblk" \
 		"GPL-2.0-or-later LGPL-2.1-or-later" \
-		"https://github.com/util-linux/util-linux" "glibc"
+		"https://github.com/util-linux/util-linux" "glibc" "util-linux-libs"
 else bad "util-linux (only $n tools)"; fi
 
 step "packaging e2fsprogs"

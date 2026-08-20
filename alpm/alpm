@@ -643,6 +643,40 @@ sync_declared_packages() {
 	printf '%s\n' "$_sdp_list" | conf_set "$_sdp_conf" pkgs.arctic
 }
 
+# Before any source build: make sure the toolchain itself (clang/lld from
+# llvm, bmake) is actually on disk. A source build always failed with
+# "missing: bmake" even when bmake was a sibling package in the very same
+# request (`alpm add base-devel`, where cmake and meson are source-only
+# and bmake has a binary) - both source-build paths below run before any
+# of the transaction's ordinary binary installs, so a build tool being
+# part of the same request never actually helped it. This installs the
+# toolchain directly and immediately, ahead of everything else, rather
+# than waiting for its normal turn in a transaction that cannot reach
+# that turn without it.
+ensure_build_tools() {
+	# REASON=dep, not the global default of explicit: nobody asked for
+	# llvm or bmake by name here, a source build just needs them present.
+	_ebt_need=""
+	if ! { have clang && have ld.lld; } && idx_lookup llvm >/dev/null 2>&1 && ! is_installed llvm; then
+		_ebt_need="$_ebt_need llvm"
+	fi
+	if ! { have make || have bmake; } && idx_lookup bmake >/dev/null 2>&1 && ! is_installed bmake; then
+		_ebt_need="$_ebt_need bmake"
+	fi
+	[ -n "$_ebt_need" ] || return 0
+
+	# install_one() unconditionally appends to "$TX_DIR/packages" - called
+	# outside a transaction that is empty, not unset, and writes end up at
+	# the filesystem root. Open a real one, same as every other caller.
+	tx_begin
+	REASON=dep
+	for _ebt_p in $_ebt_need; do
+		msg2 "installing $_ebt_p first - a source build needs it"
+		fetch_pkg "$_ebt_p" package && install_one "$FETCH_FILE"
+	done
+	tx_end ok
+}
+
 cmd_ins() {
 	need_root; alpm_init_db
 	[ $# -gt 0 ] || die "no packages named. See 'alpm' for usage."
@@ -697,6 +731,7 @@ cmd_ins() {
 
 	# Anything with only a recipe goes through the source path.
 	if [ -n "$need_build" ]; then
+		ensure_build_tools
 		# shellcheck disable=SC2086
 		cmd_ins_source $need_build
 	fi
@@ -763,6 +798,7 @@ cmd_ins() {
 		# Build them, then start over: with those installed the resolver has
 		# a complete graph and the rest of the transaction is an ordinary
 		# binary install.
+		ensure_build_tools
 		# shellcheck disable=SC2086
 		cmd_ins_source $_src
 		# shellcheck disable=SC2086
