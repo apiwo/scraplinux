@@ -334,6 +334,18 @@ done
 # finish first. Output still prints in a fixed, readable order (begin() for
 # each is not interleaved with another service's own output) - only the
 # actual work overlaps, not the reporting of it.
+#
+# network/wifi/NetworkManager specifically are not waited on at all here -
+# getty on the console is a respawn entry, not part of this sysinit script,
+# but busybox init still does not start it until sysinit exits, so waiting
+# on an association or a DHCP lease here meant the login prompt itself sat
+# behind however long the radio took to come up, on every single boot,
+# whether or not anyone at the console cared about the network yet. They
+# still start in the first loop below like everything else; they are just
+# left out of the second loop that blocks on completion, and a detached
+# watcher reports how each one actually went into the boot log once it
+# finishes, asynchronously, after the prompt is already up.
+_svc_deferred=" network wifi NetworkManager "
 if [ -d /etc/arctic/services ]; then
 	mkdir -p /run/arctic/svc-out
 	: >/run/arctic/svc-pids
@@ -364,9 +376,30 @@ if [ -d /etc/arctic/services ]; then
 		# a dash or anything else that is not a valid shell identifier
 		# character breaks an eval'd assignment instead of just failing to
 		# start.
-		"/etc/rc.d/$n" start >"/run/arctic/svc-out/$n" 2>&1 &
-		printf '%s %s\n' "$n" "$!" >>/run/arctic/svc-pids
-		_svc_pending="$_svc_pending $n"
+		case "$_svc_deferred" in
+		*" $n "*)
+			# Started and waited on inside the same backgrounded subshell,
+			# not forked here and adopted there - wait can only ever wait on
+			# a shell's own direct child, and a process this loop forks
+			# belongs to rc.boot itself, not to some other subshell handed
+			# the bare pid afterward.
+			rc_log "service $n: deferred, not holding up boot"
+			( if "/etc/rc.d/$n" start >"/run/arctic/svc-out/$n" 2>&1; then
+				rc_log "service $n: started (deferred)"
+				[ -s "/run/arctic/svc-out/$n" ] && rc_log "  $(cat "/run/arctic/svc-out/$n")"
+			  else
+				rc_log "service $n: FAILED (deferred)"
+				[ -s "/run/arctic/svc-out/$n" ] && \
+					sed 's/^/  /' "/run/arctic/svc-out/$n" >>"$RC_LOG" 2>/dev/null || :
+			  fi
+			) &
+			;;
+		*)
+			"/etc/rc.d/$n" start >"/run/arctic/svc-out/$n" 2>&1 &
+			printf '%s %s\n' "$n" "$!" >>/run/arctic/svc-pids
+			_svc_pending="$_svc_pending $n"
+			;;
+		esac
 	done
 	for n in $_svc_pending; do
 		begin "Service '$n'"
