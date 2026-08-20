@@ -50,8 +50,21 @@ for r in $REPOS; do
 		[ -f "$d/recipe" ] || continue
 		p=$(basename "$d")
 		mkdir -p "$dst/$p"
-		for f in recipe recipe.local install sources.list; do
-			[ -f "$d/$f" ] && cp -f "$d/$f" "$dst/$p/$f"
+		# The whole directory, not a fixed filename list: a recipe's
+		# local (non-URL) source= entries can be anything - busybox's
+		# arctic.config and busybox.conf, genfstab's own script, a
+		# profile package's session.sh. A named whitelist here missed
+		# every one of those, so `alpm add -s <pkg>` on any recipe with
+		# a local source file downloaded the recipe fine and then died
+		# with "local source missing" against the real published host,
+		# while working the whole time against a local checkout that
+		# still had the file sitting right there. index.html is the one
+		# thing excluded - the listing step below writes its own.
+		for f in "$d"*; do
+			[ -f "$f" ] || continue
+			bn=$(basename "$f")
+			[ "$bn" = index.html ] && continue
+			cp -f "$f" "$dst/$p/$bn"
 		done
 		n=$((n+1))
 	done
