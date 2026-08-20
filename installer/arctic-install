@@ -1311,21 +1311,26 @@ EOF
 	# repositories are the ones configured, bring the new system up to date
 	# before it is ever booted - otherwise the first thing a fresh install
 	# does is run an upgrade of everything the ISO happened to be built with,
-	# including alpm itself.
+	# including alpm itself. 'system upgrade' is what a machine runs for this
+	# same reason later in its life, so a fresh install and a five-year-old
+	# one catch up through the same path: sync, upgrade packages and the
+	# kernel, apply anything the fix repository has published since this
+	# image was built, and reconcile against the system.conf just seeded -
+	# which is a no-op for packages this install already put in place, and
+	# real work for a fix that landed after the image did.
 	#
 	# Never fatal: an install that is complete and slightly behind is a
 	# working system, and this runs at a point where there may well be no
 	# network at all (A_NET=offline, or a wifi link that only existed in the
 	# live session).
-	step "Updating the new system" "fetching what has changed since the medium was built"
-	if target_alpm fetch all >>"$LOGF" 2>&1; then
-		if target_alpm update >>"$LOGF" 2>&1; then
-			logit "system updated from the network"
-		else
-			warn_soft "the post-install update did not finish - run 'alpm update' after booting"
-		fi
+	step "Updating the new system" "alpm system upgrade"
+	_sys_check=$(target_alpm system check 2>&1)
+	if printf '%s' "$_sys_check" | grep -q 'unreachable\|could not fetch'; then
+		logit "no network at install time; skipping the post-install upgrade"
+	elif target_alpm system upgrade >>"$LOGF" 2>&1; then
+		logit "system upgraded from the network"
 	else
-		logit "no network at install time; skipping the post-install update"
+		warn_soft "the post-install upgrade did not finish - run 'alpm system upgrade' after booting"
 	fi
 
 	step "Finishing up" "cleaning the cache"

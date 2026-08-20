@@ -85,11 +85,14 @@ ${A_ICE}────${C_R} ${C_B}repositories${C_R}
   mirror <repo>             show and pick the fastest mirror
 
 ${A_ICE}────${C_R} ${C_B}the system${C_R}
-  system upgrade            sync, upgrade packages and kernel, update the
-                            bootloader, then apply pending fixes
-  system fix                corrections from the fix repository
-  system fix <what>         one area (bootloader, kernel, pkg, init, net) or
+  system get                the installed release, kernel and generation
+  system check              what system upgrade would do - nothing applied
+  system check <what>       one area (bootloader, kernel, pkg, init, net) or
                             one level (major, minor, change, bugfix)
+  system upgrade            sync, upgrade packages and kernel, update the
+                            bootloader, apply pending fixes, reconcile
+                            system.conf
+  system upgrade <what>     the same, but only one area or level of fix
 
 ${A_ICE}────${C_R} ${C_B}asking${C_R}
   list [-e]                 what is installed (-e: only what you asked for)
@@ -1369,8 +1372,9 @@ cmd_update() {
 #
 # severity is major, minor or change. area is whatever part of the system the
 # correction lands on - bootloader, kernel, pkg, init, net - and is what makes
-# "alpm system fix bootloader" possible: a machine that will not boot can take
-# the fixes that might explain it without pulling in everything else pending.
+# "alpm system upgrade bootloader" possible: a machine that will not boot can
+# take the fixes that might explain it without pulling in everything else
+# pending.
 #
 # Applied ids are remembered so a fix is offered once, and so a machine can be
 # asked what it has already taken.
@@ -1414,7 +1418,13 @@ fix_selected() {
 	esac
 }
 
-cmd_system_fix() {
+# Lists pending corrections from the fix repository, and - unless $1 is 1,
+# meaning a dry run - confirms and applies them. Shared by `system check`
+# (dry) and `system upgrade` (not) so the two can never disagree about what
+# counts as pending: the same manifest, the same fix_applied() ledger, read
+# the same way.
+system_fixes() {
+	_dry=$1; shift
 	need_root; alpm_init_db
 	FIX_SEL=${1:-}
 
@@ -1506,6 +1516,11 @@ cmd_system_fix() {
 	done <"$_mf"
 	printf '\n'
 
+	if [ "$_dry" = 1 ]; then
+		info "run 'alpm system upgrade' to apply"
+		return 0
+	fi
+
 	confirm "$_phr $_are in the '$FIX_REPO' repository, would you like to proceed?" \
 		|| { info "no fixes applied"; return 1; }
 
@@ -1519,10 +1534,70 @@ cmd_system_fix() {
 	ok "applied $(printf '%s' "$_ids" | wc -w | tr -d ' ') fixes"
 }
 
+# name/release/build/kernel/generation of the system as it stands - the same
+# facts arcticfetch reads out of /etc/arctic-release, gathered for scripting
+# rather than a person, and the one place that also says which generation
+# arctic-rebuild left the machine on.
+cmd_system_get() {
+	rel=${ALPM_ROOT}/etc/arctic-release
+	[ -f "$rel" ] || die "no $rel on this system"
+	name=$(sed -n 's/^PRETTY_NAME="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$rel" | head -1)
+	verid=$(sed -n 's/^VERSION_ID=//p'  "$rel" | tr -d '"' | head -1)
+	build=$(sed -n 's/^BUILD_ID=//p'    "$rel" | head -1)
+	kern=$(sed -n 's/^KERNEL=//p'       "$rel" | head -1)
+	installed=$(sed -n 's/^INSTALLED=//p' "$rel" | head -1)
+
+	printf '%s%s%s\n' "$C_B" "${name:-Arctic Linux}" "$C_R"
+	printf '  release      %s\n' "${verid:-unknown}"
+	printf '  built        %s\n' "${build:-unknown}"
+	printf '  installed    %s\n' "${installed:-unknown}"
+	printf '  kernel       %s (running %s)\n' "${kern:-unknown}" "$(uname -r 2>/dev/null || echo unknown)"
+	if [ -f "$ALPM_DB/local/arctic-base/PKGINFO" ]; then
+		v=$(awk -F' *= *' '$1=="version"{print $2}' "$ALPM_DB/local/arctic-base/PKGINFO" 2>/dev/null)
+		r=$(awk -F' *= *' '$1=="release"{print $2}' "$ALPM_DB/local/arctic-base/PKGINFO" 2>/dev/null)
+		printf '  arctic-base  %s-%s\n' "${v:-?}" "${r:-?}"
+	fi
+	if have arctic-generation; then
+		gen=$(arctic-generation current 2>/dev/null)
+		printf '  generation   %s\n' "${gen:-none}"
+	fi
+}
+
+# Everything pending, applied to nothing: the same index sync `upgrade` does
+# (an index has to be current before "up to date" means anything), then the
+# same two comparisons `upgrade` makes - package versions against what is
+# installed, fix ids against what is recorded applied - printed rather than
+# acted on.
+cmd_system_check() {
+	need_root; alpm_init_db
+	cmd_fetch all
+	printf '\n'
+
+	msg "Checking for package upgrades"
+	_todo=""
+	for d in "$ALPM_DB"/local/*/; do
+		[ -d "$d" ] || continue
+		p=$(basename "$d")
+		is_held "$p" && continue
+		e=$(idx_lookup "$p") || continue
+		cur=$(installed_version "$p")
+		nv="$(printf '%s' "$e" | cut -f3)-$(printf '%s' "$e" | cut -f4)"
+		[ "$cur" = "$nv" ] && continue
+		printf '  %s%-24s%s %s -> %s%s%s\n' "$C_B" "$p" "$C_R" "$cur" "$A_MINT" "$nv" "$C_R"
+		_todo="$_todo $p"
+	done
+	[ -n "$_todo" ] || ok "packages are up to date"
+
+	printf '\n'
+	msg "Checking the '$FIX_REPO' repository"
+	system_fixes 1 "$@"
+}
+
 # Everything an installed machine needs to be current, in the order that keeps
 # it bootable: indexes first, then packages (a kernel among them is what makes
 # the bootloader step necessary), then the corrections that no version bump
-# would have carried.
+# would have carried, then the declarative config - a package upgrade and a
+# system.conf edit both wait for the same command now instead of two.
 cmd_system_upgrade() {
 	need_root; alpm_init_db
 
@@ -1539,15 +1614,22 @@ cmd_system_upgrade() {
 	fi
 
 	printf '\n'
-	cmd_system_fix || :
+	system_fixes 0 "$@" || :
+
+	if have arctic-rebuild; then
+		printf '\n'
+		msg "Reconciling against system.conf"
+		arctic-rebuild || warn "arctic-rebuild reported a problem - see above"
+	fi
 }
 
 cmd_system() {
 	case "${1:-}" in
+	get)     shift; cmd_system_get "$@" ;;
+	check)   shift; cmd_system_check "$@" ;;
 	upgrade|up) shift; cmd_system_upgrade "$@" ;;
-	fix)        shift; cmd_system_fix "$@" ;;
-	"")         die "usage: alpm system <upgrade|fix>" ;;
-	*)          die "unknown system command: $1 (try upgrade or fix)" ;;
+	"")      die "usage: alpm system <get|check|upgrade>" ;;
+	*)       die "unknown system command: $1 (try get, check or upgrade)" ;;
 	esac
 }
 

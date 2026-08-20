@@ -74,7 +74,8 @@ alpm fetch all          # sync the repositories
 alpm add vim            # install
 alpm add -s helix       # build from source instead
 alpm rollback           # undo the last transaction
-alpm system fix         # corrections that do not change a version
+alpm system check       # what's pending: package upgrades and corrections
+alpm system upgrade     # sync, upgrade, apply corrections, reconcile system.conf
 ```
 
 Binaries come from
