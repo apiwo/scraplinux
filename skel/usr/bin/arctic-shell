@@ -74,6 +74,39 @@ BASE=${ARCTIC_SHELL_BASE:-/var/cache/arctic-shell}
 ENVROOT="$BASE/$hash"
 mkdir -p "$BASE"
 
+# A session that is killed outright (SIGKILL, a host crash) takes /dev,
+# /proc and /sys down with it - trap cleanup below only runs on a normal
+# exit or a caught signal, and neither happens for a -9. The next
+# invocation of anything is what finds out, usually as `rm: sys: Device or
+# resource busy` from something unrelated trying to clean the same tree, or
+# as a bind mount from a live disk showing up twice in lsblk. Swept here so
+# that is found and fixed automatically instead of by hand from lsblk.
+reap_orphans() {
+	for d in "$BASE"/*/; do
+		[ -d "$d" ] || continue
+		d=${d%/}
+		[ "$d" = "$ENVROOT" ] && continue
+		lock="$d/.arctic-shell-lock"
+		if [ -f "$lock" ]; then
+			pid=$(cat "$lock" 2>/dev/null)
+			[ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && continue
+		fi
+		mounted=$(awk -v d="$d/" 'index($2 "/", d) == 1 {print $2}' /proc/mounts)
+		[ -n "$mounted" ] || continue
+		note "cleaning up an orphaned environment left by a crashed session: $d"
+		printf '%s\n' "$mounted" | awk '{ print length, $0 }' | sort -rn | cut -d' ' -f2- | \
+		while IFS= read -r m; do
+			umount "$m" 2>/dev/null || umount -l "$m" 2>/dev/null || :
+		done
+		if awk -v d="$d/" 'index($2 "/", d) == 1 { f = 1 } END { exit !f }' /proc/mounts; then
+			printf '  %sstill mounted, left in place: %s%s\n' "$RED" "$d" "$R" >&2
+			continue
+		fi
+		[ -f "$d/.arctic-shell-keep" ] || rm -rf "$d"
+	done
+}
+reap_orphans
+
 note "environment $hash ($pkgs)"
 if [ ! -d "$ENVROOT/usr" ]; then
 	note "building it - this only happens once per package set"
@@ -95,8 +128,16 @@ if [ ! -d "$ENVROOT/usr" ]; then
 		[ -e "$ENVROOT/$l" ] || ln -s "usr/$l" "$ENVROOT/$l"
 	done
 	[ -e "$ENVROOT/lib64" ] || ln -s usr/lib "$ENVROOT/lib64"
+	# glibc dropped crypt() itself; libxcrypt provides libcrypt.so.2. Neither
+	# busybox nor toybox declares it as a dependency, so alpm never pulls it
+	# in on its own - but toybox's id/which/ls/grep (and more) link it, and
+	# every real install gets it anyway as part of the base meta-package.
+	# Without it here, packages installed into the environment just fine and
+	# the shell dropped into it could not run any of the ordinary commands
+	# needed to use them: "error while loading shared libraries:
+	# libcrypt.so.2: cannot open shared object file".
 	# shellcheck disable=SC2086
-	ALPM_ROOT="$ENVROOT" ALPM_YES=1 alpm add glibc busybox toybox $pkgs \
+	ALPM_ROOT="$ENVROOT" ALPM_YES=1 alpm add glibc busybox toybox libxcrypt $pkgs \
 		|| die "could not build the environment - see above"
 	printf '%s\n' "$pkgs" >"$ENVROOT/.arctic-shell-pkgs"
 else
@@ -120,6 +161,10 @@ mount -t proc proc "$ENVROOT/proc" 2>/dev/null
 mount -t sysfs sys  "$ENVROOT/sys" 2>/dev/null
 [ -f /etc/resolv.conf ] && cp -f /etc/resolv.conf "$ENVROOT/etc/resolv.conf" 2>/dev/null
 
+# What reap_orphans() above checks on the next invocation to tell a session
+# still running from one that is not.
+echo $$ >"$ENVROOT/.arctic-shell-lock"
+
 # toybox umount has no -R (that is a util-linux flag) - unmount each bind by
 # name and actually verify it let go before ever touching rm -rf. A tree
 # with a live mount still under it must never be rm -rf'd: that is exactly
@@ -137,6 +182,7 @@ cleanup() {
 			return 1
 		fi
 	done
+	rm -f "$ENVROOT/.arctic-shell-lock"
 	if [ -f "$ENVROOT/.arctic-shell-keep" ]; then
 		note "kept for next time: $ENVROOT"
 	else
