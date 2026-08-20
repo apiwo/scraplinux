@@ -126,15 +126,17 @@ RPROMPT='%F{238}%*%f'
 
 # Inside an `arctic-shell`, say so on every prompt. An ephemeral environment
 # is otherwise indistinguishable from the real system right up until it
-# disappears on exit, taking whatever was installed into it. The line names
-# the package set that defines the environment, whether the network is
-# reachable from inside it, and whether it survives exit.
+# disappears on exit, taking whatever was installed into it. Just
+# "arctic-shell" plus whether the network is reachable from inside it and
+# whether it survives exit - the package set is what you asked for, already
+# on screen when you ran the command, and not worth repeating on every
+# single line after.
 if [[ -n $ARCTIC_SHELL_ENV ]]; then
 	_arctic_shell_bar() {
 		local net=${ARCTIC_SHELL_NET:-offline} life=${ARCTIC_SHELL_LIFE:-ephemeral}
 		local netcol=203; [[ $net == network ]] && netcol=49
 		local lifecol=215; [[ $life == kept ]] && lifecol=49
-		print -n "%F{44}%Barctic-shell%b%f %F{245}${ARCTIC_SHELL_ENV}%f"
+		print -n "%F{44}%Barctic-shell%b%f"
 		print -n " %F{$netcol}${net}%f%F{238}/%f%F{$lifecol}${life}%f"
 	}
 	PROMPT='$(_arctic_shell_bar)

@@ -210,7 +210,7 @@ _env_net=offline
 _env_life=ephemeral
 [ "$KEEP" = 1 ] && _env_life=kept
 
-PS1_TAG="arctic-shell $_env_pkgs [$_env_net,$_env_life]"
+PS1_TAG="arctic-shell [$_env_net,$_env_life]"
 PS1RAW="($PS1_TAG) "'$ '
 inner="export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; export PS1=$(shquote "$PS1RAW"); export ARCTIC_SHELL_ENV=$(shquote "$_env_pkgs"); export ARCTIC_SHELL_NET=$_env_net; export ARCTIC_SHELL_LIFE=$_env_life; export HOME=/root; cd $(shquote "$HERE") 2>/dev/null || cd /"
 
