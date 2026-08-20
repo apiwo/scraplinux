@@ -4,7 +4,11 @@ What's built and working, what's known-broken, what's still source-only.
 Full docs live at arctic-docs.apiwow.net — this file is the terse engineering
 log, not a tutorial.
 
-Release label: **Arctic Linux - A1** (`A1`). Earlier schemes: `a1`-`a1.24`,
+Release label: **Arctic Linux - B1** (`B1`). A new letter, not another
+`A1` point release: the install model itself changed - no ISO, no
+guided installer, manual tarball install instead - which is a
+different thing to verify than a bugfix round on the same design.
+Earlier schemes: `a1`-`a1.24`,
 `a2`-`a2.61` (one-dot), then a brief `main.bigfix.smallfix` +
 stability-suffix scheme (`3-SS`, `3.1-SS`) that claimed a maturity - "super
 stable" - the distro was not actually at: a fresh install of `3-SS` itself
