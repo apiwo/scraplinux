@@ -4,16 +4,18 @@ What's built and working, what's known-broken, what's still source-only.
 Full docs live at arctic-docs.apiwow.net — this file is the terse engineering
 log, not a tutorial.
 
-Release label: **Arctic Linux - A2 TESTING** (`A2-TESTING`). Earlier schemes:
-`a1`-`a1.24`, `a2`-`a2.61` (one-dot), then a brief `main.bigfix.smallfix` +
+Release label: **Arctic Linux - A1** (`A1`). Earlier schemes: `a1`-`a1.24`,
+`a2`-`a2.61` (one-dot), then a brief `main.bigfix.smallfix` +
 stability-suffix scheme (`3-SS`, `3.1-SS`) that claimed a maturity - "super
 stable" - the distro was not actually at: a fresh install of `3-SS` itself
 still behaved like the live image, from a bootstrap path (`arctic-base`/
 `alpm`, packaged by `build/pkg-tools.sh` straight from `skel/`, separately
 from every other package) that had gone stale and was found the same day
-`3-SS` shipped. Reset to `A<n> TESTING`, incremented per testing cycle, for
-however long the distro is being put together faster than it can be
-verified - not a permanent scheme, an honest one.
+`3-SS` shipped. `A1 TESTING` came next and also shipped broken - wifi never
+worked on a real install, only the live image; the chroot backspace fix
+didn't take; `arctic-shell` couldn't run anything it had just installed.
+That build is withdrawn everywhere it was listed. Reset to a plain `A1`:
+no qualifier claiming more verification than this has actually had.
 
 Whatever the label is, one string is what the ISO filename, the volume id,
 `/etc/arctic-release`, the boot banner and `arcticfetch` all show - nothing
@@ -224,7 +226,7 @@ paths point into the sysroot rather than at `/usr` on the build host.
 
 ## Known-fixed bugs worth remembering
 
-- **A2 TESTING: wifi worked on the live image and never on a real install,
+- **A1: wifi worked on the live image and never on a real install,
   for three independent reasons that all had to be found separately.**
   `linux-firmware` is well over the free-tier mirror's size limit, so
   `arctic-install`'s own `target_alpm add linux-firmware` 404d on every real
@@ -250,13 +252,13 @@ paths point into the sysroot rather than at `/usr` on the build host.
   reboot into a working connection with no manual steps, still needs a real
   machine to confirm; QEMU has no wireless NIC emulation.
 
-- **A2 TESTING: `A_NTP` defaulted to yes and enabled a service nothing could
+- **A1: `A_NTP` defaulted to yes and enabled a service nothing could
   ever run.** `/etc/rc.d/ntpd` runs `/usr/bin/ntpd`, a standalone binary no
   package in Arctic provides - busybox's own `ntpd` applet is a different
   invocation entirely. Off by default now, same reasoning as microcode:
   don't enable something nothing packages yet.
 
-- **A2 TESTING: backspace still moved the cursor forward inside
+- **A1: backspace still moved the cursor forward inside
   `arctic-chroot`, after an earlier fix for exactly that.** zsh's ZLE runs
   the terminal in raw mode for its own line editing and never consults
   `stty erase` - the earlier fix (`arctic-chroot` setting `stty erase ^?`)
@@ -270,7 +272,7 @@ paths point into the sysroot rather than at `/usr` on the build host.
   in QEMU: entering a chroot and sending both `^?` and `^H` now deletes one
   character each, not a word.
 
-- **A2 TESTING: `arctic-shell` built a working package set into an
+- **A1: `arctic-shell` built a working package set into an
   environment where none of the ordinary commands to use it worked.** `id`,
   `which`, `ls`, `grep` and more failed with "error while loading shared
   libraries: libcrypt.so.2: cannot open shared object file" inside the
@@ -292,7 +294,7 @@ paths point into the sysroot rather than at `/usr` on the build host.
   unmounted and deleted by the next unrelated invocation; the same
   fabricated as `--keep` is unmounted but left in place.
 
-- **A2 TESTING: a slow service held up every service after it, whether or
+- **A1: a slow service held up every service after it, whether or
   not either had anything to do with the other.** `rc.d/wifi` and
   `rc.d/network` can each spend real seconds waiting on an association or a
   lease; `sshd` or a display manager has no reason to wait on either.
@@ -302,7 +304,7 @@ paths point into the sysroot rather than at `/usr` on the build host.
   `$n`-named variable - a name from `A_SERVICES` with a dash in it broke the
   eval'd assignment instead of just failing to start.
 
-- **A2 TESTING: `alpm system fix` conflated "what's pending" with "apply
+- **A1: `alpm system fix` conflated "what's pending" with "apply
   it," with no way to see the first without risking the second.** Split
   into `alpm system get` (installed release, kernel, generation), `alpm
   system check` (everything pending, package upgrades and fix-repository
@@ -314,7 +316,7 @@ paths point into the sysroot rather than at `/usr` on the build host.
   applying logic it had moved into a shared internal helper the other two
   both call, so they can never disagree about what counts as pending.
 
-- **A2 TESTING: `install.conf`'s networking, graphics driver, microcode and
+- **A1: `install.conf`'s networking, graphics driver, microcode and
   bootloader settings only ever applied once, at install time.** Editing
   `A_NET`/`A_WIFI_*`/`A_GPU`/`A_MICROCODE`/`A_BOOTLOADER` after install did
   nothing, because nothing ever read them again. The same settings, same
