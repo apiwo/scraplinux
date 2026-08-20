@@ -4,11 +4,8 @@ What's built and working, what's known-broken, what's still source-only.
 Full docs live at arctic-docs.apiwow.net — this file is the terse engineering
 log, not a tutorial.
 
-Release label: **Arctic Linux - B1** (`B1`). A new letter, not another
-`A1` point release: the install model itself changed - no ISO, no
-guided installer, manual tarball install instead - which is a
-different thing to verify than a bugfix round on the same design.
-Earlier schemes: `a1`-`a1.24`,
+Release label: **Arctic Linux - A1** (`A1`). `A` is for alpha, the whole
+series so far. Earlier schemes: `a1`-`a1.24`,
 `a2`-`a2.61` (one-dot), then a brief `main.bigfix.smallfix` +
 stability-suffix scheme (`3-SS`, `3.1-SS`) that claimed a maturity - "super
 stable" - the distro was not actually at: a fresh install of `3-SS` itself
@@ -18,8 +15,14 @@ from every other package) that had gone stale and was found the same day
 `3-SS` shipped. `A1 TESTING` came next and also shipped broken - wifi never
 worked on a real install, only the live image; the chroot backspace fix
 didn't take; `arctic-shell` couldn't run anything it had just installed.
-That build is withdrawn everywhere it was listed. Reset to a plain `A1`:
-no qualifier claiming more verification than this has actually had.
+That build was withdrawn and reset to a plain `A1` - an ISO build, no
+qualifier claiming more verification than it had actually had.
+
+This `A1` supersedes that one: the install model itself changed - no ISO,
+no guided installer, manual tarball install instead - which is a
+different thing to verify than a bugfix round on the same design, so it
+replaces the earlier ISO-based `A1` release outright rather than sitting
+beside it under a `B1`.
 
 This round moved to tarball-only distribution - no ISO, no guided
 installer, manual partitioning/format/chroot instead. Tarball filenames
