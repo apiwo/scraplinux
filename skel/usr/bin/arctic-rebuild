@@ -112,6 +112,17 @@ detect_microcode() {
 	esac
 }
 
+# hw.bootloader ships empty in every tarball - nothing in the documented
+# install (`alpm add limine`, then `arctic-rebuild`) ever declares it, so
+# without this the whole bootloader-config step silently no-ops forever:
+# no error, no warning, just no limine.conf. Same auto/detect shape as
+# hw.gpu/hw.microcode above.
+detect_bootloader() {
+	in_list limine $cur_pkgs && { echo limine; return; }
+	in_list grub $cur_pkgs && { echo grub; return; }
+	echo ""
+}
+
 cur_pkgs=$(explicit_pkgs)
 cur_svcs=$(enabled_services)
 
@@ -151,6 +162,7 @@ users_declared=$(conf_get "$D/users.conf" users.declared)
 gpu_declared=$(conf_get1 "$D/hardware.conf" hw.gpu);       gpu_declared=${gpu_declared:-auto}
 uc_declared=$(conf_get1 "$D/hardware.conf" hw.microcode);  uc_declared=${uc_declared:-auto}
 bootloader_declared=$(conf_get1 "$D/hardware.conf" hw.bootloader)
+[ -n "$bootloader_declared" ] || bootloader_declared=$(detect_bootloader)
 boot_timeout=$(conf_get1 "$D/hardware.conf" hw.boot_timeout); boot_timeout=${boot_timeout:-3}
 
 # ------------------------------------------------------------------- identity
