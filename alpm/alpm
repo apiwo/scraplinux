@@ -610,6 +610,73 @@ install_one() {
 	rm -rf "$tmp" "$tmp.files" "$tmp.PKGINFO" "$tmp.INSTALL" "$tmp.takeover" "$tmp.oldfiles"
 }
 
+# Keeps /etc/arctic/system.conf's SYS_PACKAGES in step with what an
+# ordinary `alpm add`/`alpm rem` just did to the explicit set, so a later
+# arctic-rebuild (or the one `alpm system upgrade` runs on its own) does
+# not see a package installed this way as drift to remove - a real
+# machine had dwm and fastfetch installed by hand, and the next system
+# upgrade removed both, because system.conf still said only what the
+# install itself had declared. Declarative and imperative alpm use stay
+# one system now instead of two that fight over what should be installed.
+# Only ever touches packages actually named on the command line -
+# dependencies pulled in along the way are never added to the file, the
+# same as they are never listed in it by arctic-rebuild's own seeding.
+sync_declared_packages() {
+	_sdp_conf="$ALPM_ROOT/etc/arctic/system.conf"
+	[ -f "$_sdp_conf" ] || return 0
+	_sdp_op=$1; shift
+	[ $# -gt 0 ] || return 0
+	grep -q '^SYS_PACKAGES="' "$_sdp_conf" || return 0
+
+	_sdp_cur=$(
+		SYS_PACKAGES=""
+		# shellcheck disable=SC1090
+		. "$_sdp_conf" 2>/dev/null
+		printf '%s\n' $SYS_PACKAGES
+	)
+
+	_sdp_new=$_sdp_cur
+	for _sdp_p in "$@"; do
+		case "$_sdp_op" in
+		add)
+			case " $(printf '%s' "$_sdp_new" | tr '\n' ' ') " in
+			*" $_sdp_p "*) ;;
+			*) _sdp_new=$(printf '%s\n%s\n' "$_sdp_new" "$_sdp_p") ;;
+			esac ;;
+		del)
+			_sdp_new=$(printf '%s\n' "$_sdp_new" | { grep -vx "$_sdp_p" || :; }) ;;
+		esac
+	done
+	_sdp_new=$(printf '%s\n' $_sdp_new | awk 'NF' | sort -u)
+	_sdp_cur_sorted=$(printf '%s\n' $_sdp_cur | awk 'NF' | sort -u)
+	[ "$_sdp_new" = "$_sdp_cur_sorted" ] && return 0
+
+	# Rewrites only the SYS_PACKAGES=... assignment, leaving the rest of
+	# the file untouched - handles both the single-line form the shipped
+	# template ships (SYS_PACKAGES="") and the multi-line form
+	# arctic-install/arctic-rebuild seed it with. A single-line assignment
+	# is self-closing (a '"' appears again on the same line after the
+	# opening one); only a bare "SYS_PACKAGES=\"" with nothing closing it
+	# on that line means the next lines are the list, ending at a line
+	# that is just '"' on its own.
+	awk -v newlist="$_sdp_new" '
+		BEGIN { insec = 0 }
+		/^SYS_PACKAGES="/ {
+			rest = $0
+			sub(/^SYS_PACKAGES="/, "", rest)
+			printf "SYS_PACKAGES=\"\n"
+			n = split(newlist, arr, "\n")
+			for (i = 1; i <= n; i++) if (arr[i] != "") printf "\t%s\n", arr[i]
+			printf "\"\n"
+			if (rest !~ /"/) insec = 1
+			next
+		}
+		insec && /^"[ \t]*$/ { insec = 0; next }
+		insec { next }
+		{ print }
+	' "$_sdp_conf" >"$_sdp_conf.new" && mv "$_sdp_conf.new" "$_sdp_conf" && chmod 600 "$_sdp_conf"
+}
+
 cmd_ins() {
 	need_root; alpm_init_db
 	[ $# -gt 0 ] || die "no packages named. See 'alpm' for usage."
@@ -845,6 +912,10 @@ cmd_ins() {
 
 	run_hooks
 	tx_end ok
+	_sdp_ok=""
+	for p in $requested; do is_installed "$p" && _sdp_ok="$_sdp_ok $p"; done
+	# shellcheck disable=SC2086
+	[ -n "$_sdp_ok" ] && sync_declared_packages add $_sdp_ok
 	printf '\n'
 	# One closing line for the transaction, not one per requested package.
 	# Installing the base system asks for twenty-odd packages at once, and a
@@ -908,6 +979,7 @@ cmd_ins_source() {
 		tx_begin; HOOK_KERNEL=""; REASON=explicit
 		install_one "$out"
 		run_hooks; tx_end ok
+		sync_declared_packages add "$p"
 		ok "$p built from source and installed"
 	done
 }
@@ -1068,6 +1140,7 @@ do_remove() {
 	HOOK_KERNEL=""
 	run_hooks
 	tx_end ok
+	sync_declared_packages del "$@"
 	ok "done. Transaction ${A_TEAL}$TX${C_R}"
 }
 
