@@ -1,7 +1,7 @@
 # Arctic Linux
 
 glibc, LLVM, a BSD-style userland, busybox init, zsh, doas, and its own
-package manager (alpm). Installed by hand, the way Arch or LFS is - no
+package manager (alpm). Installed by hand, the way Gentoo or Kiss is - no
 guided installer, no ISO.
 
 Full docs: **[arctic-docs.apiwow.net](https://arctic-docs.apiwow.net)**
