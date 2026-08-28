@@ -8,7 +8,7 @@ Full docs: **[arctic-docs.apiwow.net](https://arctic-docs.apiwow.net)**
 
 ## Install
 
-No ISO. Boot any live Linux, partition and format by hand, then:
+Boot any live Linux distribution or use an SSH,then partition and format by hand, then:
 
 ```sh
 tar -xJf arctic-linux-def-tarball.tar.xz -C /mnt
