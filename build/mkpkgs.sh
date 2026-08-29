@@ -338,7 +338,7 @@ if [ -d "$R/usr/lib/firmware" ]; then
 else bad "linux-firmware (not installed)"; fi
 
 # ------------------------------------------ the GNU pieces the NVIDIA blob needs
-step "packaging gcc-libs (libstdc++ and libgcc_s, for the NVIDIA driver)"
+step "packaging gcc-libs (libstdc++ and libgcc_s, for the NVIDIA driver and rustc/cargo)"
 pd=$PKGDIRS/gcc-libs; rm -rf "$pd"; mkdir -p "$pd/usr/lib"
 gl=0
 for f in "$R"/usr/lib/libstdc++.so.6* "$R"/usr/lib/libgcc_s.so.1; do
@@ -348,9 +348,19 @@ done
 for f in "$pd"/usr/lib/libstdc++.so.6.* "$pd"/usr/lib/libgcc_s.so.1; do
 	[ -f "$f" ] && strip --strip-unneeded "$f" 2>/dev/null || :
 done
+# Unversioned dev symlinks - only the runtime SONAME files were ever
+# copied in, so anything passing the plain -lgcc_s/-lstdc++ spelling to
+# the linker (rustc's own build.rs does exactly this) failed with "unable
+# to find library" even with the real .so.N files sitting right there,
+# because the linker looks for the unversioned name specifically, not a
+# glob. Runtime dynamic loading (dlopen/NEEDED-tag resolution) never
+# needed these - only ever a build-time gap, until rustc/cargo turned out
+# to need it too.
+[ -e "$pd/usr/lib/libgcc_s.so.1" ] && ln -sf libgcc_s.so.1 "$pd/usr/lib/libgcc_s.so"
+[ -e "$pd/usr/lib/libstdc++.so.6" ] && ln -sf libstdc++.so.6 "$pd/usr/lib/libstdc++.so"
 if [ "$gl" -gt 0 ]; then
 	emit "$pd" gcc-libs 15.3.0 main \
-		"libstdc++ and libgcc_s runtime, required by the NVIDIA driver" \
+		"libstdc++ and libgcc_s runtime, required by the NVIDIA driver and by rustc/cargo (both link against libgcc_s.so.1 for unwinding)" \
 		"GPL-3.0-or-later WITH GCC-exception-3.1" "https://gcc.gnu.org/" "glibc"
 else bad "gcc-libs (not built yet)"; fi
 
