@@ -1,0 +1,27 @@
+# login.defs - shadow password suite configuration.
+#
+# Read by anything that needs default UID/GID ranges or password aging
+# policy without hardcoding them (useradd/adduser, and desktop login
+# managers like sddm filtering system accounts off the user list).
+
+UID_MIN                  1000
+UID_MAX                 60000
+SYS_UID_MIN                 1
+SYS_UID_MAX                999
+
+GID_MIN                  1000
+GID_MAX                 60000
+SYS_GID_MIN                  1
+SYS_GID_MAX                999
+
+PASS_MAX_DAYS            99999
+PASS_MIN_DAYS                0
+PASS_WARN_AGE                7
+
+# toybox's chpasswd/login only understand the traditional crypt(3) DES/
+# MD5/SHA schemes, not yescrypt - YESCRYPT here silently produced a
+# password chpasswd itself couldn't verify ("login: bad salt" for every
+# login attempt, root effectively locked out). Confirmed by testing
+# both directly: `chpasswd` with no -c flag (reads this file) failed;
+# `chpasswd -c SHA512` worked and produced a real, verifiable $6$ hash.
+ENCRYPT_METHOD          SHA512
