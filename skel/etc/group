@@ -11,4 +11,6 @@ storage:x:95:
 network:x:90:
 netdev:x:91:
 messagebus:x:81:
+sddm:x:80:
+sshd:x:82:
 nobody:x:65534:

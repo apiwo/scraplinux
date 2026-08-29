@@ -1,6 +1,6 @@
 #!/bin/sh
 NAME=sddm
-CMD=/usr/bin/sddm
+CMD=/usr/bin/sddm-logwrap
 ARGS=""
 BACKGROUND=yes
 
