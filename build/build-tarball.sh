@@ -3,6 +3,9 @@
 #
 #   build-tarball.sh def       busybox init (default)
 #   build-tarball.sh openrc    OpenRC wired up as init instead
+#   build-tarball.sh wayland   busybox init, SDDM + a Wayland compositor
+#                              lineup bundled directly (dwl, labwc, tinywl,
+#                              wio, niri - pick one at the SDDM login screen)
 #
 # No ISO, no guided installer - see the main site's install guide.
 # Bundled raw: glibc, toybox, busybox, zsh, doas, e2fsprogs, util-linux,
@@ -24,9 +27,10 @@ OUT=$B/tarball-out
 ARCH=x86_64
 
 case "$FLAVOR" in
-def)    TARNAME="arctic-linux-def-tarball.tar.xz" ;;
-openrc) TARNAME="arctic-linux-openrc-tarball.tar.xz" ;;
-*) echo "build-tarball.sh: unknown flavor '$FLAVOR' (def or openrc)" >&2; exit 1 ;;
+def)     TARNAME="arctic-linux-def-tarball.tar.xz" ;;
+openrc)  TARNAME="arctic-linux-openrc-tarball.tar.xz" ;;
+wayland) TARNAME="arctic-linux-wayland-tarball.tar.xz" ;;
+*) echo "build-tarball.sh: unknown flavor '$FLAVOR' (def, openrc or wayland)" >&2; exit 1 ;;
 esac
 
 step() { printf '\n\033[1;36m:: %s\033[0m\n' "$*"; }
@@ -59,6 +63,14 @@ for l in bin sbin; do
 done
 ln -s usr/lib "$S/lib" 2>/dev/null || :
 ln -s usr/lib "$S/lib64" 2>/dev/null || :
+# usr/lib64 -> usr/lib too, not just the top-level /lib64 - a handful of
+# packages (libffi's own ./configure, xorg-server's compiled-in DRI driver
+# search path) end up looking for /usr/lib64 specifically regardless of an
+# explicit --libdir=/usr/lib at their own build time. Found the hard way:
+# Xorg's AIGLX/GLX loader hardcodes /usr/lib64/dri and never falls back to
+# /usr/lib/dri, so a real, correctly-placed swrast_dri.so at /usr/lib/dri
+# was invisible to it ("cannot open shared object file") until this existed.
+ln -s lib "$S/usr/lib64" 2>/dev/null || :
 mkdir -p "$S/run" "$S/var"
 ln -s ../run "$S/var/run" 2>/dev/null || :
 ln -s ../run/lock "$S/var/lock" 2>/dev/null || :
@@ -143,7 +155,26 @@ unpack_pkg() {
 # the host environment's own copies are still on PATH; every one of
 # these failures only shows up once arctic-chroot resets PATH to the
 # target's own binaries.
-BASE_EXPLICIT="glibc toybox busybox zsh doas e2fsprogs util-linux dosfstools onetrueawk xz libarchive"
+# eudev, not mdev+libudev-zero: eudev ships real hwdb device classification
+# (60-input-id.hwdb, 70-mouse.hwdb, 70-touchpad.hwdb, ...), which is what
+# X's udev-based InputClass matching actually expects - libudev-zero derives
+# device type from raw /sys capability bits with no hwdb at all, a bare-
+# minimum shim built for mdev-only setups.
+# curl + ca-certificates: alpm's own downloader shells out to curl for
+# every https:// fetch (toybox/busybox wget answer "unsupported protocol"
+# or, worse, silently send a plaintext request on the TLS port and read
+# the connection reset as a generic failure) - and curl itself refuses
+# every handshake with no CA bundle to check the server certificate
+# against. Neither was ever in this list, so a fresh install had no way
+# to bootstrap itself at all: `alpm-strap` and `genfstab` ran fine
+# because both are invoked from *outside* the chroot, on the live
+# environment's own curl - but every `alpm add` after `arctic-chroot`,
+# starting with arctic-base itself, failed on the very first package
+# with a bare "download failed", no interface, no mirror, no proxy
+# involved. Confirmed end to end: extracting the tarball fresh, entering
+# the chroot with no other network tooling pre-staged, `alpm add
+# arctic-base` now fetches and installs on the first try.
+BASE_EXPLICIT="glibc toybox busybox zsh doas e2fsprogs util-linux dosfstools onetrueawk xz libarchive eudev iw wpa_supplicant ca-certificates curl"
 BASE_SET=$(pkg_deps $BASE_EXPLICIT)
 # e2fsprogs depends on util-linux-libs, which BASE_EXPLICIT's own util-linux
 # already replaces (same libmount/libblkid/libuuid, see its recipe) - this
@@ -166,6 +197,14 @@ for p in $BASE_SET; do
 	unpack_pkg "$p" "$reason" && ok "$p"
 done
 
+# Enable eudev at boot the same way rc.boot's own device-manager check
+# expects (existence in /etc/arctic/services/udev, content unchecked) -
+# without this the marker is absent and rc.boot falls back to mdev even
+# with eudev's binary sitting right there unused.
+mkdir -p "$S/etc/arctic/services"
+: >"$S/etc/arctic/services/udev"
+ok "eudev enabled at boot"
+
 if [ "$FLAVOR" = openrc ]; then
 	step "adding openrc"
 	OPENRC_SET=$(pkg_deps openrc)
@@ -181,6 +220,49 @@ if [ "$FLAVOR" = openrc ]; then
 		[ "$p" = openrc ] && reason=explicit
 		unpack_pkg "$p" "$reason" && ok "$p"
 	done
+fi
+
+if [ "$FLAVOR" = wayland ]; then
+	step "adding SDDM + the Wayland compositor lineup (dwl/labwc/tinywl/wio/niri)"
+	# Every compositor's own -dms profile package pulls in that compositor
+	# plus a real session around it - see ports/profile/*-dms. dwl/dms is
+	# deliberately not here: the published dwl binary needs
+	# libwlroots-0.19.so, which this tree no longer ships, and a rebuild
+	# hits a second, unresolved wayland-scanner codegen issue - see
+	# ports/base/dwl/recipe.local. kiwmi is deliberately not here either:
+	# real wlroots API drift going back to its last 2022 commit, documented
+	# in ports/base/kiwmi/recipe.local - it does not build against Arctic's
+	# wlroots. "fluxland" from the original ask never matched a real
+	# compositor and was dropped. labwc/tinywl/wio/niri is a complete,
+	# working four-compositor lineup without either.
+	WAYLAND_SET=$(pkg_deps labwc-dms tinywl-dms wio-dms niri-dms sddm sddm-arctic-theme)
+	# Same util-linux/util-linux-libs collision as openrc above.
+	if printf '%s\n' $BASE_SET | grep -qx util-linux && \
+	   printf '%s\n' $WAYLAND_SET | grep -qx util-linux-libs; then
+		WAYLAND_SET=$(printf '%s\n' $WAYLAND_SET | grep -vx util-linux-libs)
+	fi
+	for p in $WAYLAND_SET; do
+		reason=dep
+		case " labwc-dms tinywl-dms wio-dms niri-dms " in *" $p "*) reason=explicit ;; esac
+		unpack_pkg "$p" "$reason" && ok "$p"
+	done
+	# sddm's own package ships the binary, not a boot-time service - wire
+	# it up the same way lightdm's rc.d script does, and mark it enabled
+	# the same way rc.boot's own service loop expects (existence in
+	# /etc/arctic/services/, content unchecked - see rc.boot's `for s in
+	# /etc/arctic/services/*` loop, `[ -e "$s" ]` is the entire test).
+	install -Dm755 "$SRCTREE/skel/etc/rc.d/sddm" "$S/etc/rc.d/sddm"
+	# start-stop-daemon --background (which rc.d/sddm's svc_main uses)
+	# redirects the daemonized child's stdout/stderr to /dev/null before it
+	# ever runs - discarding any crash message sddm prints before it gets
+	# far enough to open its own /var/log/sddm.log. This wrapper sits in
+	# front of it so that output lands in /var/log/sddm-raw.log instead of
+	# vanishing, which is the difference between an empty log and an actual
+	# reason the next time sddm dies before writing anything itself.
+	install -Dm755 "$SRCTREE/skel/usr/bin/sddm-logwrap" "$S/usr/bin/sddm-logwrap"
+	mkdir -p "$S/etc/arctic/services"
+	: >"$S/etc/arctic/services/sddm"
+	ok "sddm enabled at boot, session picker offers dwl/labwc/tinywl/wio/niri"
 fi
 
 # ---------------------------------------------------------------- 2. alpm
@@ -202,6 +284,11 @@ mkdir -p "$S/var/lib/alpm/local" "$S/var/lib/alpm/sync" "$S/var/lib/alpm/hold" \
 	"$S/var/cache/alpm/build"
 mkdir -p "$S/etc/arctic"
 install -Dm644 "$SRCTREE/skel/etc/arctic/conf.lib" "$S/etc/arctic/conf.lib"
+# svc.lib: every rc.d service script (lightdm, dbus, crond, sddm, ...)
+# sources this for start/stop/status - without it here, none of them
+# have worked in any tarball flavor at all, pre-existing and unrelated
+# to any one flavor.
+install -Dm644 "$SRCTREE/skel/etc/arctic/svc.lib" "$S/etc/arctic/svc.lib"
 
 install -Dm755 "$SRCTREE/skel/usr/bin/arctic-chroot" "$S/usr/bin/arctic-chroot"
 
@@ -214,6 +301,26 @@ printf 'root:x:0:0:root:/root:/bin/sh\n' >"$S/etc/passwd"
 printf 'root:x:0:\nwheel:x:10:\n' >"$S/etc/group"
 printf 'root:!:20000:0:99999:7:::\n' >"$S/etc/shadow"
 chmod 600 "$S/etc/shadow"
+# login.defs: UID/GID ranges and ENCRYPT_METHOD - without it here, chpasswd/
+# useradd fall back to whatever default their own build assumed, and
+# toybox's chpasswd defaults to a hash scheme its own login cannot verify
+# (see the ENCRYPT_METHOD comment in the file itself). Was created but never
+# wired into any tarball flavor's bundling list until now.
+install -Dm644 "$SRCTREE/skel/etc/login.defs" "$S/etc/login.defs"
+# ld.so.conf: LLVM's runtimes build (libc++/libc++abi/libunwind) installs
+# into a target-triple subdirectory by CMake's own default, not straight
+# into /usr/lib like every other Arctic package - glibc's dynamic linker
+# only trusts /lib and /usr/lib by default, so without this, clang itself
+# (and anything linked against libc++, rust/cargo included, since both are
+# built with LLVM_USE_LIBCXX=1) fails on a freshly installed system:
+# "error while loading shared libraries: libc++.so.1: cannot open shared
+# object file". This exact bug and fix are already documented in
+# docs/STATUS.md ("Alpha 3 SS") from the old mkiso/skel-copy install
+# path - it silently stopped applying when the tarball flavors took over
+# with their own curated file list, since ld.so.conf was never added to
+# it. alpm already runs ldconfig after every transaction; this just gives
+# it something to find.
+install -Dm644 "$SRCTREE/skel/etc/ld.so.conf" "$S/etc/ld.so.conf"
 mkdir -p "$S/root"
 
 ok "alpm, alpm-strap, arctic-chroot in place"
@@ -221,10 +328,13 @@ ok "alpm, alpm-strap, arctic-chroot in place"
 # ---------------------------------------------------------------- 3. init
 step "wiring up init ($FLAVOR)"
 case "$FLAVOR" in
-def)
+def|wayland)
 	# busybox's own init, already unpacked as usr/bin/init above via the
-	# busybox package's applet symlinks - nothing further to do.
-	ok "busybox init (default)"
+	# busybox package's applet symlinks - nothing further to do. wayland
+	# bundles a desktop on top, but stays busybox init throughout - sddm
+	# itself is what actually starts the graphical session, from a
+	# regular getty-driven login same as any other busybox-init service.
+	ok "busybox init"
 	;;
 openrc)
 	# openrc-init is OpenRC's own PID1, not a script busybox init runs -
@@ -249,17 +359,24 @@ esac
 # missing until nothing is.
 step "resolving shared libraries"
 close_libs() {
+	# Always rebuilt, never cached across runs: a persistent cache here
+	# went stale the moment a single new package was published to the
+	# repo, and stayed stale silently - close_libs() itself has no way
+	# to notice a cache built hours ago no longer reflects the repo, so
+	# newly-built packages (icu, double-conversion, md4c, ...) never got
+	# pulled in even though the packages providing them existed on disk
+	# the whole time. Re-indexing ~360 packages costs seconds, not
+	# minutes; a desktop that silently ships without libicui18n.so does
+	# not.
 	_cl_sonames="$B/tarball/.sonames.$ARCH"
-	if [ ! -s "$_cl_sonames" ]; then
-		printf '   indexing what each package provides\n'
-		for pkg in "$REPO"/*/"$ARCH"/*.alpmz; do
-			[ -f "$pkg" ] || continue
-			_cl_n=$(basename "$pkg" | sed 's/-[^-]*-[0-9]*\.[^.]*\.alpmz$//')
-			tar -xOf "$pkg" .FILES 2>/dev/null | \
-				sed -n 's|.*/\([^/]*\.so[^/]*\)$|\1|p' | \
-				while read -r so; do printf '%s\t%s\t%s\n' "$so" "$_cl_n" "$pkg"; done
-		done >"$_cl_sonames"
-	fi
+	printf '   indexing what each package provides\n'
+	for pkg in "$REPO"/*/"$ARCH"/*.alpmz; do
+		[ -f "$pkg" ] || continue
+		_cl_n=$(basename "$pkg" | sed 's/-[^-]*-[0-9]*\.[^.]*\.alpmz$//')
+		tar -xOf "$pkg" .FILES 2>/dev/null | \
+			sed -n 's|.*/\([^/]*\.so[^/]*\)$|\1|p' | \
+			while read -r so; do printf '%s\t%s\t%s\n' "$so" "$_cl_n" "$pkg"; done
+	done >"$_cl_sonames"
 	_cl_round=0
 	while [ "$_cl_round" -lt 8 ]; do
 		_cl_round=$((_cl_round+1))
@@ -276,10 +393,22 @@ close_libs() {
 			return 0
 		fi
 		_cl_added=""
+		# Every unmatched lib in this round used to just `continue` silently -
+		# as long as at least one OTHER lib in the same round resolved,
+		# _cl_added stayed non-empty and the round was treated as fully
+		# successful, permanently hiding anything with no providing package
+		# at all (libxcvt.so.0 - Xorg's own hard dependency, no package ever
+		# built for it - was silently dropped this way while libtirpc.so.3
+		# resolved in the same round and masked it; only surfaced by an
+		# actual boot test, not by this script's own output).
+		: >"$SCRATCH/unmatched"
 		while read -r lib; do
 			[ -n "$lib" ] || continue
 			_cl_hit=$(awk -F'\t' -v l="$lib" '$1==l{print $2"\t"$3; exit}' "$_cl_sonames")
-			[ -n "$_cl_hit" ] || continue
+			if [ -z "$_cl_hit" ]; then
+				printf '%s\n' "$lib" >>"$SCRATCH/unmatched"
+				continue
+			fi
 			_cl_n=$(printf '%s' "$_cl_hit" | cut -f1)
 			pkg=$(printf '%s' "$_cl_hit" | cut -f2)
 			case " $_cl_added " in *" $_cl_n "*) continue ;; esac
@@ -287,6 +416,11 @@ close_libs() {
 			printf '   %s -> %s\n' "$lib" "$_cl_n"
 			unpack_pkg "$_cl_n" dep || :
 		done <"$SCRATCH/missing"
+		if [ -s "$SCRATCH/unmatched" ]; then
+			printf '   no package provides:\n'
+			sed 's/^/     /' "$SCRATCH/unmatched"
+			return 1
+		fi
 		[ -z "$_cl_added" ] && { printf '   unresolved:\n'; sed 's/^/     /' "$SCRATCH/missing"; return 1; }
 	done
 	return 0
