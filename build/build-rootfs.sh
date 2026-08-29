@@ -63,6 +63,13 @@ done
 ln -sfn "usr/bin" "$R/sbin" 2>/dev/null
 ln -sfn "usr/lib" "$R/lib" 2>/dev/null
 ln -sfn "usr/lib" "$R/lib64" 2>/dev/null
+# usr/lib64 -> lib too, not just the top-level /lib64 - some packages
+# (libffi's own ./configure, xorg-server's compiled-in DRI driver search
+# path) look for /usr/lib64 specifically regardless of an explicit
+# --libdir=/usr/lib at their own build time. Without this, Xorg's AIGLX/GLX
+# loader (hardcoded to /usr/lib64/dri, no fallback to /usr/lib/dri) can't
+# find a real, correctly-placed swrast_dri.so at all.
+ln -sfn "lib" "$R/usr/lib64" 2>/dev/null
 
 # /usr/sbin -> bin, the last of the merged-/usr symlinks.
 #
