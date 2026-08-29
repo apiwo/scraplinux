@@ -497,6 +497,12 @@ install_one() {
 		# Kept aside because the database entry is replaced below, and the
 		# old manifest is what says which files this upgrade drops.
 		cp -f "$ALPM_DB/local/$name/FILES" "$tmp.oldfiles" 2>/dev/null || :
+		# Same reason, for backup=: a file this exact package used to mark
+		# backup= has to stay protected from the stale-file removal below
+		# even on the one upgrade that stops shipping it, or dropping it
+		# from a recipe becomes indistinguishable from actually wanting it
+		# deleted.
+		metaall "$ALPM_DB/local/$name/PKGINFO" backup >"$tmp.oldbackup" 2>/dev/null || : >"$tmp.oldbackup"
 	fi
 
 	kind=$(meta "$tmp/.PKGINFO" kind)
@@ -528,6 +534,24 @@ install_one() {
 	cp -a "$tmp/.PKGINFO" "$tmp.PKGINFO"
 	[ -f "$tmp/.INSTALL" ] && cp -a "$tmp/.INSTALL" "$tmp.INSTALL"
 	rm -f "$tmp/.PKGINFO" "$tmp/.INSTALL" "$tmp/.FILES"
+
+	# backup= files are never blindly overwritten: if the path already
+	# exists on the target, whatever is there wins. A fresh install still
+	# gets the package's own copy (there is nothing local to preserve
+	# yet), but a later upgrade never again silently stamps real, live
+	# state back to a package's static baseline - this is exactly how
+	# /etc/passwd, /etc/group and /etc/shadow got wiped by an ordinary
+	# arctic-base upgrade before backup= was wired up to do anything at
+	# all: it was recorded in every package's own .PKGINFO the whole time
+	# and never once consulted.
+	for _bk_f in $(metaall "$tmp.PKGINFO" backup); do
+		[ -n "$_bk_f" ] || continue
+		case "$_bk_f" in /*) ;; *) _bk_f="/$_bk_f" ;; esac
+		if [ -e "$ALPM_ROOT$_bk_f" ] || [ -L "$ALPM_ROOT$_bk_f" ]; then
+			rm -f "$tmp$_bk_f"
+			info "kept existing $_bk_f (backup=, not overwriting local copy)"
+		fi
+	done
 
 	if have bsdtar; then
 		( cd "$tmp" && bsdtar -cf - . ) | ( cd "$ALPM_ROOT" && bsdtar -xpf - )
@@ -590,12 +614,20 @@ install_one() {
 			[ -n "$_st_f" ] || continue
 			grep -qxF "$_st_f" "$db/FILES" 2>/dev/null && continue
 			[ -e "$ALPM_ROOT$_st_f" ] || [ -L "$ALPM_ROOT$_st_f" ] || continue
+			# A file the old version itself marked backup= does not get
+			# deleted just because this release stopped shipping it -
+			# dropping something from a recipe is not the same thing as
+			# deciding to destroy whatever live state ended up in it.
+			if [ -s "$tmp.oldbackup" ] && grep -qxF "${_st_f#/}" "$tmp.oldbackup" 2>/dev/null; then
+				info "kept $_st_f (was backup= in $name $old, no longer shipped - not deleting)"
+				continue
+			fi
 			tx_save "$_st_f"
 			rm -f "$ALPM_ROOT$_st_f"
 			info "removed $_st_f (no longer in $name $ver-$rel)"
 		done <"$tmp.oldfiles"
 	fi
-	rm -f "$tmp.oldfiles"
+	rm -f "$tmp.oldfiles" "$tmp.oldbackup"
 
 	# Ownership of any identical file handed over above.
 	if [ -s "$tmp.takeover" ]; then
@@ -616,7 +648,7 @@ install_one() {
 	printf '%s %s-%s\n' "$name" "$ver" "$rel" >>"$TX_DIR/packages"
 	alpm_log "install $name $ver-$rel nomod=$NOMOD"
 
-	rm -rf "$tmp" "$tmp.files" "$tmp.PKGINFO" "$tmp.INSTALL" "$tmp.takeover" "$tmp.oldfiles"
+	rm -rf "$tmp" "$tmp.files" "$tmp.PKGINFO" "$tmp.INSTALL" "$tmp.takeover" "$tmp.oldfiles" "$tmp.oldbackup"
 }
 
 # Rewrites pkgs.conf's pkgs.arctic[] block to exactly match every
@@ -1383,7 +1415,7 @@ cmd_fetch() {
 				"$A_GREY" "$tot"
 			printf '  of date. Anything already on this medium can still be installed.%s\n' "$C_R"
 		fi
-		printf '  %scheck the network:  ip addr   ping 1.1.1.1   nmtui%s\n' "$A_GREY" "$C_R"
+		printf '  %scheck the network:  ip addr   ping 1.1.1.1   wifi-connect%s\n' "$A_GREY" "$C_R"
 		alpm_log "fetch failed: no repository reachable"
 		return 1
 	fi
