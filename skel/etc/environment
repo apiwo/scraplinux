@@ -1,0 +1,9 @@
+# Force software GL for the SDDM greeter. Without this, Qt Quick tries
+# DRI3/EGL first and aborts (SIGABRT) on any GPU with no real DRM driver
+# loaded - which is the default state for a brand-new/unsupported GPU
+# before the user opts into a driver package via alpm. Software rendering
+# has no dependency on which (if any) GPU driver is installed, so this is
+# safe as an unconditional default rather than a hardware-specific hack.
+QT_QUICK_BACKEND=software
+QT_XCB_GL_INTEGRATION=none
+LIBGL_ALWAYS_SOFTWARE=1

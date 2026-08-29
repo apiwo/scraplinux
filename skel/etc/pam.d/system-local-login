@@ -1,0 +1,13 @@
+#%PAM-1.0
+# Arctic Linux - baseline PAM stack for the autologin path (sddm-autologin
+# and anything else that skips a real password check). No auth phase here
+# on purpose - the caller has already decided the login is trusted.
+
+account    required     pam_unix.so
+account    required     pam_nologin.so
+
+password   required     pam_unix.so       try_first_pass nullok shadow
+
+session    required     pam_limits.so
+session    required     pam_unix.so
+session    optional     pam_umask.so
