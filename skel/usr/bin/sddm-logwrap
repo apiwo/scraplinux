@@ -1,0 +1,9 @@
+#!/bin/sh
+# start-stop-daemon --background redirects the child's own stdin/stdout/
+# stderr to /dev/null as part of daemonizing it - which silently throws
+# away any crash message sddm prints before it gets far enough to open
+# its own /var/log/sddm.log (a segfault notice, a missing-symbol error,
+# anything from the dynamic linker). Wrapping it here, before
+# start-stop-daemon ever gets to redirect anything, is what actually
+# captures that instead of leaving an empty sddm.log with no clue why.
+exec /usr/bin/sddm "$@" >>/var/log/sddm-raw.log 2>&1
