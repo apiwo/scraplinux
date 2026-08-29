@@ -65,6 +65,47 @@ OUT="$ALPM_BUILDROOT/out"
 # The source cache has to exist before anything is downloaded into it.
 mkdir -p "$OUT" "$ALPM_CACHE/src" "$ALPM_CACHE/pkg"
 
+# glibc/linux-headers headers, specifically - not the rest of the sysroot
+# mechanism above, which only ever holds what an alpm-build session itself
+# just packaged. On a real install (`alpm add -s <pkg>`, the whole point of
+# a source-based package manager) glibc was never "just built this
+# session" - it came with the base tarball - so $ALPM_SYSROOT/usr/include
+# had no C standard headers in it at all, and the unconditional
+# --sysroot=$ALPM_SYSROOT below (clang treats --sysroot as a full replacement
+# for the default header search, not an addition to it) took stdlib.h off
+# the table for anything doing its own C compilation - which is common
+# inside a Rust build: cc-rs-based crates that bundle a small C library
+# (oniguruma for bat's syntax highlighting, libgit2-sys when it is told not
+# to use the build host's own copy - see bat/eza's recipes) failed with
+# "fatal error: 'stdlib.h' file not found" before a single object file
+# compiled, on a totally ordinary `alpm add -s bat`.
+#
+# Only done outside arctic-sandbox (ARCTIC_SANDBOX unset): inside the
+# sandbox, /usr/include is the *build host's* real headers bind-mounted in
+# read-only, not Arctic's own - symlinking those into the sysroot would be
+# exactly the host-contamination bug this sysroot mechanism exists to
+# prevent. Inside arctic-chroot, or on a real installed system running this
+# directly, /usr/include genuinely is Arctic's own glibc, the same one
+# every other binary on the machine already links against - safe to trust.
+if [ "${ARCTIC_SANDBOX:-0}" != "1" ] && [ ! -e "$ALPM_SYSROOT/usr/include" ]; then
+	mkdir -p "$ALPM_SYSROOT/usr"
+	ln -s /usr/include "$ALPM_SYSROOT/usr/include"
+fi
+# Same reasoning, for pkg-config: a dependency installed normally with
+# `alpm add` (cairo, glib, pango, ...) is real, present, and correct on a
+# real system - but PKG_CONFIG_PATH below only ever points inside
+# $ALPM_SYSROOT, which (like usr/include above) only holds what this same
+# alpm-build session has itself produced. A source build needing an
+# ordinarily-installed library - librsvg needing cairo, installed the
+# normal way - failed with "The system library `cairo` required by crate
+# `cairo-sys-rs` was not found", even though `pkg-config --libs cairo` from
+# an ordinary shell on the same machine worked perfectly.
+if [ "${ARCTIC_SANDBOX:-0}" != "1" ] && [ ! -e "$ALPM_SYSROOT/usr/lib/pkgconfig" ]; then
+	mkdir -p "$ALPM_SYSROOT/usr/lib" "$ALPM_SYSROOT/usr/share"
+	ln -s /usr/lib/pkgconfig "$ALPM_SYSROOT/usr/lib/pkgconfig"
+	[ -e "$ALPM_SYSROOT/usr/share/pkgconfig" ] || ln -s /usr/share/pkgconfig "$ALPM_SYSROOT/usr/share/pkgconfig"
+fi
+
 # ---------------------------------------------------------------- Arctic CFLAGS
 # Arctic is an LLVM distribution: clang, lld and the llvm-* binutils, with
 # libc++ over libstdc++. glibc is the only GNU component in the system and
@@ -163,7 +204,11 @@ if [ -d "$ALPM_SYSROOT/usr" ]; then
 	export CMAKE_PREFIX_PATH="$ALPM_SYSROOT/usr${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
 	export ACLOCAL_PATH="$ALPM_SYSROOT/usr/share/aclocal${ACLOCAL_PATH:+:$ACLOCAL_PATH}"
 	_HOST_PATH=$PATH
-	export PATH="$ALPM_SYSROOT/usr/bin:$PATH"
+	# usr/local/bin too: meson (and anything else installed there instead of
+	# usr/bin) was invisible here, so it fell through to the host's own copy,
+	# which then crashes trying to link against this sysroot's incompatible
+	# glibc instead of running cleanly against the host's own.
+	export PATH="$ALPM_SYSROOT/usr/local/bin:$ALPM_SYSROOT/usr/bin:$PATH"
 	# --sysroot, not -isystem. -isystem is a plain search-path entry, so
 	# clang's driver put it ahead of the *implicit* c++/v1 path it adds for
 	# its own bundled libc++ - meaning libc++'s own <cctype> and <cmath>
