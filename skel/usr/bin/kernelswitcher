@@ -85,8 +85,16 @@ release_of() {
 		[ -n "$_r" ] && { printf '%s\n' "$_r"; return 0; }
 	fi
 	# Not in the database (installed by hand, or the database is being
-	# rebuilt): the modules directory ending in this kernel's name is still
-	# a straight answer.
+	# rebuilt): `make modules_install` names the directory after the exact
+	# kernel release string with no prefix at all - /usr/lib/modules/7.1.3-
+	# arctic-base, not .../*-7.1.3-arctic-base. That glob can never match a
+	# bare, unprefixed name, which is exactly what a hand-copied kernel
+	# (nothing in the package database yet) always has: `kernelswitcher add`
+	# kept reporting "has no initramfs" even right after a successful
+	# arctic-mkinitramfs run, because release_of() itself was silently
+	# failing to resolve at all, before initrd_of() ever got to check
+	# whether the initramfs file existed.
+	[ -d "/usr/lib/modules/$1" ] && { printf '%s\n' "$1"; return 0; }
 	for d in /usr/lib/modules/*-"$1"; do
 		[ -d "$d" ] && { printf '%s\n' "${d##*/}"; return 0; }
 	done

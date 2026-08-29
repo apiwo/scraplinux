@@ -269,12 +269,12 @@ wallpaper_style: centered
 /Arctic linux
     protocol: linux
     kernel_path: boot():/$kname
-    kernel_cmdline: ${luks}${rflags}root=$rootspec rw quiet loglevel=3 arctic.splash$mods
+    kernel_cmdline: ${luks}${rflags}root=$rootspec rw quiet loglevel=3 arctic.splash usbcore.autosuspend=-1$mods
 
 /Arctic linux (verbose)
     protocol: linux
     kernel_path: boot():/$kname
-    kernel_cmdline: ${luks}${rflags}root=$rootspec rw loglevel=7$mods
+    kernel_cmdline: ${luks}${rflags}root=$rootspec rw loglevel=7 usbcore.autosuspend=-1$mods
 
 /Arctic linux (recovery shell)
     protocol: linux
@@ -306,7 +306,7 @@ write_grub_cfg() {
 		printf 'set default=0\n'
 		printf 'insmod all_video\n'
 		printf 'menuentry "Arctic linux" {\n'
-		printf '\tlinux /%s %s%sroot=%s rw quiet\n' "$kname" "$luks" "$rflags" "$rootspec"
+		printf '\tlinux /%s %s%sroot=%s rw quiet usbcore.autosuspend=-1\n' "$kname" "$luks" "$rflags" "$rootspec"
 		[ -n "$initrd" ] && printf '\tinitrd /%s\n' "$(basename "$initrd")"
 		printf '}\n'
 		printf 'menuentry "Arctic linux (recovery shell)" {\n'
