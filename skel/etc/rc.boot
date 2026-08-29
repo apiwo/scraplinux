@@ -54,13 +54,21 @@ rc_log "=== Arctic boot $(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null) ==="
 rc_log "kernel: $(uname -r 2>/dev/null)"
 
 # ------------------------------------------------------------------------ devices
-# Arctic uses busybox mdev with libudev-zero, so there is no systemd-derived
-# udev in the base system. eudev is available in extra for anyone who wants it.
-# The line names the one that actually ran - "starting the device manager" is
-# true of either and tells you nothing when you are looking at a boot log
-# trying to work out which one this machine came up with.
+# eudev is the default device manager; busybox mdev is the fallback for
+# anything eudev is not installed/enabled on. The line names the one that
+# actually ran - "starting the device manager" is true of either and tells
+# you nothing when you are looking at a boot log trying to work out which
+# one this machine came up with.
 if [ -x /sbin/udevd ] && [ -f /etc/arctic/services/udev ]; then
 	begin "Starting udev"
+	# hwdb.d/*.hwdb are text source, not something udevd reads directly -
+	# without compiling them into hwdb.bin first, every device-classification
+	# rule in them (60-input-id.hwdb, 70-mouse.hwdb, 70-touchpad.hwdb, ...)
+	# silently does nothing, and X's udev-based InputClass matching has
+	# nothing to go on. Regenerating this every boot is cheap and correct
+	# regardless of whether any hwdb.d file actually changed since the last
+	# one.
+	udevadm hwdb --update 2>/dev/null
 	/sbin/udevd --daemon 2>/dev/null
 	udevadm trigger --action=add --type=subsystems 2>/dev/null
 	udevadm trigger --action=add --type=devices 2>/dev/null
@@ -359,6 +367,14 @@ for _a in $(cat /proc/cmdline 2>/dev/null); do
 	esac
 done
 
+# Full kernel ring buffer, saved before any service (including a display
+# manager) gets a chance to touch the display - this is what actually
+# happened during device/module init, GPU probing included, not just what
+# the framebuffer console showed on screen. /var/log persists across
+# boots; dmesg's own ring buffer does not, and a hard reset after a black
+# screen loses whatever never made it to disk.
+dmesg >/var/log/dmesg-early.log 2>/dev/null || :
+
 # ------------------------------------------------------------------------ services
 #
 # Started together, then waited on in the same order they started - not one
@@ -478,6 +494,29 @@ case " $(cat /proc/cmdline 2>/dev/null) " in
 	{ command -v clear >/dev/null 2>&1 && clear 2>/dev/null; } || \
 	printf '\033[H\033[2J' ;;
 esac
+
+# Second snapshot, after every service (a display manager included) has
+# had a chance to run - diffing this against dmesg-early.log is what
+# actually happened once something tried to take the screen over.
+dmesg >/var/log/dmesg-late.log 2>/dev/null || :
+
+# Continuous kernel log, for the case dmesg-late.log above cannot cover: the
+# desktop hangs solid sometime *after* boot and the only way off it is the
+# power button. That snapshot is taken once, right after boot, before a
+# display manager has drawn a single frame - it holds nothing from whatever
+# the kernel logs once the machine is actually in use. This tails the ring
+# buffer for the rest of the session and syncs after every line, so a hard
+# power-off still leaves on disk whatever the kernel said up to a couple of
+# seconds before it happened, instead of losing all of it with the ring
+# buffer in RAM.
+if command -v dmesg >/dev/null 2>&1; then
+	(
+		dmesg -w -T 2>/dev/null | while IFS= read -r _dl_line; do
+			printf '%s\n' "$_dl_line" >>/var/log/dmesg-live.log
+			sync
+		done
+	) &
+fi
 
 # /run is a tmpfs, so keep a copy somewhere that survives the boot. This is
 # the first thing to look at when something did not come up.
