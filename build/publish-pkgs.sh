@@ -23,11 +23,17 @@ TREE=${ARCTIC_TREE:-/home/apiwo/arctic}
 SITE=${1:-$B/src-extra/arctic-linux-pkgs}
 ARCH=x86_64
 
-# GitHub rejects any file of 100 MiB or more. Rather than pushing a tree that
-# will be refused, skip those here - and because the INDEX is generated from
-# the files that actually landed, the result stays honest about what can be
-# downloaded.
-MAXSIZE=104857600
+# The binding constraint here is not GitHub's raw 100 MiB push limit - this
+# repo is also deployed as a Cloudflare Pages site, and Pages refuses the
+# whole deploy if a single asset is 25 MiB or more ("Error: Pages only
+# supports files up to 25 MiB in size"). A file under 100 MiB pushes to git
+# fine and then breaks every deploy after it, silently: the site keeps
+# serving whatever it last deployed successfully while looking like nothing
+# is wrong. Use Pages' limit (in MiB, not the decimal-MB "25000000" an
+# earlier version of this used - that was tight enough to also exclude
+# glibc's real ~24.3 MiB package for no reason), with a little headroom
+# under the exact boundary.
+MAXSIZE=$((25*1024*1024))
 
 REPOS="main extra base kernels profile nonfree alt-nonfree multilib fix"
 
@@ -72,10 +78,22 @@ for r in $REPOS; do
 	dst="$SITE/ALL/$r/$ARCH"
 	mkdir -p "$dst"
 	# Remove packages that are no longer in the build repo, so a renamed or
-	# withdrawn package does not linger on the mirror.
+	# withdrawn package does not linger on the mirror. Also remove ones that
+	# are still in the build repo but now too large: the copy loop below
+	# only ever skips *copying* an oversized file, so a package that was
+	# small enough to publish once and then grew past MAXSIZE (or was
+	# published before MAXSIZE existed at all - this is exactly how two
+	# ~90-99 MiB kernel packages ended up committed and broke every
+	# Cloudflare Pages deploy afterward, silently, since nothing here ever
+	# went back and removed them) would otherwise sit in the tree forever.
 	for f in "$dst"/*.alpmz; do
 		[ -f "$f" ] || continue
-		[ -f "$src/$(basename "$f")" ] || { rm -f "$f"; note "$r: withdrew $(basename "$f")"; }
+		b=$(basename "$f")
+		if [ ! -f "$src/$b" ]; then
+			rm -f "$f"; note "$r: withdrew $b"
+		elif [ "$(wc -c <"$f")" -ge "$MAXSIZE" ]; then
+			rm -f "$f"; note "$r: withdrew $b (now over the size limit)"
+		fi
 	done
 	n=0; big=0
 	for f in "$src"/*.alpmz; do
@@ -166,15 +184,13 @@ listing() {
 </head>
 <body>
 <nav class="topbar">
-  <div class="wrap" style="padding:0;">
-    <a href="https://arctic-linux.apiwow.net">main page</a>
-    <a href="https://pkg-arctic.apiwow.net">pkg</a>
-    <a href="https://ports-arctic.apiwow.net">ports</a>
-    <a href="https://arctic-docs.apiwow.net">docs</a>
-    <a href="https://arctic-releases.apiwow.net">releases</a>
-    <a href="https://github.com/apiwo/arctic-linux">github</a>
-    <a href="https://codeberg.org/apiwo/arctic-linux">codeberg</a>
-  </div>
+  <a href="https://arctic-linux.apiwow.net">main</a>
+  <a href="https://arctic-docs.apiwow.net">docs</a>
+  <a href="https://pkg-arctic.apiwow.net">packages</a>
+  <a href="https://ports-arctic.apiwow.net">ports</a>
+  <a href="https://arctic-releases.apiwow.net">releases</a>
+  <a href="https://github.com/apiwo/arctic-linux">github</a>
+  <a href="https://codeberg.org/apiwo/arctic-linux">codeberg</a>
 </nav>
 <div class="wrap">
   <header class="hero" style="padding:28px 0 8px;">

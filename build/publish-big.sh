@@ -23,7 +23,15 @@ SITE=${1:-$B/src-extra/arctic-linux-pkgs}
 ARCH=x86_64
 REPO_SLUG=apiwo/arctic-linux-pkgs
 TAG=pkgs-$ARCH
-MINSIZE=104857600          # the same ceiling publish-pkgs.sh refuses to cross
+MINSIZE=$((25*1024*1024))  # publish-pkgs.sh's own MAXSIZE (Cloudflare Pages'
+                            # real per-asset ceiling, not GitHub's git-commit
+                            # one) - this used to be 100 MiB, matching what
+                            # publish-pkgs.sh's threshold *used* to be before
+                            # it was corrected to the real Cloudflare limit.
+                            # Left at the old value, anything from 25-100 MiB
+                            # (rust's rustc+std package: 69 MiB) fell through
+                            # both channels - too big for the git mirror,
+                            # not big enough to trigger this one.
 STAGE=$B/.bigstage/$ARCH
 
 command -v gh >/dev/null 2>&1 || { echo "publish-big.sh: needs the gh CLI" >&2; exit 1; }
