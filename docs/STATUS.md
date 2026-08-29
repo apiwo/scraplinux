@@ -255,6 +255,41 @@ paths point into the sysroot rather than at `/usr` on the build host.
 
 ## Known-fixed bugs worth remembering
 
+- **A2: `dwl` genuinely could not build - "use of undeclared identifier
+  'XDG_TOPLEVEL_CONFIGURE_BOUNDS_SINCE_VERSION'" - and it was not the
+  wayland-scanner/xdg-shell.xml mismatch its own `recipe.local` originally
+  suspected.** Directly ruled that out: `wayland-scanner server-header`
+  against Arctic's own `xdg-shell.xml` emits all 54 `SINCE_VERSION`
+  constants, including both missing ones, deterministically - checked
+  serially (`-j1`, no parallel-build race possible) with a byte-for-byte
+  fresh header on disk at the moment of the failing compile. The real
+  cause: wlroots 0.20's installed `wlr_xdg_shell.h` gets its constants
+  from `<wayland-protocols/xdg-shell-enum.h>` - a *separate*, more
+  limited header wayland-protocols pre-generates with wayland-scanner's
+  `enum-header` mode, which only covers enum value constants, not
+  per-message `SINCE_VERSION` guards for events like `configure_bounds`.
+  dwl 0.8 was written against wlroots 0.19, before this restructuring,
+  and has never been adjusted for it - no newer tagged release exists
+  upstream. Fixed by defining both guards locally in `client.h` at their
+  real xdg-shell protocol version numbers (checked directly against the
+  XML: `configure_bounds` `since="4"`, `wm_capabilities` `since="5"`).
+  Verified: `alpm add -s dwl` builds and installs; run nested inside a
+  live niri session (`WLR_BACKENDS=wayland`), correctly linked against
+  `libwlroots-0.20.so`, initializes with no errors and runs its full
+  event loop continuously. Not yet wired into the `wayland` tarball
+  flavor's default bundle - that uses `-dms` session-wrapper packages
+  and no `dwl-dms` exists yet, only the raw `dwl` package.
+
+- **A2: `libglvnd`'s own `.PKGINFO` had `depend = glibc,libx11,libxext` -
+  one comma-separated string, not three separate dependencies - so alpm
+  could never resolve it at all** ("needs glibc,libx11,libxext, and
+  nothing has it - not a repository, not the ports tree"), blocking
+  anything needing real `egl.pc`/`glesv2.pc` (mesa only ships its own
+  vendor-specific `libEGL_mesa.so` under libglvnd dispatch, not the
+  `EGL`/`GLESv2` pkg-config names applications actually look for).
+  Recipe and published package both fixed to three plain `depend=`
+  entries.
+
 - **A2: `rust`/`cargo` could not run at all on a real install, and
   `alpm add -s` on anything (Rust or not) that compiled its own C code
   failed the same way - four independent bugs, each looking like a
