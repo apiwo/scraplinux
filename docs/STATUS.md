@@ -255,6 +255,135 @@ paths point into the sysroot rather than at `/usr` on the build host.
 
 ## Known-fixed bugs worth remembering
 
+- **A2: `rust`/`cargo` could not run at all on a real install, and
+  `alpm add -s` on anything (Rust or not) that compiled its own C code
+  failed the same way - four independent bugs, each looking like a
+  different failure.** First, `cargo: error while loading shared
+  libraries: libgcc_s.so.1: cannot open shared object file`: rustc/cargo
+  link `-lgcc_s` for unwinding regardless of Arctic being an LLVM
+  distribution with no GCC in it, and nothing declared `gcc-libs` (see
+  below) as a dependency, so a real install never had the library at all.
+  Second, once that was fixed, `rustc: error while loading shared
+  libraries: libc++.so.1: cannot open shared object file` - the exact
+  "Alpha 3 SS" bug further down this list, which turned out to have
+  silently stopped applying: `skel/etc/ld.so.conf` fixed it for the old
+  mkiso/skel-copy install path, and was never added to `build-tarball.sh`'s
+  own curated file list when the tarball-only install model replaced that
+  path. Third, `libLLVM.so` genuinely links `libxml2.so.16` and the `llvm`
+  package never declared it, so `clang`/`cc` itself failed the same way
+  once something actually needed clang to run (a plain `alpm add llvm`
+  with nothing invoking clang never surfaced it). Fourth, once clang could
+  run, `alpm add -s ripgrep` (a totally ordinary source build, the pcre2
+  crate has no C in it at all - the alpm bootstrapping itself does)
+  failed with `fatal error: 'stdlib.h' file not found`: `alpm-build`
+  unconditionally passes `--sysroot=$ALPM_SYSROOT` to clang, and
+  `$ALPM_SYSROOT` only ever holds packages built earlier in the *same*
+  `alpm-build` session - glibc came from the base tarball, not from this
+  session, so the sysroot's `usr/include` never had a C standard library
+  in it at all outside of the one-shot package-building pipeline. Fixed
+  with a symlink (`$ALPM_SYSROOT/usr/include -> /usr/include`), created
+  only when `ARCTIC_SANDBOX` is unset - inside the sandboxed build-host
+  pipeline that bind-mounts the *host's* real headers read-only, trusting
+  `/usr/include` would be exactly the host-contamination bug this sysroot
+  exists to prevent; inside `arctic-chroot`, or on a real installed
+  system, `/usr/include` genuinely is Arctic's own glibc. All four
+  verified end to end: a byte-for-byte fresh loopback disk, tarball
+  extracted, `alpm-strap`'d, chrooted into with nothing pre-cached,
+  `alpm add -y arctic-base` then `alpm add -y rust cargo llvm bmake`
+  then `alpm add -y -s ripgrep` compiles and installs a working `rg` with
+  no manual intervention.
+
+- **A2: the same missing-sysroot-entry bug, for `pkg-config` instead of
+  headers - `alpm add -s librsvg`/`bat`/`eza` reported an ordinarily
+  `alpm add`-installed library ("cairo", "gio-2.0", ...) as not found at
+  all.** Same root cause as the header case just above: `PKG_CONFIG_PATH`
+  only ever pointed inside `$ALPM_SYSROOT`, which does not contain
+  whatever was separately installed onto the actual system with a plain
+  `alpm add`. Fixed the same way: `$ALPM_SYSROOT/usr/lib/pkgconfig` and
+  `usr/share/pkgconfig` are symlinked to the real ones, gated on
+  `ARCTIC_SANDBOX` being unset for the identical host-contamination
+  reason. Uncovered a second bug on the way: `pkgconf` (Arctic's actual
+  `pkg-config` implementation) never installed a `pkg-config` compat
+  symlink, which is what every `*-sys` crate's build.rs and every
+  autotools `configure` actually look for by name - `pkgconf` being
+  installed and on PATH did nothing, and the error ("pkg-config command
+  could not be found") read exactly like the tool being entirely
+  missing. Every other distribution's pkgconf package ships this symlink;
+  Arctic's now does too.
+
+- **A2: `bat` and `eza` only ever worked by accident, linked against the
+  build host's own Gentoo `libgit2.so.1.9.4`, which does not exist on any
+  real Arctic install.** `libgit2-sys`'s build.rs prefers a system
+  libgit2 found via pkg-config over building its own vendored copy, and
+  the sandbox bind-mounts the whole host filesystem read-only - including
+  the host's real `/usr/lib64/libgit2.so.1.9.4`, which nothing in Arctic
+  ships. `readelf -d` on the published binaries showed `NEEDED
+  libgit2.so.1.9` right there. Fixed with
+  `LIBGIT2_SYS_USE_PKG_CONFIG=0` in both recipes, forcing the vendored,
+  statically-linked build instead; confirmed by re-running `readelf -d` on
+  the rebuilt binaries (no `libgit2` in `NEEDED` at all) and by both
+  binaries actually running.
+
+- **A2: `gcc-libs` (`libstdc++`/`libgcc_s`, needed by the NVIDIA driver
+  and now rustc/cargo too) was never actually verified to build, and was
+  missing the plain, unversioned `.so` symlinks anything passing
+  `-lgcc_s`/`-lstdc++` to the linker needs.** Its own `recipe.local`
+  already said as much - the published package turned out to be real
+  `.so.N` files of uncertain provenance, not something `alpm-build` ever
+  produced from this recipe, and `alpm owns` found no package that
+  actually owned `libgcc_s.so.1` in a build sysroot. `mkpkgs.sh`'s
+  packaging step (which is where the currently-published package
+  actually comes from - a snapshot-rootfs bootstrap package, the same
+  class as `arctic-base` itself) now adds
+  `libgcc_s.so -> libgcc_s.so.1` and `libstdc++.so -> libstdc++.so.6`
+  after copying the runtime files in. A genuine from-source,
+  `alpm-build`-verified rebuild of `gcc-libs` is still not done - real
+  GCC bootstrap, more time than this pass had for one already-published
+  package - and stays a known gap.
+
+- **A2: `nushell`'s package() step installed nothing - "bad
+  'target/release/nushell': No such file or directory" after a clean,
+  successful compile.** The crate is named `nushell`; the binary it
+  actually produces is `nu`. Fixed and verified: `alpm add -s nushell`
+  installs a working `nu`.
+
+- **A2 (found, not fixed): `greetd` cannot build on Arctic at all -
+  `pam-sys` is a hard, non-optional dependency in its own Cargo.toml**
+  (`error: unable to find library -lpam`), and Arctic has no PAM
+  anywhere, deliberately (see "ly is not packaged" below). Fixing this
+  means either adding PAM to the base system - a real reversal of an
+  existing design decision - or patching greetd's own auth backend to use
+  libxcrypt directly, a genuine upstream-facing fork. Neither attempted.
+  `tuigreet` depends on `greetd` and is blocked the same way, transitively.
+
+- **A2 (found, not fixed): `librsvg` needs `mount.pc` (libmount), which
+  `util-linux` itself does not install at all, though it builds the
+  actual `.so` files fine.** `gio-sys`'s pkg-config `Requires:` chain
+  pulls in `mount` through `gio-2.0`; the older `util-linux-libs` package
+  did ship the `.pc` files, but `util-linux` supersedes it (same
+  `libuuid.so` etc - installing both conflicts) without carrying them
+  forward. Confirmed as the only remaining blocker with the full
+  X11/xorgproto dependency chain (`libx11 libxrender libxft libxext
+  libxcb xorgproto`, now in librsvg's own `makedepend`) already
+  installed. Fix belongs in `util-linux`'s own recipe/package() step, not
+  attempted this pass - see `ports/base/librsvg/recipe.local`.
+
+- **A2 (found, not fixed): `wezterm`'s pinned version, `20260401`, never
+  existed - a placeholder guess, not a real release tag.** wezterm tags
+  dated releases `YYYYMMDD-HHMMSS-<commit>`, and had not cut one since
+  `20240203-110809-5046fc22`. Fixed the version/source URL to the real
+  tag and its `-src` release asset (needed for vendored submodules a
+  plain GitHub archive tarball omits) - source now fetches, extracts and
+  compiles correctly. Blocked past that on a genuine upstream
+  compatibility gap, not an Arctic bug: `openssl-sys` 0.9.99 refuses
+  anything newer than LibreSSL 3.8.1, and Arctic ships 4.2.0. See
+  `ports/extra/wezterm/recipe.local`.
+
+- **A2 (found, not fixed): `yazi` 26.5.6 needs rustc 1.95.0; Arctic
+  packages 1.94.0.** Not chased further this pass - either bump the
+  pinned yazi version to one with a compatible MSRV, or update Arctic's
+  own rust/cargo package, both real, untried work.
+
 - **A1: wifi worked on the live image and never on a real install,
   for three independent reasons that all had to be found separately.**
   `linux-firmware` is well over the free-tier mirror's size limit, so
