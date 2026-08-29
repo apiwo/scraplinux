@@ -101,15 +101,13 @@ listing() {
 </head>
 <body>
 <nav class="topbar">
-  <div class="wrap" style="padding:0;">
-    <a href="https://arctic-linux.apiwow.net">main page</a>
-    <a href="https://pkg-arctic.apiwow.net">pkg</a>
-    <a href="https://ports-arctic.apiwow.net">ports</a>
-    <a href="https://arctic-docs.apiwow.net">docs</a>
-    <a href="https://arctic-releases.apiwow.net">releases</a>
-    <a href="https://github.com/apiwo/arctic-linux">github</a>
-    <a href="https://codeberg.org/apiwo/arctic-linux">codeberg</a>
-  </div>
+  <a href="https://arctic-linux.apiwow.net">main</a>
+  <a href="https://arctic-docs.apiwow.net">docs</a>
+  <a href="https://pkg-arctic.apiwow.net">packages</a>
+  <a href="https://ports-arctic.apiwow.net">ports</a>
+  <a href="https://arctic-releases.apiwow.net">releases</a>
+  <a href="https://github.com/apiwo/arctic-linux">github</a>
+  <a href="https://codeberg.org/apiwo/arctic-linux">codeberg</a>
 </nav>
 <div class="wrap">
   <header class="hero" style="padding:28px 0 8px;">
