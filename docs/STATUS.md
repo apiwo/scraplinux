@@ -273,12 +273,40 @@ paths point into the sysroot rather than at `/usr` on the build host.
   upstream. Fixed by defining both guards locally in `client.h` at their
   real xdg-shell protocol version numbers (checked directly against the
   XML: `configure_bounds` `since="4"`, `wm_capabilities` `since="5"`).
-  Verified: `alpm add -s dwl` builds and installs; run nested inside a
-  live niri session (`WLR_BACKENDS=wayland`), correctly linked against
-  `libwlroots-0.20.so`, initializes with no errors and runs its full
-  event loop continuously. Not yet wired into the `wayland` tarball
-  flavor's default bundle - that uses `-dms` session-wrapper packages
-  and no `dwl-dms` exists yet, only the raw `dwl` package.
+  First verification pass was wrong in two ways, both corrected. First:
+  it was run nested inside the live niri session
+  (`WAYLAND_DISPLAY=wayland-1` against the real desktop) - two of those
+  attempts (before the test's own mount/DRM setup was fixed) actually
+  segfaulted `dwl` inside `libwayland-server.so.0.25.0` and froze the
+  real machine's display for several minutes; only the third, clean-
+  environment attempt got reported. Nesting a compositor under test into
+  a real live session is not an acceptable blast radius regardless of
+  whose bug causes the crash - every verification of a graphical runtime
+  since uses `WLR_BACKENDS=headless` (fully offscreen, no display/session
+  involved) instead. Second, separately: the fixed build was never
+  actually published - `alpm add -s dwl` installs straight into the
+  chroot doing the build, and the built `.alpmz` was never copied from
+  there into the shared package repo, so the repo kept serving the old,
+  wlroots-0.19-linked binary the whole time despite the recipe fix being
+  correct and committed. A completely fresh `alpm add dwl` against the
+  actual published repo confirmed this (`libwlroots-0.19.so`, immediate
+  load failure) before the republish; confirmed fixed after.
+  A third, real bug turned up while reconciling this: after the header
+  fix, a *correctly source-built* `dwl` still failed to link -
+  `ld.lld: error: unable to find library -lwlroots-0.20` despite
+  pkg-config correctly reporting its flags - because `--sysroot` also
+  redirects the linker's default library search, and most `.pc` files'
+  `--libs` output has no explicit `-L/usr/lib` to survive that (see the
+  `alpm-build` fix below, third instance of the same missing-sysroot-
+  entry class as the `usr/include`/pkg-config ones above it).
+  Currently verified: a byte-for-byte fresh chroot, `alpm add dwl`
+  against the (now correctly) published repo, linked against
+  `libwlroots-0.20.so` (`readelf -d`), run with `WLR_BACKENDS=headless`
+  for a full bounded window with no crash - clean event loop the entire
+  time, exited only on the test's own timeout. Not yet wired into the
+  `wayland` tarball flavor's default bundle - that uses `-dms`
+  session-wrapper packages and no `dwl-dms` exists yet, only the raw
+  `dwl` package.
 
 - **A2: `libglvnd`'s own `.PKGINFO` had `depend = glibc,libx11,libxext` -
   one comma-separated string, not three separate dependencies - so alpm
