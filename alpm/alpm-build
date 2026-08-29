@@ -226,6 +226,22 @@ if [ -d "$ALPM_SYSROOT/usr" ]; then
 	CFLAGS="--sysroot=$ALPM_SYSROOT $CFLAGS"
 	CXXFLAGS="--sysroot=$ALPM_SYSROOT $CXXFLAGS"
 	LDFLAGS="-L$ALPM_SYSROOT/usr/lib -Wl,-rpath-link,$ALPM_SYSROOT/usr/lib $LDFLAGS"
+	# Same missing-sysroot-entry problem as usr/include and
+	# usr/lib/pkgconfig above, at link time instead of compile time:
+	# --sysroot redirects ld's own default library search the same way it
+	# redirects the header search, and $ALPM_SYSROOT/usr/lib only ever
+	# holds what this alpm-build session itself produced. pkg-config
+	# correctly reports an ordinarily-installed library's flags (fixed
+	# above), but "ld.lld: error: unable to find library -lwlroots-0.20"
+	# followed anyway - pkg-config's own --libs output for most .pc files
+	# does not include an explicit -L/usr/lib (it is assumed to be a
+	# default search path), and --sysroot took that default away. An
+	# explicit -L to the real path fixes it without symlinking the whole
+	# directory - usr/lib has to stay a real, writable directory for the
+	# accumulation this sysroot exists for (packages built earlier in the
+	# same session), unlike usr/include and pkgconfig, which are pure
+	# read-only reference data.
+	[ "${ARCTIC_SANDBOX:-0}" != "1" ] && LDFLAGS="-L/usr/lib $LDFLAGS"
 	# -B, not -L, for the C runtime objects.
 	#
 	# Scrt1.o and friends are found by the compiler driver, not through -L,
