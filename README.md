@@ -1,14 +1,14 @@
 # ScrapLinux
 
 glibc, LLVM, a BSD-style userland, busybox init, zsh, doas, and its own
-package manager (scraps). Installed by hand, the way Arch or LFS is - no
+package manager (scraps). Installed by hand, the way Gentoo or Kiss is - no
 guided installer, no ISO.
 
 Full docs: **[scraplinux-docs.apiwow.net](https://scraplinux-docs.apiwow.net)**
 
 ## Install
 
-No ISO. Boot any live Linux, partition and format by hand, then:
+Boot any live Linux distribution or use an SSH, then partition and format by hand, then:
 
 ```sh
 tar -xJf scraplinux-def-tarball.tar.xz -C /mnt
