@@ -1,12 +1,12 @@
 #!/bin/sh
 # publish-fix.sh - assemble the fix repository from the manifest.
 #
-#   build/arctic-sandbox build/publish-fix.sh
+#   build/scraplinux-sandbox build/publish-fix.sh
 #
 # The fix repository is an ordinary binary repository with one extra file in
 # it. Every package the manifest names is copied in from the build repository
-# at the version the manifest asks for, so "alpm system fix" installs a real
-# .alpmz and the system stays binary - there is no patch format and nothing is
+# at the version the manifest asks for, so "scraps system fix" installs a real
+# .scrapsz and the system stays binary - there is no patch format and nothing is
 # compiled on the machine taking the fix.
 #
 # Publishing is a copy, never a build: if the manifest names a version that
@@ -16,14 +16,14 @@
 
 set -eu
 
-if [ "${ARCTIC_SANDBOX:-0}" != "1" ]; then
+if [ "${SCRAPLINUX_SANDBOX:-0}" != "1" ]; then
 	echo "$(basename "$0"): refusing to run outside the sandbox." >&2
-	echo "  run it as:  build/arctic-sandbox $0 $*" >&2
+	echo "  run it as:  build/scraplinux-sandbox $0 $*" >&2
 	exit 1
 fi
 
-B=${ARCTIC_BUILD:-/home/apiwo/arctic-build}
-TREE=${ARCTIC_TREE:-/home/apiwo/arctic}
+B=${SCRAPLINUX_BUILD:-/home/apiwo/scraplinux-build}
+TREE=${SCRAPLINUX_TREE:-/home/apiwo/scraplinux}
 ARCH=x86_64
 SRC=$TREE/fix/FIXES
 DEST=$B/repo/fix/$ARCH
@@ -33,16 +33,16 @@ DEST=$B/repo/fix/$ARCH
 mkdir -p "$DEST"
 
 # The index is signed when the publishing machine holds the key. It is not in
-# any repository and never will be - see skel/etc/alpm/keys/README. Publishing
+# any repository and never will be - see skel/etc/scraps/keys/README. Publishing
 # without it is allowed, because a mirror can be rebuilt on a machine that has
 # no business holding the key, but it says so rather than quietly shipping an
 # index nobody can check.
-ALPM_SIGN_KEY=${ALPM_SIGN_KEY:-/home/apiwo/arctic-keys/arctic-pkg.sec}
-if [ -f "$ALPM_SIGN_KEY" ]; then
-	export ALPM_SIGN_KEY
+SCRAPS_SIGN_KEY=${SCRAPS_SIGN_KEY:-/home/apiwo/scraplinux-keys/scraplinux-pkg.sec}
+if [ -f "$SCRAPS_SIGN_KEY" ]; then
+	export SCRAPS_SIGN_KEY
 else
-	echo "$(basename "$0"): no signing key at $ALPM_SIGN_KEY - indexes will be unsigned" >&2
-	unset ALPM_SIGN_KEY
+	echo "$(basename "$0"): no signing key at $SCRAPS_SIGN_KEY - indexes will be unsigned" >&2
+	unset SCRAPS_SIGN_KEY
 fi
 
 
@@ -70,7 +70,7 @@ for pv in $want; do
 	# the lowest instead - and would have taken -10 over -2 - so a fix could
 	# be published as a package that predated it.
 	for r in main extra base kernels profile nonfree alt-nonfree multilib; do
-		for f in "$B/repo/$r/$ARCH/$name-$ver-"*.alpmz; do
+		for f in "$B/repo/$r/$ARCH/$name-$ver-"*.scrapsz; do
 			[ -f "$f" ] || continue
 			rel=${f##*-}
 			rel=${rel%%.*}
@@ -89,7 +89,7 @@ for pv in $want; do
 	# Drop any other release of the same package first, so the fix repository
 	# never offers two versions of one package and the index cannot pick the
 	# older of them.
-	rm -f "$DEST/$name-"*.alpmz
+	rm -f "$DEST/$name-"*.scrapsz
 	cp -f "$found" "$DEST/"
 	copied=$((copied + 1))
 	ok "$(basename "$found")"
@@ -106,7 +106,7 @@ cp -f "$SRC" "$DEST/FIXES"
 ok "$(awk -F'	' '$1 !~ /^#/ && NF >= 5' "$DEST/FIXES" | wc -l | tr -d ' ') fixes"
 
 step "indexing fix"
-sh "$TREE/alpm/alpm-repo" gen "$B/repo/fix" "$ARCH" >/dev/null
+sh "$TREE/scraps/scraps-repo" gen "$B/repo/fix" "$ARCH" >/dev/null
 ok "$copied packages in fix"
 
-printf '\napply on an installed system with:  alpm system fix\n'
+printf '\napply on an installed system with:  scraps system fix\n'

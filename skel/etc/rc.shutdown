@@ -1,16 +1,16 @@
 #!/bin/sh
-# Arctic Linux - system shutdown
+# ScrapLinux - system shutdown
 # shellcheck shell=sh disable=SC2039
 
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
-. /etc/arctic/rc.lib 2>/dev/null || { begin(){ :;}; good(){ :;}; bad(){ :;}; }
+. /etc/scraplinux/rc.lib 2>/dev/null || { begin(){ :;}; good(){ :;}; bad(){ :;}; }
 
 printf '\n'
 
 # Stop services in the reverse of the order they were started.
-if [ -d /etc/arctic/services ]; then
-	for s in $(ls -r /etc/arctic/services 2>/dev/null); do
+if [ -d /etc/scraplinux/services ]; then
+	for s in $(ls -r /etc/scraplinux/services 2>/dev/null); do
 		[ -x "/etc/rc.d/$s" ] || continue
 		begin "Stopping $s"
 		"/etc/rc.d/$s" stop >/dev/null 2>&1 && good || bad
@@ -18,13 +18,13 @@ if [ -d /etc/arctic/services ]; then
 fi
 
 begin "Saving random seed"
-mkdir -p /var/lib/arctic
+mkdir -p /var/lib/scraplinux
 # chmod before writing, not after - this runs before user sessions are
 # killed below, so a plain dd of a not-yet-existing file would leave fresh
 # entropy world-readable for a real window, not just a theoretical one.
-: >/var/lib/arctic/random-seed
-chmod 600 /var/lib/arctic/random-seed
-dd if=/dev/urandom of=/var/lib/arctic/random-seed bs=512 count=1 2>/dev/null
+: >/var/lib/scraplinux/random-seed
+chmod 600 /var/lib/scraplinux/random-seed
+dd if=/dev/urandom of=/var/lib/scraplinux/random-seed bs=512 count=1 2>/dev/null
 good
 
 begin "Saving system clock to RTC"
@@ -51,5 +51,5 @@ mount -o remount,ro / 2>/dev/null || :
 good
 
 sync
-printf '\n  %sArctic Linux has stopped.%s\n\n' "${_TEAL:-}${_B:-}" "${_R:-}"
+printf '\n  %sScrapLinux has stopped.%s\n\n' "${_TEAL:-}${_B:-}" "${_R:-}"
 exit 0

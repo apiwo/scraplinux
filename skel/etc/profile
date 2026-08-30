@@ -1,4 +1,4 @@
-# /etc/profile - login environment for every shell on Arctic Linux.
+# /etc/profile - login environment for every shell on ScrapLinux.
 
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export EDITOR=${EDITOR:-vi}
@@ -15,7 +15,7 @@ export XDG_STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 [ -d "$XDG_RUNTIME_DIR" ] || { mkdir -p "$XDG_RUNTIME_DIR" 2>/dev/null; chmod 700 "$XDG_RUNTIME_DIR" 2>/dev/null; }
 
-# Arctic is an LLVM system; make that the default for anything that asks.
+# ScrapLinux is an LLVM system; make that the default for anything that asks.
 export CC=${CC:-clang}
 export CXX=${CXX:-clang++}
 

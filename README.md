@@ -1,25 +1,25 @@
-# Arctic Linux
+# ScrapLinux
 
 glibc, LLVM, a BSD-style userland, busybox init, zsh, doas, and its own
-package manager (alpm). Installed by hand, the way Arch or LFS is - no
+package manager (scraps). Installed by hand, the way Arch or LFS is - no
 guided installer, no ISO.
 
-Full docs: **[arctic-docs.apiwow.net](https://arctic-docs.apiwow.net)**
+Full docs: **[scraplinux-docs.apiwow.net](https://scraplinux-docs.apiwow.net)**
 
 ## Install
 
 No ISO. Boot any live Linux, partition and format by hand, then:
 
 ```sh
-tar -xJf arctic-linux-def-tarball.tar.xz -C /mnt
-/mnt/alpm-strap /mnt
+tar -xJf scraplinux-def-tarball.tar.xz -C /mnt
+/mnt/scraps-strap /mnt
 /mnt/usr/bin/genfstab /mnt >> /mnt/etc/fstab
-/mnt/arctic-chroot /mnt
+/mnt/scraplinux-chroot /mnt
 ```
 
-Inside chroot: `passwd`, `adduser <name>`, `alpm add arctic-base`,
-`alpm add arctic-<flavor>-kernel`, `alpm add limine`. Exit, then run
-`arctic-rebuild` as root to activate the kernel and write the bootloader
+Inside chroot: `passwd`, `adduser <name>`, `scraps add scraplinux-base`,
+`scraps add scraplinux-<flavor>-kernel`, `scraps add limine`. Exit, then run
+`scraplinux-rebuild` as root to activate the kernel and write the bootloader
 config, and deploy it by hand (`limine bios-install /dev/sdX`, or copy the
 EFI binaries and register one with `efibootmgr`). Reboot.
 
@@ -27,13 +27,13 @@ An OpenRC flavor of the tarball ships alongside the default (busybox
 init) one, with OpenRC already wired up as init instead.
 
 Full walkthrough, including partitioning and encryption:
-**[arctic-docs.apiwow.net](https://arctic-docs.apiwow.net)**
+**[scraplinux-docs.apiwow.net](https://scraplinux-docs.apiwow.net)**
 
 ## Configure
 
 The base tarball wires up only what boots the machine - devices, mounts,
-core init. Everything else (display manager, audio, desktop) is `alpm
-add` plus one file. Six small files under `/etc/arctic/` cover what used
+core init. Everything else (display manager, audio, desktop) is `scraps
+add` plus one file. Six small files under `/etc/scraplinux/` cover what used
 to be one big config:
 
 ```
@@ -48,11 +48,11 @@ identity.conf   hostname, timezone, locale, keymap
 Edit one, then reconcile it:
 
 ```sh
-vi /etc/arctic/identity.conf
-arctic-rebuild
+vi /etc/scraplinux/identity.conf
+scraplinux-rebuild
 ```
 
-Also: `arctic-shell <pkgs>` for a throwaway package environment, `arctic gc`
+Also: `scraplinux-shell <pkgs>` for a throwaway package environment, `scraplinux gc`
 to clean up.
 
 ## Wireless
@@ -60,26 +60,26 @@ to clean up.
 `wifi-connect` with no arguments scans, lists what is in range, asks
 which interface and which network, and takes the passphrase with the
 characters masked. It remembers a successful connect in
-`/etc/arctic/network.conf`, so every boot after reconnects on its own,
+`/etc/scraplinux/network.conf`, so every boot after reconnects on its own,
 in the background, without holding up the login prompt.
 
 ## Packages
 
 ```sh
-alpm fetch all          # sync the repositories
-alpm add vim            # install
-alpm add -s helix       # build from source instead
-alpm rollback           # undo the last transaction
-alpm system check       # what's pending: package upgrades and corrections
-alpm system upgrade     # sync, upgrade, apply corrections, reconcile system.conf
+scraps fetch all          # sync the repositories
+scraps add vim            # install
+scraps add -s helix       # build from source instead
+scraps rollback           # undo the last transaction
+scraps system check       # what's pending: package upgrades and corrections
+scraps system upgrade     # sync, upgrade, apply corrections, reconcile system.conf
 ```
 
 Binaries come from
-**[github.com/apiwo/arctic-linux-pkgs](https://github.com/apiwo/arctic-linux-pkgs)**,
+**[github.com/apiwo/scraplinux-pkgs](https://github.com/apiwo/scraplinux-pkgs)**,
 served over `raw.githubusercontent.com`; recipes from
-**[ports-arctic.apiwow.net](https://ports-arctic.apiwow.net)**. The two never
-mix: a repository in `/etc/alpm/repos.d` serves `.alpmz` binaries and nothing
-else, and `alpm add -s` is the only thing that reaches the ports host.
+**[ports-scraplinux.apiwow.net](https://ports-scraplinux.apiwow.net)**. The two never
+mix: a repository in `/etc/scraps/repos.d` serves `.scrapsz` binaries and nothing
+else, and `scraps add -s` is the only thing that reaches the ports host.
 
 Packages too large for a git mirror — the toolchain at 148 MiB, firmware at
 162 MiB — are release assets instead. The `big` repository keeps its index
@@ -87,7 +87,7 @@ with the others and points `pkgurl` at them, so nothing about installing one
 is different.
 
 Every index is signed with signify. The public key arrives with
-`arctic-base`, before the first fetch, and a repository says in its `.repo`
+`scraplinux-base`, before the first fetch, and a repository says in its `.repo`
 file how much its signature matters:
 
 ```
@@ -100,7 +100,7 @@ A signature that does not match is refused under all three. Only a missing
 one is tolerated, and only while the installation image is still built
 without signify on it.
 
-`ALPM_STYLE` in `/etc/alpm/alpm.conf` picks how an install reads — `arctic`,
+`SCRAPS_STYLE` in `/etc/scraps/scraps.conf` picks how an install reads — `scraplinux`,
 `apt` or `aeryn`. Same resolver and the same downloads either way.
 
 `docs/STATUS.md` tracks what is built, what is known-broken, and what is
@@ -108,8 +108,8 @@ still source-only.
 
 ## Mirrors
 
-[github.com/apiwo](https://github.com/apiwo/arctic-linux) ·
-[codeberg.org/apiwo](https://codeberg.org/apiwo/arctic-linux)
+[github.com/apiwo](https://github.com/apiwo/scraplinux) ·
+[codeberg.org/apiwo](https://codeberg.org/apiwo/scraplinux)
 
 The Codeberg mirror is behind: the storage quota there is per account, the
 binary package repository filled it, and every push is rejected until that

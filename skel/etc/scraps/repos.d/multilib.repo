@@ -1,0 +1,8 @@
+# ScrapLinux - multilib repository
+# 32-bit libraries, for Steam, Wine and old binaries.
+name = multilib
+url = https://raw.githubusercontent.com/apiwo/scraplinux-pkgs/main/ALL/multilib
+mirror = https://raw.githubusercontent.com/apiwo/scraplinux-pkgs/main/ALL/multilib
+mirror = https://pkg-scraplinux.apiwow.net/ALL/multilib
+enabled = no
+priority = 50

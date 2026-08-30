@@ -1,5 +1,5 @@
 #!/bin/sh
-# Arctic Linux - the tools that make the installer actually usable.
+# ScrapLinux - the tools that make the installer actually usable.
 #
 # First-run feedback found the image could not do the basic job:
 #   - no cfdisk, no sfdisk, no wipefs        (nothing to partition with)
@@ -13,13 +13,13 @@
 # ISO is made from.
 set -u
 
-if [ "${ARCTIC_SANDBOX:-0}" != "1" ]; then
-	echo "refusing to build outside the sandbox - use arctic/build/arctic-sandbox" >&2
+if [ "${SCRAPLINUX_SANDBOX:-0}" != "1" ]; then
+	echo "refusing to build outside the sandbox - use scraplinux/build/scraplinux-sandbox" >&2
 	exit 1
 fi
 
-B=/home/apiwo/arctic-build
-TREE=/home/apiwo/arctic
+B=/home/apiwo/scraplinux-build
+TREE=/home/apiwo/scraplinux
 SRC=$B/src
 W=$B/work
 R=$B/stage/rootfs
@@ -50,7 +50,7 @@ if [ ! -x "$R/usr/bin/cfdisk" ]; then
 	unpack util-linux-2.42.2 util-linux-2.42.2.tar.xz
 	# cfdisk needs a curses library and libsmartcols (lsblk, findmnt, ...) wants
 	# terminfo for column widths. Without PKG_CONFIG_PATH pointing at $DEPS,
-	# configure happily finds the build host's GNU ncurses instead - Arctic
+	# configure happily finds the build host's GNU ncurses instead - ScrapLinux
 	# ships none of that, only netbsd-curses (README: "terminal library:
 	# netbsd-curses, not ncurses") - and the result is a cfdisk/lsblk that
 	# fail on the target with "error while loading shared libraries:
@@ -63,11 +63,11 @@ if [ ! -x "$R/usr/bin/cfdisk" ]; then
 	# before pkg-config, and this build host has one: it hands back the
 	# host's own "-I/usr/include/ncursesw", bypassing PKG_CONFIG_PATH for the
 	# header side while the library side still resolves through pkg-config to
-	# Arctic's libs. Host headers plus Arctic's library disagree on how
+	# ScrapLinux's libs. Host headers plus ScrapLinux's library disagree on how
 	# curses globals like acs_map are exposed, and cfdisk fails to link with
 	# "undefined reference to acs_map". Forcing the *_CONFIG tools to "false"
 	# pushes the probe straight to pkg-config, so header and library come
-	# from the same (Arctic) place.
+	# from the same (ScrapLinux) place.
 	( cd "$W/util-linux-2.42.2" && \
 	  PKG_CONFIG_PATH="$DEPS/usr/lib/pkgconfig" \
 	  CFLAGS="$CFLAGS -I$DEPS/usr/include" \
@@ -89,7 +89,7 @@ if [ ! -x "$R/usr/bin/cfdisk" ]; then
 	) >"$L/util-linux.log" 2>&1 && {
 		d=$W/util-linux-2.42.2
 		# Copy the built artefacts directly. "make install" relinks with libtool
-		# and fails on libmount.la; the binaries are already correct, and Arctic
+		# and fails on libmount.la; the binaries are already correct, and ScrapLinux
 		# only wants the partitioning and block-device tools anyway.
 		#
 		# Every one of these links against an uninstalled libtool library
@@ -172,12 +172,12 @@ else
 fi
 
 # dbus's build needs expat's headers/library. It has never been built by this
-# from-source pipeline, but alpm already built and shipped it (same recipe
+# from-source pipeline, but scraps already built and shipped it (same recipe
 # the target installs from) - reuse those exact bits into $DEPS/$R instead of
 # compiling it a second time.
 step "staging expat (dbus's only real dependency)"
 if [ ! -f "$DEPS/usr/lib/libexpat.so" ]; then
-	pkg=$(ls -t "$B"/repo/*/x86_64/expat-*.alpmz 2>/dev/null | head -1)
+	pkg=$(ls -t "$B"/repo/*/x86_64/expat-*.scrapsz 2>/dev/null | head -1)
 	[ -n "$pkg" ] && { tar -xf "$pkg" -C "$DEPS" usr 2>/dev/null; tar -xf "$pkg" -C "$R" usr 2>/dev/null; }
 	# The .pc file it ships has prefix=/usr baked in from its own build - real
 	# for the target, wrong here, since that makes pkg-config report its libdir
@@ -238,7 +238,7 @@ else
 	ok "libnl already built"
 fi
 # A second `make install` with a different DESTDIR re-triggers libtool's
-# relink-before-install step, which failed here trying to search Arctic's
+# relink-before-install step, which failed here trying to search ScrapLinux's
 # own target libc.so.6 with the build host's own linker/format ("file in
 # wrong format") - a libtool quirk of installing to two different prefixes
 # from the same build tree, not a real problem with the library itself.
@@ -285,11 +285,11 @@ else
 fi
 
 # wpa_supplicant links against whatever OpenSSL the build host has (see
-# above) - stage Arctic's own already-built openssl package's libs into $R
+# above) - stage ScrapLinux's own already-built openssl package's libs into $R
 # so the live image actually has a matching libcrypto/libssl to run against,
 # same idea as the libnl copy above.
 if [ ! -f "$R/usr/lib/libcrypto.so.3" ]; then
-	opensslpkg=$(ls -t "$B"/repo/main/x86_64/openssl-*.alpmz 2>/dev/null | head -1)
+	opensslpkg=$(ls -t "$B"/repo/main/x86_64/openssl-*.scrapsz 2>/dev/null | head -1)
 	if [ -n "$opensslpkg" ]; then
 		mkdir -p "$W/openssl-extract"
 		tar -xf "$opensslpkg" -C "$W/openssl-extract" usr/lib 2>/dev/null || :
@@ -298,7 +298,7 @@ if [ ! -f "$R/usr/lib/libcrypto.so.3" ]; then
 			"$R/usr/lib/" 2>/dev/null && ok "openssl libs staged into the live image" \
 			|| bad "openssl libs (see above)"
 	else
-		bad "openssl not built yet - run: arctic-sandbox build/build-batch.sh openssl"
+		bad "openssl not built yet - run: scraplinux-sandbox build/build-batch.sh openssl"
 	fi
 else
 	ok "openssl libs already staged"

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Arctic Linux - system startup
+# ScrapLinux - system startup
 # Run by busybox init as sysinit. Keep it readable: this is the file people
 # open first when something will not boot.
 # shellcheck shell=sh disable=SC2039
@@ -7,7 +7,7 @@
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
 
-. /etc/arctic/rc.lib 2>/dev/null || {
+. /etc/scraplinux/rc.lib 2>/dev/null || {
 	# rc.lib is what prints the pretty status lines. Without it, stay silent
 	# but keep booting.
 	begin() { printf ' * %s\n' "$*"; }
@@ -17,13 +17,13 @@ export PATH
 
 QUIET=0
 case " $(cat /proc/cmdline 2>/dev/null) " in
-*" quiet "*|*" arctic.splash "*) QUIET=1 ;;
+*" quiet "*|*" scraplinux.splash "*) QUIET=1 ;;
 esac
 
-# No banner. It printed the release out of /etc/arctic-release above the
+# No banner. It printed the release out of /etc/scraplinux-release above the
 # boot, which is a version string nobody needs at the top of every boot and
 # which was wrong for a long time anyway - the installer stamped every machine
-# "Alpha 1.1" whatever image it came from. `arcticfetch` answers the question
+# "Alpha 1.1" whatever image it came from. `scraplinuxfetch` answers the question
 # when it is actually being asked.
 
 # --------------------------------------------------------------- pseudo filesystems
@@ -32,7 +32,7 @@ mountpoint -q /proc || mount -t proc     -o nosuid,noexec,nodev proc  /proc
 mountpoint -q /sys  || mount -t sysfs    -o nosuid,noexec,nodev sys   /sys
 mountpoint -q /run  || mount -t tmpfs    -o nosuid,nodev,mode=755 run /run
 mountpoint -q /dev  || mount -t devtmpfs -o nosuid,mode=755 dev /dev
-mkdir -p /dev/pts /dev/shm /run/lock /run/arctic
+mkdir -p /dev/pts /dev/shm /run/lock /run/scraplinux
 mountpoint -q /dev/pts || mount -t devpts -o nosuid,noexec,gid=5,mode=620 devpts /dev/pts
 mountpoint -q /dev/shm || mount -t tmpfs  -o nosuid,nodev,mode=1777 shm /dev/shm
 [ -d /sys/kernel/security ] && mount -t securityfs securityfs /sys/kernel/security 2>/dev/null
@@ -44,13 +44,13 @@ good
 # leaves a trace instead of vanishing into /dev/null. Appends only - not a
 # tee through a fifo, which blocks until something opens the other end and
 # can hang sysinit before anything has started.
-RC_LOG=/run/arctic/boot.log
+RC_LOG=/run/scraplinux/boot.log
 export RC_LOG
-mkdir -p /run/arctic 2>/dev/null || :
+mkdir -p /run/scraplinux 2>/dev/null || :
 : >"$RC_LOG" 2>/dev/null || RC_LOG=/dev/null
 rc_log() { printf '%s\n' "$*" >>"$RC_LOG" 2>/dev/null || :; }
 export -n RC_LOG 2>/dev/null || :
-rc_log "=== Arctic boot $(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null) ==="
+rc_log "=== ScrapLinux boot $(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null) ==="
 rc_log "kernel: $(uname -r 2>/dev/null)"
 
 # ------------------------------------------------------------------------ devices
@@ -59,7 +59,7 @@ rc_log "kernel: $(uname -r 2>/dev/null)"
 # actually ran - "starting the device manager" is true of either and tells
 # you nothing when you are looking at a boot log trying to work out which
 # one this machine came up with.
-if [ -x /sbin/udevd ] && [ -f /etc/arctic/services/udev ]; then
+if [ -x /sbin/udevd ] && [ -f /etc/scraplinux/services/udev ]; then
 	begin "Starting udev"
 	# hwdb.d/*.hwdb are text source, not something udevd reads directly -
 	# without compiling them into hwdb.bin first, every device-classification
@@ -105,7 +105,7 @@ done
 
 # Coldplug: load a driver for every device already present.
 #
-# udev does this on other systems; mdev does not, and Arctic runs mdev. The
+# udev does this on other systems; mdev does not, and ScrapLinux runs mdev. The
 # hotplug handler only fires for devices that appear *after* boot, so
 # anything already plugged in when the machine started - which is every PCI
 # device, including the network card - never had its module loaded at all.
@@ -166,7 +166,7 @@ if [ -d /sys/devices ]; then
 	) &
 	_cp_pid=$!
 	# Not gated on QUIET. The default boot entry passes both quiet and
-	# arctic.splash, either of which sets QUIET=1 - so on the one entry
+	# scraplinux.splash, either of which sets QUIET=1 - so on the one entry
 	# everyone actually boots from, a2.5's dots never printed at all, and
 	# this step was exactly as silent as it had always been. The whole
 	# reason the dots exist is to stop someone reaching for the power
@@ -253,8 +253,8 @@ good
 
 begin "Activating swap"
 swapon -a 2>/dev/null || :
-if [ -f /etc/arctic/zram.conf ]; then
-	. /etc/arctic/zram.conf
+if [ -f /etc/scraplinux/zram.conf ]; then
+	. /etc/scraplinux/zram.conf
 	if [ -b /dev/zram0 ] || modprobe zram 2>/dev/null; then
 		echo "${ZRAM_ALGO:-zstd}" >/sys/block/zram0/comp_algorithm 2>/dev/null
 		echo "${ZRAM_SIZE:-4G}"   >/sys/block/zram0/disksize 2>/dev/null
@@ -268,11 +268,11 @@ begin "Setting up hostname"
 # Not "A && B || C": if /etc/hostname exists but "hostname -F" itself fails
 # for any reason (an empty file, a trailing-whitespace quirk), that pattern
 # runs the fallback too and silently renames the machine to the literal
-# string "arctic" instead of leaving the real, configured name in place.
+# string "scraplinux" instead of leaving the real, configured name in place.
 if [ -f /etc/hostname ]; then
 	hostname -F /etc/hostname 2>/dev/null || hostname "$(cat /etc/hostname 2>/dev/null)" 2>/dev/null
 else
-	hostname arctic
+	hostname scraplinux
 fi
 good
 
@@ -304,15 +304,15 @@ done
 good
 
 begin "Initializing random seed"
-[ -f /var/lib/arctic/random-seed ] && \
-	cat /var/lib/arctic/random-seed >/dev/urandom 2>/dev/null
-mkdir -p /var/lib/arctic
+[ -f /var/lib/scraplinux/random-seed ] && \
+	cat /var/lib/scraplinux/random-seed >/dev/urandom 2>/dev/null
+mkdir -p /var/lib/scraplinux
 # chmod before writing, not after - a plain dd of a not-yet-existing file
 # creates it at the umask's default mode first, leaving fresh entropy
 # world-readable for the moment between that create and the chmod.
-: >/var/lib/arctic/random-seed
-chmod 600 /var/lib/arctic/random-seed
-dd if=/dev/urandom of=/var/lib/arctic/random-seed bs=512 count=1 2>/dev/null
+: >/var/lib/scraplinux/random-seed
+chmod 600 /var/lib/scraplinux/random-seed
+dd if=/dev/urandom of=/var/lib/scraplinux/random-seed bs=512 count=1 2>/dev/null
 good
 
 begin "Setting up RTC"
@@ -322,11 +322,11 @@ good
 begin "Cleaning up /tmp and /run"
 rm -rf /tmp/.[!.]* /tmp/* 2>/dev/null || :
 rm -f /run/*.pid 2>/dev/null || :
-# Not "rm -f /run/arctic/*": that is where this boot's own log lives, and
+# Not "rm -f /run/scraplinux/*": that is where this boot's own log lives, and
 # wiping it here threw away every line written before this point - including
 # anything that had already gone wrong. /run is a fresh tmpfs each boot, so
 # there is nothing stale to clear anyway.
-for _f in /run/arctic/*; do
+for _f in /run/scraplinux/*; do
 	[ -e "$_f" ] || continue
 	[ "$_f" = "$RC_LOG" ] && continue
 	rm -rf "$_f" 2>/dev/null || :
@@ -340,10 +340,10 @@ ip link set lo up 2>/dev/null || ifconfig lo 127.0.0.1 up 2>/dev/null
 good
 
 # --------------------------------------------------------------------- generation
-# Booting an "Arctic Linux (generation N)" entry from the boot menu puts
-# arctic.generation=N on the kernel command line. Reconciling here, before
+# Booting an "ScrapLinux (generation N)" entry from the boot menu puts
+# scraplinux.generation=N on the kernel command line. Reconciling here, before
 # services start, is what makes that entry mean the same thing as having run
-# `arctic-generation switch N` - the machine comes up as that configuration,
+# `scraplinux-generation switch N` - the machine comes up as that configuration,
 # not as the current one with an old label.
 #
 # This is the escape hatch for a rebuild that made the system unbootable, so
@@ -351,17 +351,17 @@ good
 # still comes all the way up and says so.
 for _a in $(cat /proc/cmdline 2>/dev/null); do
 	case "$_a" in
-	arctic.generation=*)
-		_g=${_a#arctic.generation=}
+	scraplinux.generation=*)
+		_g=${_a#scraplinux.generation=}
 		[ -n "$_g" ] || continue
-		[ -d "/var/lib/arctic/generations/$_g" ] || continue
-		[ "$_g" = "$(cat /var/lib/arctic/generations/current 2>/dev/null)" ] && continue
+		[ -d "/var/lib/scraplinux/generations/$_g" ] || continue
+		[ "$_g" = "$(cat /var/lib/scraplinux/generations/current 2>/dev/null)" ] && continue
 		begin "Switching to generation $_g"
-		if command -v arctic-generation >/dev/null 2>&1 && \
-		   arctic-generation switch "$_g" >/var/log/arctic-generation-boot.log 2>&1; then
+		if command -v scraplinux-generation >/dev/null 2>&1 && \
+		   scraplinux-generation switch "$_g" >/var/log/scraplinux-generation-boot.log 2>&1; then
 			good
 		else
-			bad "generation $_g (see /var/log/arctic-generation-boot.log)"
+			bad "generation $_g (see /var/log/scraplinux-generation-boot.log)"
 		fi
 		;;
 	esac
@@ -397,11 +397,11 @@ dmesg >/var/log/dmesg-early.log 2>/dev/null || :
 # watcher reports how each one actually went into the boot log once it
 # finishes, asynchronously, after the prompt is already up.
 _svc_deferred=" network wifi "
-if [ -d /etc/arctic/services ]; then
-	mkdir -p /run/arctic/svc-out
-	: >/run/arctic/svc-pids
+if [ -d /etc/scraplinux/services ]; then
+	mkdir -p /run/scraplinux/svc-out
+	: >/run/scraplinux/svc-pids
 	_svc_pending=""
-	for s in /etc/arctic/services/*; do
+	for s in /etc/scraplinux/services/*; do
 		[ -e "$s" ] || continue
 		n=$(basename "$s")
 		[ "$n" = "udev" ] && continue     # already handled above
@@ -422,7 +422,7 @@ if [ -d /etc/arctic/services ]; then
 		# success, but record what went wrong either way.
 		#
 		# PID kept in a file, not an eval'd $n-named variable: service names
-		# from /etc/arctic/services/* are almost always plain words, but
+		# from /etc/scraplinux/services/* are almost always plain words, but
 		# A_SERVICES in install.conf is user-supplied text, and a name with
 		# a dash or anything else that is not a valid shell identifier
 		# character breaks an eval'd assignment instead of just failing to
@@ -435,61 +435,61 @@ if [ -d /etc/arctic/services ]; then
 			# belongs to rc.boot itself, not to some other subshell handed
 			# the bare pid afterward.
 			rc_log "service $n: deferred, not holding up boot"
-			( if "/etc/rc.d/$n" start >"/run/arctic/svc-out/$n" 2>&1; then
+			( if "/etc/rc.d/$n" start >"/run/scraplinux/svc-out/$n" 2>&1; then
 				rc_log "service $n: started (deferred)"
-				[ -s "/run/arctic/svc-out/$n" ] && rc_log "  $(cat "/run/arctic/svc-out/$n")"
+				[ -s "/run/scraplinux/svc-out/$n" ] && rc_log "  $(cat "/run/scraplinux/svc-out/$n")"
 			  else
 				rc_log "service $n: FAILED (deferred)"
-				[ -s "/run/arctic/svc-out/$n" ] && \
-					sed 's/^/  /' "/run/arctic/svc-out/$n" >>"$RC_LOG" 2>/dev/null || :
+				[ -s "/run/scraplinux/svc-out/$n" ] && \
+					sed 's/^/  /' "/run/scraplinux/svc-out/$n" >>"$RC_LOG" 2>/dev/null || :
 			  fi
 			) &
 			;;
 		*)
-			"/etc/rc.d/$n" start >"/run/arctic/svc-out/$n" 2>&1 &
-			printf '%s %s\n' "$n" "$!" >>/run/arctic/svc-pids
+			"/etc/rc.d/$n" start >"/run/scraplinux/svc-out/$n" 2>&1 &
+			printf '%s %s\n' "$n" "$!" >>/run/scraplinux/svc-pids
 			_svc_pending="$_svc_pending $n"
 			;;
 		esac
 	done
 	for n in $_svc_pending; do
 		begin "Service '$n'"
-		_svc_pid=$(awk -v n="$n" '$1==n{print $2; exit}' /run/arctic/svc-pids)
+		_svc_pid=$(awk -v n="$n" '$1==n{print $2; exit}' /run/scraplinux/svc-pids)
 		if wait "$_svc_pid"; then
 			good
 			rc_log "service $n: started"
-			[ -s "/run/arctic/svc-out/$n" ] && rc_log "  $(cat "/run/arctic/svc-out/$n")"
+			[ -s "/run/scraplinux/svc-out/$n" ] && rc_log "  $(cat "/run/scraplinux/svc-out/$n")"
 		else
 			bad "$n"
 			rc_log "service $n: FAILED"
-			if [ -s "/run/arctic/svc-out/$n" ]; then
-				sed 's/^/     /' "/run/arctic/svc-out/$n"
-				sed 's/^/  /' "/run/arctic/svc-out/$n" >>"$RC_LOG" 2>/dev/null || :
+			if [ -s "/run/scraplinux/svc-out/$n" ]; then
+				sed 's/^/     /' "/run/scraplinux/svc-out/$n"
+				sed 's/^/  /' "/run/scraplinux/svc-out/$n" >>"$RC_LOG" 2>/dev/null || :
 			fi
 		fi
 	done
 fi
 
 # ----------------------------------------------------------------------- greeting
-# No automatic message on first boot any more - arctic-firstboot still exists
+# No automatic message on first boot any more - scraplinux-firstboot still exists
 # and still works, run by hand, but a finished install boots straight to the
 # login prompt now rather than printing something once and needing to be
 # told to stop.
-rm -f /var/lib/arctic/firstboot
+rm -f /var/lib/scraplinux/firstboot
 
 rc_done
 
 # Leave a clean screen for the login prompt. The boot log is worth watching
 # while it happens and worth keeping afterwards - it is in /var/log/boot.log
-# and /run/arctic/boot.log either way - but landing on a fresh tty is what
+# and /run/scraplinux/boot.log either way - but landing on a fresh tty is what
 # you want once the machine is up. A verbose boot keeps it on screen.
 case " $(cat /proc/cmdline 2>/dev/null) " in
 *" verbose "*|*" debug "*) ;;
 # netbsd-curses' clear goes through tput, which wants a terminfo database
-# that nothing in Arctic ships yet - so it failed, printed "tput: cannot
+# that nothing in ScrapLinux ships yet - so it failed, printed "tput: cannot
 # access the terminfo database" directly above the login prompt on every
 # boot, and left the screen uncleared. The escape sequence needs no database
-# and every terminal Arctic can boot on understands it.
+# and every terminal ScrapLinux can boot on understands it.
 *) [ "${QUIET:-0}" = "1" ] || \
 	{ command -v clear >/dev/null 2>&1 && clear 2>/dev/null; } || \
 	printf '\033[H\033[2J' ;;
@@ -520,8 +520,8 @@ fi
 
 # /run is a tmpfs, so keep a copy somewhere that survives the boot. This is
 # the first thing to look at when something did not come up.
-if [ -f /run/arctic/boot.log ]; then
+if [ -f /run/scraplinux/boot.log ]; then
 	mkdir -p /var/log 2>/dev/null && \
-		cp -f /run/arctic/boot.log /var/log/boot.log 2>/dev/null || :
+		cp -f /run/scraplinux/boot.log /var/log/boot.log 2>/dev/null || :
 fi
 exit 0

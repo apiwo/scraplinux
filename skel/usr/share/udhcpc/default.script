@@ -7,11 +7,11 @@
 # DHCP protocol and obtains a lease just fine, but nothing ever applies it: no
 # address goes on the interface, no default route, no resolv.conf. That is
 # udhcpc's whole design - the applet handles the protocol, this script is what
-# actually configures anything - and Arctic did not ship one, so every
+# actually configures anything - and ScrapLinux did not ship one, so every
 # DHCP-based network (the default for both wired and wireless) looked like it
 # came up but never actually worked.
 #
-# Uses iproute2's ip, which Arctic ships, not the ifconfig-era tools this
+# Uses iproute2's ip, which ScrapLinux ships, not the ifconfig-era tools this
 # script is traditionally written against.
 set -u
 

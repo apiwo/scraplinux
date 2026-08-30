@@ -1,0 +1,8 @@
+# ScrapLinux - alt-nonfree repository
+# Free replacements for what is in nonfree: nouveau, b43-open, mesa-only stacks.
+name = alt-nonfree
+url = https://raw.githubusercontent.com/apiwo/scraplinux-pkgs/main/ALL/alt-nonfree
+mirror = https://raw.githubusercontent.com/apiwo/scraplinux-pkgs/main/ALL/alt-nonfree
+mirror = https://pkg-scraplinux.apiwow.net/ALL/alt-nonfree
+enabled = yes
+priority = 45

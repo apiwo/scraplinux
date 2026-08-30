@@ -4,5 +4,5 @@ CMD=/usr/bin/sddm-logwrap
 ARGS=""
 BACKGROUND=yes
 
-. /etc/arctic/svc.lib
+. /etc/scraplinux/svc.lib
 svc_main "$@"

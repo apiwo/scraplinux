@@ -1,5 +1,5 @@
 #%PAM-1.0
-# Arctic Linux - baseline PAM stack for the autologin path (sddm-autologin
+# ScrapLinux - baseline PAM stack for the autologin path (sddm-autologin
 # and anything else that skips a real password check). No auth phase here
 # on purpose - the caller has already decided the login is trusted.
 

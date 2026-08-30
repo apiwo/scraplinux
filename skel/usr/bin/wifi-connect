@@ -1,7 +1,7 @@
 #!/bin/sh
 # wifi-connect - bring up WPA2-Personal wireless, and remember it.
 #
-# The only wireless tool Arctic has - there is no NetworkManager here, on
+# The only wireless tool ScrapLinux has - there is no NetworkManager here, on
 # purpose: one wpa_supplicant + udhcpc path, live before install and every
 # boot after it, instead of two stacks that can disagree about which one
 # owns the radio. A successful connect is written to network.conf; rc.boot
@@ -101,7 +101,7 @@ check_regdomain() {
 			fi
 		else
 			printf '     %sno regulatory database installed - 5 GHz may not associate.\n' "$GREY"
-			printf '     alpm add wireless-regdb, or use the 2.4 GHz network%s\n' "$R"
+			printf '     scraps add wireless-regdb, or use the 2.4 GHz network%s\n' "$R"
 		fi
 		;;
 	esac
@@ -149,7 +149,7 @@ wireless_ifaces() {
 # driver load succeeded) but cannot actually transmit or receive, so a scan
 # comes back with nothing in range - indistinguishable from a genuine "no
 # networks found" without checking rfkill specifically, which nothing here
-# did. No `rfkill` package exists in Arctic to shell out to; the kernel's
+# did. No `rfkill` package exists in ScrapLinux to shell out to; the kernel's
 # own sysfs interface needs nothing installed. `hard` (a physical switch)
 # is read-only and cannot be fixed from software - only `soft` is ours to
 # clear.
@@ -307,18 +307,18 @@ connect() {
 	# Not /dev/null. When association fails this log is the only account of
 	# why - "did not come up after 30s" on its own sends you looking at the
 	# passphrase when the driver may have refused the channel outright.
-	mkdir -p /run/arctic 2>/dev/null
-	_wpalog="/run/arctic/wpa_supplicant-$_if.log"
+	mkdir -p /run/scraplinux 2>/dev/null
+	_wpalog="/run/scraplinux/wpa_supplicant-$_if.log"
 	# Truncated per attempt, then appended to by both -f and the redirect, so
 	# what it holds is this attempt and not the last one as well.
 	: >"$_wpalog" 2>/dev/null
 	# No -f. It looks like the obvious way to get a log out of a daemon that
-	# has already forked, and Arctic's wpa_supplicant does not have it:
+	# has already forked, and ScrapLinux's wpa_supplicant does not have it:
 	# -f is compiled in by CONFIG_DEBUG_FILE and this build does not set it.
 	# An unknown option makes wpa_supplicant print its usage and exit without
 	# ever starting, so the "log" this then showed was that usage text and the
 	# radio was never touched at all. Redirection does the same job and cannot
-	# be refused. Checked against the wpa_supplicant Arctic ships, not the
+	# be refused. Checked against the wpa_supplicant ScrapLinux ships, not the
 	# one on the build host - the host's is built with CONFIG_DEBUG_FILE and
 	# accepts -f perfectly, which is exactly how this got shipped.
 	wpa_supplicant -B -i "$_if" -c "$conf" >>"$_wpalog" 2>&1
@@ -390,7 +390,7 @@ connect() {
 	# thing worth leaving to a compiled-in default. rc.d/network already names
 	# it; these two now agree.
 	_dhcpscript=/usr/share/udhcpc/default.script
-	_dhcplog=/run/arctic/udhcpc-$_if.log
+	_dhcplog=/run/scraplinux/udhcpc-$_if.log
 	: >"$_dhcplog" 2>/dev/null
 	_got=0
 	for _try in 1 2 3; do
@@ -411,13 +411,13 @@ connect() {
 
 		# Remember it. rc.boot reads this back to reconnect at every boot
 		# without needing wifi-connect run by hand again.
-		if [ -f /etc/arctic/conf.lib ]; then
+		if [ -f /etc/scraplinux/conf.lib ]; then
 			# shellcheck disable=SC1091
-			. /etc/arctic/conf.lib
-			mkdir -p /etc/arctic 2>/dev/null
-			conf_set1 /etc/arctic/network.conf wifi.ssid "$_ssid"
-			conf_set1 /etc/arctic/network.conf wifi.psk "$_psk"
-			conf_set1 /etc/arctic/network.conf wifi.iface "$_if"
+			. /etc/scraplinux/conf.lib
+			mkdir -p /etc/scraplinux 2>/dev/null
+			conf_set1 /etc/scraplinux/network.conf wifi.ssid "$_ssid"
+			conf_set1 /etc/scraplinux/network.conf wifi.psk "$_psk"
+			conf_set1 /etc/scraplinux/network.conf wifi.iface "$_if"
 		fi
 	else
 		oops "associated, but DHCP failed"
@@ -428,7 +428,7 @@ connect() {
 }
 
 interactive() {
-	command -v iw >/dev/null 2>&1 || { oops "iw is not installed - cannot scan (alpm add iw)"; exit 1; }
+	command -v iw >/dev/null 2>&1 || { oops "iw is not installed - cannot scan (scraps add iw)"; exit 1; }
 
 	# 1. the interface
 	ifaces=$(wireless_ifaces)
@@ -519,7 +519,7 @@ fi
 check_iface "$iface"
 
 if [ "$mode" = scan ] || [ "$mode" = list ]; then
-	command -v iw >/dev/null 2>&1 || { oops "iw is not installed - cannot scan (alpm add iw)"; exit 1; }
+	command -v iw >/dev/null 2>&1 || { oops "iw is not installed - cannot scan (scraps add iw)"; exit 1; }
 	tmp=/tmp/.wifi-scan.$$
 	scan_with_spinner "$iface" "$tmp"
 	if [ "$mode" = list ]; then

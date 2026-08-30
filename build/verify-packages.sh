@@ -1,13 +1,13 @@
 #!/bin/sh
-# verify-packages.sh - install every .alpmz into a clean root and check it works.
+# verify-packages.sh - install every .scrapsz into a clean root and check it works.
 #
 # Only packages that pass here get published. A package is considered good when:
 #
-#   1. alpm resolves it and installs it into an empty root without error
+#   1. scraps resolves it and installs it into an empty root without error
 #   2. every file the package claims is actually on disk afterwards
-#   3. alpm verify agrees the checksums match
+#   3. scraps verify agrees the checksums match
 #   4. any ELF it installs has all of its libraries satisfied inside that root
-#   5. alpm can then remove it cleanly
+#   5. scraps can then remove it cleanly
 #
 # Output is a pass/fail table plus logs/verify/<pkg>.log for anything that fails.
 #
@@ -15,13 +15,13 @@
 #   verify-packages.sh zsh doas   # just these
 set -u
 
-B=${ARCTIC_BUILD:-/home/apiwo/arctic-build}
-TREE=${ARCTIC_TREE:-/home/apiwo/arctic}
+B=${SCRAPLINUX_BUILD:-/home/apiwo/scraplinux-build}
+TREE=${SCRAPLINUX_TREE:-/home/apiwo/scraplinux}
 REPO=$B/repo
 ROOT=$B/verify-root
 LOGS=$B/logs/verify
 ARCH=x86_64
-ALPM="$TREE/alpm/alpm"
+SCRAPS="$TREE/scraps/scraps"
 
 mkdir -p "$LOGS"
 : >"$B/logs/verified.list"
@@ -31,14 +31,14 @@ want=$*
 
 pass=0; fail=0
 
-# A clean root with just enough for alpm to work in.
+# A clean root with just enough for scraps to work in.
 fresh_root() {
 	rm -rf "$ROOT"
-	mkdir -p "$ROOT/etc/alpm/repos.d" "$ROOT/var/lib/alpm/sync" \
+	mkdir -p "$ROOT/etc/scraps/repos.d" "$ROOT/var/lib/scraps/sync" \
 	         "$ROOT/var/log" "$ROOT/usr/lib" "$ROOT/usr/bin"
 	for r in main kernels; do
 		[ -d "$REPO/$r" ] || continue
-		cat >"$ROOT/etc/alpm/repos.d/$r.repo" <<EOF
+		cat >"$ROOT/etc/scraps/repos.d/$r.repo" <<EOF
 name = $r
 url = file://$REPO/$r
 enabled = yes
@@ -47,23 +47,23 @@ EOF
 	done
 }
 
-run_alpm() {
-	ALPM_ROOT="$ROOT" \
-	ALPM_CONF="$ROOT/etc/alpm/alpm.conf" \
-	ALPM_REPOD="$ROOT/etc/alpm/repos.d" \
-	ALPM_DB="$ROOT/var/lib/alpm" \
-	ALPM_CACHE="$B/verify-cache" \
-	ALPM_LOG="$ROOT/var/log/alpm.log" \
-	ALPM_YES=1 ALPM_COLOR=never \
-	sh "$ALPM" "$@"
+run_scraps() {
+	SCRAPS_ROOT="$ROOT" \
+	SCRAPS_CONF="$ROOT/etc/scraps/scraps.conf" \
+	SCRAPS_REPOD="$ROOT/etc/scraps/repos.d" \
+	SCRAPS_DB="$ROOT/var/lib/scraps" \
+	SCRAPS_CACHE="$B/verify-cache" \
+	SCRAPS_LOG="$ROOT/var/log/scraps.log" \
+	SCRAPS_YES=1 SCRAPS_COLOR=never \
+	sh "$SCRAPS" "$@"
 }
 
 printf '\n  %-24s %-9s %-7s %-7s %s\n' PACKAGE INSTALL FILES LIBS REMOVE
 printf '  %s\n' "----------------------------------------------------------------"
 
-for f in "$REPO"/main/$ARCH/*.alpmz "$REPO"/kernels/$ARCH/*.alpmz; do
+for f in "$REPO"/main/$ARCH/*.scrapsz "$REPO"/kernels/$ARCH/*.scrapsz; do
 	[ -f "$f" ] || continue
-	name=$(basename "$f" | sed 's/-[0-9][^-]*-[0-9]*\.'"$ARCH"'\.alpmz$//')
+	name=$(basename "$f" | sed 's/-[0-9][^-]*-[0-9]*\.'"$ARCH"'\.scrapsz$//')
 	if [ -n "$want" ]; then
 		case " $want " in *" $name "*) ;; *) continue ;; esac
 	fi
@@ -71,11 +71,11 @@ for f in "$REPO"/main/$ARCH/*.alpmz "$REPO"/kernels/$ARCH/*.alpmz; do
 	: >"$log"
 
 	fresh_root
-	run_alpm fetch all >>"$log" 2>&1
+	run_scraps fetch all >>"$log" 2>&1
 
 	i_res=FAIL; f_res=-; l_res=-; r_res=-
 
-	if run_alpm ins "$name" >>"$log" 2>&1; then
+	if run_scraps ins "$name" >>"$log" 2>&1; then
 		i_res=ok
 
 		# 2. every claimed file is present
@@ -86,11 +86,11 @@ for f in "$REPO"/main/$ARCH/*.alpmz "$REPO"/kernels/$ARCH/*.alpmz; do
 			# at the host's filesystem, so -e alone calls a good link missing.
 			[ -e "$ROOT$p" ] || [ -L "$ROOT$p" ] || {
 				miss=$((miss+1)); echo "missing file: $p" >>"$log"; }
-		done <"$ROOT/var/lib/alpm/local/$name/FILES" 2>/dev/null
+		done <"$ROOT/var/lib/scraps/local/$name/FILES" 2>/dev/null
 		[ "$miss" = 0 ] && f_res=ok || f_res="$miss miss"
 
 		# 3. checksums agree
-		run_alpm verify "$name" >>"$log" 2>&1 && : || echo "verify reported changes" >>"$log"
+		run_scraps verify "$name" >>"$log" 2>&1 && : || echo "verify reported changes" >>"$log"
 
 		# 4. every ELF resolves inside this root
 		unres=0
@@ -113,11 +113,11 @@ for f in "$REPO"/main/$ARCH/*.alpmz "$REPO"/kernels/$ARCH/*.alpmz; do
 				unres=$((unres+1))
 				echo "unresolved: $p needs $lib" >>"$log"
 			done
-		done <"$ROOT/var/lib/alpm/local/$name/FILES" 2>/dev/null
+		done <"$ROOT/var/lib/scraps/local/$name/FILES" 2>/dev/null
 		[ "$unres" = 0 ] && l_res=ok || l_res="$unres bad"
 
 		# 5. it comes back out cleanly
-		if ALPM_FORCE=1 run_alpm del "$name" >>"$log" 2>&1; then r_res=ok; else r_res=FAIL; fi
+		if SCRAPS_FORCE=1 run_scraps del "$name" >>"$log" 2>&1; then r_res=ok; else r_res=FAIL; fi
 	fi
 
 	if [ "$i_res" = ok ] && [ "$f_res" = ok ] && [ "$l_res" = ok ] && [ "$r_res" = ok ]; then

@@ -4,5 +4,5 @@ CMD=/usr/bin/syslogd
 ARGS="-n -O /var/log/messages"
 BACKGROUND=yes
 
-. /etc/arctic/svc.lib
+. /etc/scraplinux/svc.lib
 svc_main "$@"

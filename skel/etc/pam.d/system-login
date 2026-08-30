@@ -1,5 +1,5 @@
 #%PAM-1.0
-# Arctic Linux - baseline PAM stack for interactive logins (sddm, getty
+# ScrapLinux - baseline PAM stack for interactive logins (sddm, getty
 # login, anything else that does `auth include system-login`).
 
 auth       required     pam_faillock.so      preauth

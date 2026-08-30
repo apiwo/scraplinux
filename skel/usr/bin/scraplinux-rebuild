@@ -1,0 +1,487 @@
+#!/bin/sh
+# scraplinux-rebuild - reconcile the installed system against its declared config
+#
+#   scraplinux-rebuild             make the system match the declared config
+#   scraplinux-rebuild --dry-run   show what would change, do nothing
+#
+# Reads identity.conf, services.conf, users.conf (additive only) and
+# hardware.conf; network.conf is applied by rc.d/wifi at boot, this only
+# restarts it live if what's declared has changed. pkgs.conf is never
+# reconciled - it's a mirror scraps itself keeps in step with `scraps add`/
+# `scraps rem`, not something applied to the machine. See conf.lib.
+#
+# Also finishes a chroot install: activates any kernel still marked
+# -nomod (its own hooks couldn't run there), and writes limine.conf/
+# grub.cfg from the real fstab/crypttab - never the deploy command
+# itself, that stays manual.
+#
+# A file with nothing declared yet is seeded from what the machine
+# already is on first run, rather than reconciled against as empty.
+# shellcheck shell=sh disable=SC2039
+
+set -u
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+for d in /usr/lib/scraps /usr/lib/scraplinux/../../scraps ./scraps; do
+	[ -f "$d/libscraps.sh" ] && { . "$d/libscraps.sh"; break; }
+done
+
+D=/etc/scraplinux
+[ -f "$D/conf.lib" ] && . "$D/conf.lib"
+LOCKF=$D/system.lock
+DRYRUN=0
+case "${1:-}" in
+--dry-run|-n) DRYRUN=1 ;;
+-h|--help|help) sed -n '2,29p' "$0" | sed 's/^# \?//'; exit 0 ;;
+esac
+
+# Not need_root() from libscraps.sh: that calls die(), which prints to
+# stderr and then exits the whole script from inside this call - and
+# "need_root 2>/dev/null" redirects that exit's own error message to
+# /dev/null along with it, so a non-root run of this script used to exit
+# silently instead of ever reaching the fallback message below.
+[ "$(id -u)" = 0 ] || { echo "Must be run as root." >&2; exit 1; }
+
+if [ -t 1 ]; then
+	R=$(printf '\033[0m'); B=$(printf '\033[1m')
+	TEAL=$(printf '\033[38;5;44m'); MINT=$(printf '\033[38;5;79m')
+	AMB=$(printf '\033[38;5;215m'); GREY=$(printf '\033[38;5;245m')
+else
+	R= ; B= ; TEAL= ; MINT= ; AMB= ; GREY=
+fi
+note() { printf '%s::%s %s\n' "$TEAL" "$R" "$*"; }
+change() { printf '  %s%s%s %s\n' "$MINT" "$1" "$R" "$2"; }
+
+explicit_pkgs() {
+	for d in /var/lib/scraps/local/*/; do
+		[ -d "$d" ] || continue
+		[ "$(cat "${d}REASON" 2>/dev/null)" = "explicit" ] || continue
+		basename "$d"
+	done
+}
+
+explicit_pkgs_versioned() {
+	for d in /var/lib/scraps/local/*/; do
+		[ -d "$d" ] || continue
+		[ "$(cat "${d}REASON" 2>/dev/null)" = "explicit" ] || continue
+		n=$(basename "$d")
+		v=$(awk -F' *= *' '$1=="version"{print $2}' "${d}PKGINFO" 2>/dev/null)
+		r=$(awk -F' *= *' '$1=="release"{print $2}' "${d}PKGINFO" 2>/dev/null)
+		printf '%s\t%s-%s\n' "$n" "${v:-?}" "${r:-1}"
+	done | sort
+}
+
+enabled_services() {
+	for f in /etc/scraplinux/services/*; do
+		[ -e "$f" ] || continue
+		basename "$f"
+	done
+}
+
+in_list() {
+	needle=$1; shift
+	for w in "$@"; do [ "$w" = "$needle" ] && return 0; done
+	return 1
+}
+
+current_hostname() { cat /etc/hostname 2>/dev/null || hostname 2>/dev/null; }
+current_tz() {
+	[ -L /etc/localtime ] && readlink /etc/localtime 2>/dev/null | sed 's|.*/zoneinfo/||'
+}
+current_locale() { awk -F= '$1=="LANG"{print $2; exit}' /etc/locale.conf 2>/dev/null; }
+current_keymap() { awk -F= '$1=="KEYMAP"{print $2; exit}' /etc/vconsole.conf 2>/dev/null; }
+
+detect_gpu() {
+	if [ -d /sys/bus/pci/devices ]; then
+		v=$(lspci 2>/dev/null | grep -iE 'vga|3d|display')
+		case "$v" in
+		*NVIDIA*|*nVidia*)          echo nvidia ;;
+		*AMD*|*ATI*|*"Advanced Micro"*) echo amd ;;
+		*Intel*)                    echo intel ;;
+		*)                          echo generic ;;
+		esac
+	else
+		echo generic
+	fi
+}
+detect_microcode() {
+	case "$(grep -m1 '^vendor_id' /proc/cpuinfo 2>/dev/null)" in
+	*GenuineIntel*) echo intel-ucode ;;
+	*AuthenticAMD*) echo amd-ucode ;;
+	*)              echo none ;;
+	esac
+}
+
+# hw.bootloader ships empty in every tarball - nothing in the documented
+# install (`scraps add limine`, then `scraplinux-rebuild`) ever declares it, so
+# without this the whole bootloader-config step silently no-ops forever:
+# no error, no warning, just no limine.conf. Same auto/detect shape as
+# hw.gpu/hw.microcode above.
+detect_bootloader() {
+	in_list limine $cur_pkgs && { echo limine; return; }
+	in_list grub $cur_pkgs && { echo grub; return; }
+	echo ""
+}
+
+cur_pkgs=$(explicit_pkgs)
+cur_svcs=$(enabled_services)
+
+# ------------------------------------------------------------------ bootstrap
+# identity.conf: nothing declared yet anywhere - seed every field from what
+# the machine already is, instead of reconciling against an empty file,
+# which would mean wiping the hostname.
+id_hostname=$(conf_get1 "$D/identity.conf" id.hostname)
+id_tz=$(conf_get1 "$D/identity.conf" id.timezone)
+id_locale=$(conf_get1 "$D/identity.conf" id.locale)
+id_lang=$(conf_get1 "$D/identity.conf" id.lang)
+id_keymap=$(conf_get1 "$D/identity.conf" id.keymap)
+if [ -f "$D/identity.conf" ] && [ -z "$id_hostname$id_tz$id_locale$id_lang$id_keymap" ]; then
+	note "identity.conf has nothing declared yet - seeding it from what the machine already is"
+	h=$(current_hostname); tz=$(current_tz); loc=$(current_locale); km=$(current_keymap)
+	conf_set1 "$D/identity.conf" id.hostname "$h"
+	conf_set1 "$D/identity.conf" id.timezone "$tz"
+	conf_set1 "$D/identity.conf" id.locale "$loc"
+	conf_set1 "$D/identity.conf" id.lang "$loc"
+	conf_set1 "$D/identity.conf" id.keymap "$km"
+	id_hostname=$h; id_tz=$tz; id_locale=$loc; id_lang=$loc; id_keymap=$km
+	printf '  %sWrote %s. Nothing was changed this run.%s\n' "$GREY" "$D/identity.conf" "$R"
+fi
+
+# services.conf: same reasoning - an empty declared list would mean
+# "disable everything currently enabled" if reconciled against directly.
+svc_declared=$(conf_get "$D/services.conf" services.enabled)
+if [ -f "$D/services.conf" ] && [ -z "$(printf '%s' "$svc_declared" | tr -d '[:space:]')" ]; then
+	note "services.conf has nothing declared yet - seeding it from what is already enabled"
+	printf '%s\n' "$cur_svcs" | conf_set "$D/services.conf" services.enabled
+	svc_declared=$cur_svcs
+	printf '  %sWrote %s. Nothing was changed this run.%s\n' "$GREY" "$D/services.conf" "$R"
+fi
+
+users_declared=$(conf_get "$D/users.conf" users.declared)
+
+gpu_declared=$(conf_get1 "$D/hardware.conf" hw.gpu);       gpu_declared=${gpu_declared:-auto}
+uc_declared=$(conf_get1 "$D/hardware.conf" hw.microcode);  uc_declared=${uc_declared:-auto}
+bootloader_declared=$(conf_get1 "$D/hardware.conf" hw.bootloader)
+[ -n "$bootloader_declared" ] || bootloader_declared=$(detect_bootloader)
+boot_timeout=$(conf_get1 "$D/hardware.conf" hw.boot_timeout); boot_timeout=${boot_timeout:-3}
+
+# ------------------------------------------------------------------- identity
+identity_changes=""
+[ -n "$id_hostname" ] && [ "$id_hostname" != "$(current_hostname)" ] && \
+	identity_changes="$identity_changes hostname"
+[ -n "$id_tz" ] && [ "$id_tz" != "$(current_tz)" ] && \
+	identity_changes="$identity_changes timezone"
+[ -n "$id_locale" ] && [ "$id_locale" != "$(current_locale)" ] && \
+	identity_changes="$identity_changes locale"
+[ -n "$id_keymap" ] && [ "$id_keymap" != "$(current_keymap)" ] && \
+	identity_changes="$identity_changes keymap"
+
+# --------------------------------------------------------------- user accounts
+users_to_create=""
+for u in $users_declared; do
+	name=${u%%:*}
+	[ -n "$name" ] || continue
+	getent passwd "$name" >/dev/null 2>&1 || users_to_create="$users_to_create $u"
+done
+
+# ------------------------------------------------------------------ networking
+# network.conf is applied by rc.d/wifi at boot, not here. The only thing
+# worth doing on a rebuild is noticing that what's declared no longer
+# matches what wpa_supplicant is actually running with, and restarting the
+# service live rather than waiting for the next boot.
+wifi_change=""
+net_ssid=$(conf_get1 "$D/network.conf" wifi.ssid)
+if [ -n "$net_ssid" ]; then
+	net_iface=$(conf_get1 "$D/network.conf" wifi.iface)
+	cur_ssid=""
+	for c in /etc/wpa_supplicant-*.conf; do
+		[ -f "$c" ] || continue
+		[ -n "$net_iface" ] && [ "$c" != "/etc/wpa_supplicant-$net_iface.conf" ] && continue
+		cur_ssid=$(awk -F'"' '/^[[:space:]]*ssid=/{print $2; exit}' "$c" 2>/dev/null)
+		[ -n "$cur_ssid" ] && break
+	done
+	[ "$cur_ssid" != "$net_ssid" ] && wifi_change="$net_ssid"
+fi
+
+# ---------------------------------------------------------------------- hardware
+gpu=$gpu_declared; [ "$gpu" = auto ] && gpu=$(detect_gpu)
+gpu_pkgs="" gpu_note=""
+case "$gpu" in
+nvidia) gpu_note="nvidia driver reconciliation is not done here - see scraps-nvidia-configure" ;;
+*)
+	for p in mesa vulkan-loader; do
+		in_list "$p" $cur_pkgs || gpu_pkgs="$gpu_pkgs $p"
+	done
+	;;
+esac
+
+uc=$uc_declared; [ "$uc" = auto ] && uc=$(detect_microcode)
+uc_pkg=""
+[ "$uc" != none ] && ! in_list "$uc" $cur_pkgs && uc_pkg=$uc
+
+hw_to_install="$gpu_pkgs"
+[ -n "$uc_pkg" ] && hw_to_install="$hw_to_install $uc_pkg"
+
+# ------------------------------------------------------------------ bootloader
+# Kernel activation: a kernel installed with `scraps add -nomod` from inside
+# a chroot could not run its own post-install hooks there (no running
+# kernel to build an initramfs against, no bootloader config to fold it
+# into) - `scraps commit` is what finishes that, the same step
+# scraplinux-boot-strap used to run automatically at the end of an install.
+to_activate=""
+for s in /var/lib/scraps/local/*/STATE; do
+	[ -f "$s" ] || continue
+	grep -q '^activated = no$' "$s" || continue
+	to_activate="$to_activate $(basename "$(dirname "$s")")"
+done
+
+BOOTDIR=/boot
+[ -d /boot/efi ] && mountpoint -q /boot/efi 2>/dev/null && BOOTDIR=/boot/efi
+
+write_limine_conf() {
+	bd=$1 kname=$2 rootspec=$3 initrd=$4 ucode=$5
+	mods=""
+	[ -n "$ucode" ]  && mods="$mods
+    module_path: boot():/$(basename "$ucode")"
+	[ -n "$initrd" ] && mods="$mods
+    module_path: boot():/$(basename "$initrd")"
+
+	luks=""
+	if [ -s /etc/crypttab ]; then
+		cu=$(awk '$1=="cryptroot"{print $2}' /etc/crypttab | sed 's/^UUID=//' | head -1)
+		[ -n "$cu" ] && luks="rd.luks.uuid=$cu "
+	fi
+	rflags=""
+	if [ -s /etc/fstab ]; then
+		fsopts=$(awk '$2=="/"{print $4; exit}' /etc/fstab)
+		sv=$(printf '%s\n' "$fsopts" | tr ',' '\n' | grep '^subvol=' | head -1)
+		[ -n "$sv" ] && rflags="rootflags=$sv "
+	fi
+
+	cat >"$bd/limine.conf" <<EOF
+timeout: $boot_timeout
+default_entry: 1
+interface_branding: ScrapLinux
+graphics: yes
+wallpaper: boot():/scraplinux-splash.png
+wallpaper_style: centered
+
+/ScrapLinux linux
+    protocol: linux
+    kernel_path: boot():/$kname
+    kernel_cmdline: ${luks}${rflags}root=$rootspec rw quiet loglevel=3 scraplinux.splash usbcore.autosuspend=-1$mods
+
+/ScrapLinux linux (verbose)
+    protocol: linux
+    kernel_path: boot():/$kname
+    kernel_cmdline: ${luks}${rflags}root=$rootspec rw loglevel=7 usbcore.autosuspend=-1$mods
+
+/ScrapLinux linux (recovery shell)
+    protocol: linux
+    kernel_path: boot():/$kname
+    kernel_cmdline: ${luks}${rflags}root=$rootspec rw single init=/bin/sh$mods
+EOF
+	sed 's|^/ScrapLinux|:ScrapLinux|; s|^    \([a-z_]*\): |    \1=|' "$bd/limine.conf" \
+		>"$bd/limine.cfg" 2>/dev/null || :
+	[ -f /usr/share/scraplinux/limine/splash.png ] && \
+		cp -f /usr/share/scraplinux/limine/splash.png "$bd/scraplinux-splash.png" || :
+}
+
+write_grub_cfg() {
+	bd=$1 kname=$2 rootspec=$3 initrd=$4
+	luks=""
+	if [ -s /etc/crypttab ]; then
+		cu=$(awk '$1=="cryptroot"{print $2}' /etc/crypttab | sed 's/^UUID=//' | head -1)
+		[ -n "$cu" ] && luks="rd.luks.uuid=$cu "
+	fi
+	rflags=""
+	if [ -s /etc/fstab ]; then
+		fsopts=$(awk '$2=="/"{print $4; exit}' /etc/fstab)
+		sv=$(printf '%s\n' "$fsopts" | tr ',' '\n' | grep '^subvol=' | head -1)
+		[ -n "$sv" ] && rflags="rootflags=$sv "
+	fi
+	mkdir -p "$bd/grub"
+	{
+		printf 'set timeout=%s\n' "$boot_timeout"
+		printf 'set default=0\n'
+		printf 'insmod all_video\n'
+		printf 'menuentry "ScrapLinux linux" {\n'
+		printf '\tlinux /%s %s%sroot=%s rw quiet usbcore.autosuspend=-1\n' "$kname" "$luks" "$rflags" "$rootspec"
+		[ -n "$initrd" ] && printf '\tinitrd /%s\n' "$(basename "$initrd")"
+		printf '}\n'
+		printf 'menuentry "ScrapLinux linux (recovery shell)" {\n'
+		printf '\tlinux /%s %s%sroot=%s rw single init=/bin/sh\n' "$kname" "$luks" "$rflags" "$rootspec"
+		printf '}\n'
+	} >"$bd/grub/grub.cfg"
+}
+
+boot_note=""
+bootloader_written=0
+if [ -n "$bootloader_declared" ] && [ -d "$BOOTDIR" ]; then
+	vmlinuz=$(ls "$BOOTDIR"/vmlinuz-* 2>/dev/null | head -1)
+	[ -z "$vmlinuz" ] && vmlinuz=$(ls /boot/vmlinuz-* 2>/dev/null | head -1)
+	if [ -n "$vmlinuz" ]; then
+		kname=$(basename "$vmlinuz")
+		[ "$(dirname "$vmlinuz")" = "$BOOTDIR" ] || : # copied below, once we know changes are real
+		rootspec=$(awk '$2=="/"{print $1; exit}' /etc/fstab 2>/dev/null)
+		case "$rootspec" in PARTUUID=*) rootspec="" ;; esac
+		if [ -z "$rootspec" ]; then
+			rd=$(awk '$2=="/"{print $1}' /proc/mounts | tail -1)
+			u=$(blkid -s UUID -o value "$rd" 2>/dev/null)
+			if [ -n "$u" ]; then rootspec="UUID=$u"
+			else p=$(blkid -s PARTUUID -o value "$rd" 2>/dev/null); rootspec=${p:+PARTUUID=$p}; rootspec=${rootspec:-$rd}
+			fi
+		fi
+		initrd=$(ls "$BOOTDIR"/initramfs-* 2>/dev/null | head -1)
+		ucode=$(ls "$BOOTDIR"/*-ucode.img 2>/dev/null | head -1)
+
+		cur_loader=""
+		[ -f "$BOOTDIR/limine.conf" ] && cur_loader=limine
+		[ -f "$BOOTDIR/grub/grub.cfg" ] && cur_loader=grub
+		if [ -n "$cur_loader" ] && [ "$cur_loader" != "$bootloader_declared" ]; then
+			boot_note="declared $bootloader_declared, installed $cur_loader - switching means reinstalling boot sectors, by hand"
+		elif [ -n "$to_activate" ] || [ ! -f "$BOOTDIR/$kname" ] || [ -z "$cur_loader" ]; then
+			[ "$(dirname "$vmlinuz")" = "$BOOTDIR" ] || cp -f "$vmlinuz" "$BOOTDIR/$kname"
+			for extra in /boot/initramfs-* /boot/*-ucode.img; do
+				[ -f "$extra" ] && cp -f "$extra" "$BOOTDIR/" || :
+			done
+			initrd=$(ls "$BOOTDIR"/initramfs-* 2>/dev/null | head -1)
+			ucode=$(ls "$BOOTDIR"/*-ucode.img 2>/dev/null | head -1)
+			bootloader_written=1
+		fi
+	fi
+fi
+
+# --------------------------------------------------------------------- packages
+# hardware.conf's own packages (gpu/microcode) are the only package install
+# a rebuild ever does - see the header comment for why pkgs.conf itself is
+# never reconciled against.
+if [ -z "$hw_to_install$to_activate$identity_changes$users_to_create$wifi_change$bootloader_written" ]; then
+	note "already matches declared config - nothing to do"
+	[ -n "$boot_note" ] && printf '  %s%s%s\n' "$AMB" "$boot_note" "$R"
+	exit 0
+fi
+
+note "reconciling"
+[ -n "$identity_changes" ]  && change "~" "identity:${identity_changes}"
+[ -n "$users_to_create" ]   && change "+" "create users:${users_to_create}"
+[ -n "$wifi_change" ]       && change "~" "wifi profile: $wifi_change"
+[ -n "$hw_to_install" ]     && change "+" "install:${hw_to_install}"
+[ -n "$to_activate" ]       && change "~" "activate kernel:${to_activate}"
+[ "$bootloader_written" = 1 ] && change "~" "bootloader config ($bootloader_declared)"
+[ -n "$gpu_note" ]          && printf '  %s%s%s\n' "$AMB" "$gpu_note" "$R"
+[ -n "$boot_note" ]         && printf '  %s%s%s\n' "$AMB" "$boot_note" "$R"
+
+[ "$DRYRUN" = 1 ] && { printf '  %s(dry run - nothing changed)%s\n' "$GREY" "$R"; exit 0; }
+
+command -v scraplinux-snapshot >/dev/null 2>&1 && scraplinux-snapshot create "scraplinux-rebuild" >/dev/null 2>&1
+
+if [ "${SCRAPLINUX_GEN_SWITCH:-0}" != 1 ] && command -v scraplinux-generation >/dev/null 2>&1; then
+	gen=$(scraplinux-generation create "before rebuild" 2>/dev/null)
+	[ -n "$gen" ] && note "recorded generation $gen"
+fi
+
+rc=0
+
+if [ -n "$id_hostname" ] && [ "$id_hostname" != "$(current_hostname)" ]; then
+	printf '%s\n' "$id_hostname" >/etc/hostname
+	hostname "$id_hostname" 2>/dev/null || :
+fi
+if [ -n "$id_tz" ] && [ "$id_tz" != "$(current_tz)" ]; then
+	if [ -e "/usr/share/zoneinfo/$id_tz" ]; then
+		ln -sf "/usr/share/zoneinfo/$id_tz" /etc/localtime
+	else
+		printf '  %sid.timezone=%s not found under /usr/share/zoneinfo - skipped%s\n' "$AMB" "$id_tz" "$R" >&2
+		rc=1
+	fi
+fi
+if [ -n "$id_locale" ] && [ "$id_locale" != "$(current_locale)" ]; then
+	{
+		printf 'LANG=%s\n' "$id_locale"
+		[ -n "$id_lang" ] && [ "$id_lang" != "$id_locale" ] && printf 'LC_ALL=%s\n' "$id_lang"
+	} >/etc/locale.conf
+fi
+if [ -n "$id_keymap" ] && [ "$id_keymap" != "$(current_keymap)" ]; then
+	printf 'KEYMAP=%s\n' "$id_keymap" >/etc/vconsole.conf
+	loadkmap </usr/share/keymaps/"$id_keymap".bmap 2>/dev/null || :
+fi
+
+for u in $users_to_create; do
+	name=${u%%:*}
+	rest=${u#*:}
+	sh_=${rest%%:*}
+	grps=${rest#*:}
+	[ "$grps" = "$rest" ] && grps=""
+	sh_=${sh_:-/bin/sh}
+	add_args="-D -s $sh_ -h /home/$name"
+	[ -n "$grps" ] && add_args="$add_args -G ${grps%%,*}"
+	# shellcheck disable=SC2086
+	adduser $add_args "$name" 2>/dev/null || { rc=1; continue; }
+	if [ -n "$grps" ]; then
+		OIFS=$IFS; IFS=,
+		for g in $grps; do addgroup "$name" "$g" 2>/dev/null || :; done
+		IFS=$OIFS
+	fi
+done
+
+if [ -n "$wifi_change" ] && service status wifi >/dev/null 2>&1; then
+	service restart wifi >/dev/null 2>&1 || \
+		printf '  %swifi service did not restart - network.conf is saved, apply it by hand%s\n' "$AMB" "$R" >&2
+fi
+
+if [ -n "$hw_to_install" ]; then
+	# shellcheck disable=SC2086
+	SCRAPS_YES=1 scraps add $hw_to_install || rc=1
+fi
+
+for p in $to_activate; do
+	SCRAPS_YES=1 scraps commit "$p" || rc=1
+done
+
+if [ "$bootloader_written" = 1 ]; then
+	case "$bootloader_declared" in
+	limine) write_limine_conf "$BOOTDIR" "$kname" "$rootspec" "$initrd" "$ucode" ;;
+	grub)   write_grub_cfg    "$BOOTDIR" "$kname" "$rootspec" "$initrd" ;;
+	esac
+fi
+
+svc_enable=""
+for s in $svc_declared; do
+	in_list "$s" $cur_svcs || svc_enable="$svc_enable $s"
+done
+svc_disable=""
+for s in $cur_svcs; do
+	in_list "$s" $svc_declared || svc_disable="$svc_disable $s"
+done
+for s in $svc_enable;  do service enable  "$s" >/dev/null 2>&1 || rc=1; done
+for s in $svc_disable; do service disable "$s" >/dev/null 2>&1 || rc=1; done
+
+if [ "$rc" = 0 ]; then
+	if [ "${SCRAPLINUX_GEN_SWITCH:-0}" != 1 ] && command -v scraplinux-generation >/dev/null 2>&1; then
+		gen=$(scraplinux-generation create "rebuild" 2>/dev/null)
+		[ -n "$gen" ] && note "now on generation $gen"
+	fi
+	command -v scraplinux-boot-generations >/dev/null 2>&1 && \
+		scraplinux-boot-generations >/dev/null 2>&1 || :
+
+	if [ -n "$svc_enable$svc_disable" ] && [ -f /etc/scraplinux/init ]; then
+		myinit=$(cat /etc/scraplinux/init 2>/dev/null)
+		if [ -n "$myinit" ] && [ "$myinit" != busybox ] && \
+		   command -v scraplinux-init-setup >/dev/null 2>&1; then
+			scraplinux-init-setup "$myinit" >/dev/null 2>&1 && \
+				note "$myinit service definitions regenerated"
+		fi
+	fi
+
+	{
+		printf '# ScrapLinux - package lock\n'
+		printf '# Written by scraplinux-rebuild %s. A record, not hand-edited.\n\n' \
+			"$(date '+%Y-%m-%d %H:%M:%S')"
+		explicit_pkgs_versioned
+	} >"$LOCKF" 2>/dev/null || :
+
+	note "rebuild complete"
+else
+	printf '  %ssome changes failed - see above%s\n' "$AMB" "$R" >&2
+fi
+exit "$rc"

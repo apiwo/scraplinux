@@ -1,5 +1,5 @@
 #!/bin/sh
-# build-tarball.sh - build an Arctic Linux base tarball.
+# build-tarball.sh - build an ScrapLinux base tarball.
 #
 #   build-tarball.sh def       busybox init (default)
 #   build-tarball.sh openrc    OpenRC wired up as init instead
@@ -9,17 +9,17 @@
 #
 # No ISO, no guided installer - see the main site's install guide.
 # Bundled raw: glibc, toybox, busybox, zsh, doas, e2fsprogs, util-linux,
-# alpm (pre-installed), alpm-strap, arctic-chroot. Not bundled:
-# arctic-base, any kernel, limine/grub, genfstab - `alpm add` after
-# alpm-strap has synced real repo indexes.
+# scraps (pre-installed), scraps-strap, scraplinux-chroot. Not bundled:
+# scraplinux-base, any kernel, limine/grub, genfstab - `scraps add` after
+# scraps-strap has synced real repo indexes.
 #
 # shellcheck shell=sh disable=SC2039
 
 set -eu
 
 FLAVOR=${1:-def}
-B=${ARCTIC_BUILD:-/home/apiwo/arctic-build}
-SRCTREE=${ARCTIC_TREE:-/home/apiwo/arctic}
+B=${SCRAPLINUX_BUILD:-/home/apiwo/scraplinux-build}
+SRCTREE=${SCRAPLINUX_TREE:-/home/apiwo/scraplinux}
 REPO=$B/repo
 WORK=$B/tarball/$FLAVOR
 SCRATCH=$B/tarball/.scratch-$FLAVOR
@@ -27,9 +27,9 @@ OUT=$B/tarball-out
 ARCH=x86_64
 
 case "$FLAVOR" in
-def)     TARNAME="arctic-linux-def-tarball.tar.xz" ;;
-openrc)  TARNAME="arctic-linux-openrc-tarball.tar.xz" ;;
-wayland) TARNAME="arctic-linux-wayland-tarball.tar.xz" ;;
+def)     TARNAME="scraplinux-def-tarball.tar.xz" ;;
+openrc)  TARNAME="scraplinux-openrc-tarball.tar.xz" ;;
+wayland) TARNAME="scraplinux-wayland-tarball.tar.xz" ;;
 *) echo "build-tarball.sh: unknown flavor '$FLAVOR' (def, openrc or wayland)" >&2; exit 1 ;;
 esac
 
@@ -109,14 +109,14 @@ pkg_deps() {
 unpack_pkg() {
 	# $1 = package name, $2 = REASON (explicit/dep)
 	# Resolved through the INDEX (exact name match on column 1), not a
-	# filename glob: "busybox-*.alpmz" also matches
-	# "busybox-musl-1.38.0-1...alpmz" as a prefix, and sort -V ranked
+	# filename glob: "busybox-*.scrapsz" also matches
+	# "busybox-musl-1.38.0-1...scrapsz" as a prefix, and sort -V ranked
 	# that fake match above the real busybox build it was actually
 	# after - a completely different, wrong package silently installed
 	# in its place. The INDEX is also the fix for the mtime trap glob+
 	# sort had on its own: a full repo repackaging run can regenerate an
 	# older release with a fresh timestamp, and only the INDEX's own
-	# version/release fields (kept unique per name by alpm-repo gen) say
+	# version/release fields (kept unique per name by scraps-repo gen) say
 	# which one is actually current.
 	_up_n=$1 _up_reason=${2:-dep}
 	_up_pkg=""
@@ -124,7 +124,7 @@ unpack_pkg() {
 		[ -f "$_up_i" ] || continue
 		_up_e=$(awk -F'\t' -v n="$_up_n" '$1==n{print $2"-"$3; exit}' "$_up_i")
 		[ -n "$_up_e" ] || continue
-		_up_pkg="$(dirname "$_up_i")/$_up_n-$_up_e.$ARCH.alpmz"
+		_up_pkg="$(dirname "$_up_i")/$_up_n-$_up_e.$ARCH.scrapsz"
 		[ -f "$_up_pkg" ] && break
 		_up_pkg=""
 	done
@@ -135,7 +135,7 @@ unpack_pkg() {
 	tar -xf "$_up_pkg" -C "$S" --keep-directory-symlink \
 		--exclude=.PKGINFO --exclude=.FILES --exclude=.INSTALL 2>/dev/null || {
 		printf '   %s failed to unpack\n' "$_up_n" >&2; return 1; }
-	_up_d="$S/var/lib/alpm/local/$_up_n"
+	_up_d="$S/var/lib/scraps/local/$_up_n"
 	mkdir -p "$_up_d"
 	tar -xOf "$_up_pkg" .PKGINFO >"$_up_d/PKGINFO" 2>/dev/null || :
 	tar -xOf "$_up_pkg" .FILES   >"$_up_d/FILES"   2>/dev/null || :
@@ -145,36 +145,36 @@ unpack_pkg() {
 	return 0
 }
 
-# onetrueawk and xz: alpm calls awk internally, and toybox's tar shells
-# out to a real xz binary rather than linking liblzma. libarchive: alpm's
+# onetrueawk and xz: scraps calls awk internally, and toybox's tar shells
+# out to a real xz binary rather than linking liblzma. libarchive: scraps's
 # own untar() prefers bsdtar over plain tar whenever it's present, and it
 # has to be here - toybox's tar misreads ordinary regular files in the
 # kernel package as symlinks ("bad symlink", extraction fails outright)
 # on an archive bsdtar reads correctly. None of the three are provided
 # by busybox or toybox. Outside a chroot this all goes unnoticed, since
 # the host environment's own copies are still on PATH; every one of
-# these failures only shows up once arctic-chroot resets PATH to the
+# these failures only shows up once scraplinux-chroot resets PATH to the
 # target's own binaries.
 # eudev, not mdev+libudev-zero: eudev ships real hwdb device classification
 # (60-input-id.hwdb, 70-mouse.hwdb, 70-touchpad.hwdb, ...), which is what
 # X's udev-based InputClass matching actually expects - libudev-zero derives
 # device type from raw /sys capability bits with no hwdb at all, a bare-
 # minimum shim built for mdev-only setups.
-# curl + ca-certificates: alpm's own downloader shells out to curl for
+# curl + ca-certificates: scraps's own downloader shells out to curl for
 # every https:// fetch (toybox/busybox wget answer "unsupported protocol"
 # or, worse, silently send a plaintext request on the TLS port and read
 # the connection reset as a generic failure) - and curl itself refuses
 # every handshake with no CA bundle to check the server certificate
 # against. Neither was ever in this list, so a fresh install had no way
-# to bootstrap itself at all: `alpm-strap` and `genfstab` ran fine
+# to bootstrap itself at all: `scraps-strap` and `genfstab` ran fine
 # because both are invoked from *outside* the chroot, on the live
-# environment's own curl - but every `alpm add` after `arctic-chroot`,
-# starting with arctic-base itself, failed on the very first package
+# environment's own curl - but every `scraps add` after `scraplinux-chroot`,
+# starting with scraplinux-base itself, failed on the very first package
 # with a bare "download failed", no interface, no mirror, no proxy
 # involved. Confirmed end to end: extracting the tarball fresh, entering
-# the chroot with no other network tooling pre-staged, `alpm add
-# arctic-base` now fetches and installs on the first try.
-# bmake: `alpm add -s <pkg>` (a source build - the primary way this package
+# the chroot with no other network tooling pre-staged, `scraps add
+# scraplinux-base` now fetches and installs on the first try.
+# bmake: `scraps add -s <pkg>` (a source build - the primary way this package
 # manager is meant to be used, binaries being the fallback) refuses outright
 # with "this system cannot build from source yet - missing: bmake" on a
 # completely fresh install. bmake was documented in this file's own header
@@ -189,7 +189,7 @@ unpack_pkg() {
 # names as always-present - byacc for any recipe needing yacc/bison-shaped
 # grammar generation, mandoc for anything that generates a man page as part
 # of its own install step.
-# gmake: bmake is deliberately Arctic's /usr/bin/make (see the comment in
+# gmake: bmake is deliberately ScrapLinux's /usr/bin/make (see the comment in
 # gen-ports.py's autotools template), but that same template just as
 # deliberately calls a *separate* `gmake` for the actual build/install steps
 # - bmake cannot drive automake's dependency-tracking .deps fragments, which
@@ -205,7 +205,7 @@ BASE_SET=$(pkg_deps $BASE_EXPLICIT)
 # already replaces (same libmount/libblkid/libuuid, see its recipe) - this
 # walk has no idea what replaces= means, so both ended up in the set and
 # both got unpacked, each claiming ownership of the same files in the
-# tarball's own alpm database. Drop the one util-linux already covers.
+# tarball's own scraps database. Drop the one util-linux already covers.
 # BASE_SET is newline-separated (pkg_deps prints one name per line), not
 # space-separated - grep -x, not a case glob built on spaces.
 if printf '%s\n' $BASE_SET | grep -qx util-linux && \
@@ -215,7 +215,7 @@ fi
 printf '   %s requested, %s with dependencies\n' \
 	"$(printf '%s\n' $BASE_EXPLICIT | wc -l | tr -d ' ')" \
 	"$(printf '%s\n' $BASE_SET | wc -l | tr -d ' ')"
-mkdir -p "$S/var/lib/alpm/local"
+mkdir -p "$S/var/lib/scraps/local"
 for p in $BASE_SET; do
 	reason=dep
 	case " $BASE_EXPLICIT " in *" $p "*) reason=explicit ;; esac
@@ -223,11 +223,11 @@ for p in $BASE_SET; do
 done
 
 # Enable eudev at boot the same way rc.boot's own device-manager check
-# expects (existence in /etc/arctic/services/udev, content unchecked) -
+# expects (existence in /etc/scraplinux/services/udev, content unchecked) -
 # without this the marker is absent and rc.boot falls back to mdev even
 # with eudev's binary sitting right there unused.
-mkdir -p "$S/etc/arctic/services"
-: >"$S/etc/arctic/services/udev"
+mkdir -p "$S/etc/scraplinux/services"
+: >"$S/etc/scraplinux/services/udev"
 ok "eudev enabled at boot"
 
 if [ "$FLAVOR" = openrc ]; then
@@ -256,11 +256,11 @@ if [ "$FLAVOR" = wayland ]; then
 	# hits a second, unresolved wayland-scanner codegen issue - see
 	# ports/base/dwl/recipe.local. kiwmi is deliberately not here either:
 	# real wlroots API drift going back to its last 2022 commit, documented
-	# in ports/base/kiwmi/recipe.local - it does not build against Arctic's
+	# in ports/base/kiwmi/recipe.local - it does not build against ScrapLinux's
 	# wlroots. "fluxland" from the original ask never matched a real
 	# compositor and was dropped. labwc/tinywl/wio/niri is a complete,
 	# working four-compositor lineup without either.
-	WAYLAND_SET=$(pkg_deps labwc-dms tinywl-dms wio-dms niri-dms sddm sddm-arctic-theme)
+	WAYLAND_SET=$(pkg_deps labwc-dms tinywl-dms wio-dms niri-dms sddm sddm-scraplinux-theme)
 	# Same util-linux/util-linux-libs collision as openrc above.
 	if printf '%s\n' $BASE_SET | grep -qx util-linux && \
 	   printf '%s\n' $WAYLAND_SET | grep -qx util-linux-libs; then
@@ -274,8 +274,8 @@ if [ "$FLAVOR" = wayland ]; then
 	# sddm's own package ships the binary, not a boot-time service - wire
 	# it up the same way lightdm's rc.d script does, and mark it enabled
 	# the same way rc.boot's own service loop expects (existence in
-	# /etc/arctic/services/, content unchecked - see rc.boot's `for s in
-	# /etc/arctic/services/*` loop, `[ -e "$s" ]` is the entire test).
+	# /etc/scraplinux/services/, content unchecked - see rc.boot's `for s in
+	# /etc/scraplinux/services/*` loop, `[ -e "$s" ]` is the entire test).
 	install -Dm755 "$SRCTREE/skel/etc/rc.d/sddm" "$S/etc/rc.d/sddm"
 	# start-stop-daemon --background (which rc.d/sddm's svc_main uses)
 	# redirects the daemonized child's stdout/stderr to /dev/null before it
@@ -285,39 +285,39 @@ if [ "$FLAVOR" = wayland ]; then
 	# vanishing, which is the difference between an empty log and an actual
 	# reason the next time sddm dies before writing anything itself.
 	install -Dm755 "$SRCTREE/skel/usr/bin/sddm-logwrap" "$S/usr/bin/sddm-logwrap"
-	mkdir -p "$S/etc/arctic/services"
-	: >"$S/etc/arctic/services/sddm"
+	mkdir -p "$S/etc/scraplinux/services"
+	: >"$S/etc/scraplinux/services/sddm"
 	ok "sddm enabled at boot, session picker offers dwl/labwc/tinywl/wio/niri"
 fi
 
-# ---------------------------------------------------------------- 2. alpm
-step "installing alpm itself"
-# Not through the package it just unpacked into var/lib/alpm/local - alpm
+# ---------------------------------------------------------------- 2. scraps
+step "installing scraps itself"
+# Not through the package it just unpacked into var/lib/scraps/local - scraps
 # ships pre-installed and ready, the same direct-from-source convention
 # build/pkg-tools.sh already uses for it, so the tarball never needs a
 # bootstrap step just to get a package manager.
-mkdir -p "$S/usr/bin" "$S/usr/lib/alpm" "$S/etc/alpm/repos.d"
-install -Dm755 "$SRCTREE/alpm/alpm"       "$S/usr/bin/alpm"
-install -Dm755 "$SRCTREE/alpm/alpm-build" "$S/usr/bin/alpm-build"
-install -Dm755 "$SRCTREE/alpm/alpm-repo"  "$S/usr/bin/alpm-repo"
-install -Dm755 "$SRCTREE/alpm/alpm-strap" "$S/usr/bin/alpm-strap"
-install -Dm644 "$SRCTREE/alpm/libalpm.sh" "$S/usr/lib/alpm/libalpm.sh"
-install -Dm644 "$SRCTREE/skel/etc/alpm/alpm.conf" "$S/etc/alpm/alpm.conf"
-cp -f "$SRCTREE/skel/etc/alpm/repos.d/"*.repo "$S/etc/alpm/repos.d/"
-mkdir -p "$S/var/lib/alpm/local" "$S/var/lib/alpm/sync" "$S/var/lib/alpm/hold" \
-	"$S/var/lib/alpm/snapshots" "$S/var/cache/alpm/pkg" "$S/var/cache/alpm/src" \
-	"$S/var/cache/alpm/build"
-mkdir -p "$S/etc/arctic"
-install -Dm644 "$SRCTREE/skel/etc/arctic/conf.lib" "$S/etc/arctic/conf.lib"
+mkdir -p "$S/usr/bin" "$S/usr/lib/scraps" "$S/etc/scraps/repos.d"
+install -Dm755 "$SRCTREE/scraps/scraps"       "$S/usr/bin/scraps"
+install -Dm755 "$SRCTREE/scraps/scraps-build" "$S/usr/bin/scraps-build"
+install -Dm755 "$SRCTREE/scraps/scraps-repo"  "$S/usr/bin/scraps-repo"
+install -Dm755 "$SRCTREE/scraps/scraps-strap" "$S/usr/bin/scraps-strap"
+install -Dm644 "$SRCTREE/scraps/libscraps.sh" "$S/usr/lib/scraps/libscraps.sh"
+install -Dm644 "$SRCTREE/skel/etc/scraps/scraps.conf" "$S/etc/scraps/scraps.conf"
+cp -f "$SRCTREE/skel/etc/scraps/repos.d/"*.repo "$S/etc/scraps/repos.d/"
+mkdir -p "$S/var/lib/scraps/local" "$S/var/lib/scraps/sync" "$S/var/lib/scraps/hold" \
+	"$S/var/lib/scraps/snapshots" "$S/var/cache/scraps/pkg" "$S/var/cache/scraps/src" \
+	"$S/var/cache/scraps/build"
+mkdir -p "$S/etc/scraplinux"
+install -Dm644 "$SRCTREE/skel/etc/scraplinux/conf.lib" "$S/etc/scraplinux/conf.lib"
 # svc.lib: every rc.d service script (lightdm, dbus, crond, sddm, ...)
 # sources this for start/stop/status - without it here, none of them
 # have worked in any tarball flavor at all, pre-existing and unrelated
 # to any one flavor.
-install -Dm644 "$SRCTREE/skel/etc/arctic/svc.lib" "$S/etc/arctic/svc.lib"
+install -Dm644 "$SRCTREE/skel/etc/scraplinux/svc.lib" "$S/etc/scraplinux/svc.lib"
 
-install -Dm755 "$SRCTREE/skel/usr/bin/arctic-chroot" "$S/usr/bin/arctic-chroot"
+install -Dm755 "$SRCTREE/skel/usr/bin/scraplinux-chroot" "$S/usr/bin/scraplinux-chroot"
 
-# Minimal accounts and NSS config - not part of arctic-base, because
+# Minimal accounts and NSS config - not part of scraplinux-base, because
 # nothing glibc-based works at all without them, chroot included: with
 # no /etc/passwd, getpwuid(0) fails and even `id` inside the chroot says
 # "bad uid 0" before a single real command has run.
@@ -334,7 +334,7 @@ chmod 600 "$S/etc/shadow"
 install -Dm644 "$SRCTREE/skel/etc/login.defs" "$S/etc/login.defs"
 # ld.so.conf: LLVM's runtimes build (libc++/libc++abi/libunwind) installs
 # into a target-triple subdirectory by CMake's own default, not straight
-# into /usr/lib like every other Arctic package - glibc's dynamic linker
+# into /usr/lib like every other ScrapLinux package - glibc's dynamic linker
 # only trusts /lib and /usr/lib by default, so without this, clang itself
 # (and anything linked against libc++, rust/cargo included, since both are
 # built with LLVM_USE_LIBCXX=1) fails on a freshly installed system:
@@ -343,12 +343,12 @@ install -Dm644 "$SRCTREE/skel/etc/login.defs" "$S/etc/login.defs"
 # docs/STATUS.md ("Alpha 3 SS") from the old mkiso/skel-copy install
 # path - it silently stopped applying when the tarball flavors took over
 # with their own curated file list, since ld.so.conf was never added to
-# it. alpm already runs ldconfig after every transaction; this just gives
+# it. scraps already runs ldconfig after every transaction; this just gives
 # it something to find.
 install -Dm644 "$SRCTREE/skel/etc/ld.so.conf" "$S/etc/ld.so.conf"
 mkdir -p "$S/root"
 
-ok "alpm, alpm-strap, arctic-chroot in place"
+ok "scraps, scraps-strap, scraplinux-chroot in place"
 
 # ---------------------------------------------------------------- 3. init
 step "wiring up init ($FLAVOR)"
@@ -363,8 +363,8 @@ def|wayland)
 	;;
 openrc)
 	# openrc-init is OpenRC's own PID1, not a script busybox init runs -
-	# it replaces /sbin/init outright. arctic-init-setup's setup_openrc()
-	# translates /etc/rc.d into /etc/init.d once arctic-base is installed
+	# it replaces /sbin/init outright. scraplinux-init-setup's setup_openrc()
+	# translates /etc/rc.d into /etc/init.d once scraplinux-base is installed
 	# from inside chroot; this only points PID1 at the right binary.
 	mkdir -p "$S/sbin"
 	if [ -f "$S/usr/sbin/openrc-init" ]; then
@@ -395,9 +395,9 @@ close_libs() {
 	# not.
 	_cl_sonames="$B/tarball/.sonames.$ARCH"
 	printf '   indexing what each package provides\n'
-	for pkg in "$REPO"/*/"$ARCH"/*.alpmz; do
+	for pkg in "$REPO"/*/"$ARCH"/*.scrapsz; do
 		[ -f "$pkg" ] || continue
-		_cl_n=$(basename "$pkg" | sed 's/-[^-]*-[0-9]*\.[^.]*\.alpmz$//')
+		_cl_n=$(basename "$pkg" | sed 's/-[^-]*-[0-9]*\.[^.]*\.scrapsz$//')
 		tar -xOf "$pkg" .FILES 2>/dev/null | \
 			sed -n 's|.*/\([^/]*\.so[^/]*\)$|\1|p' | \
 			while read -r so; do printf '%s\t%s\t%s\n' "$so" "$_cl_n" "$pkg"; done
@@ -453,12 +453,12 @@ close_libs() {
 close_libs || printf '   the tarball has unresolved libraries - see above\n' >&2
 
 # ------------------------------------------------------------------ 5. release
-step "writing /etc/arctic-release"
+step "writing /etc/scraplinux-release"
 BUILD_ID=$(date '+%Y.%m.%d')
-cat >"$S/etc/arctic-release" <<EOF
-NAME="Arctic Linux"
-PRETTY_NAME="Arctic Linux"
-ID=arctic
+cat >"$S/etc/scraplinux-release" <<EOF
+NAME="ScrapLinux"
+PRETTY_NAME="ScrapLinux"
+ID=scraplinux
 BUILD_ID=$BUILD_ID
 FLAVOR=$FLAVOR
 LIBC=glibc
@@ -467,10 +467,10 @@ TOOLCHAIN=llvm
 USERLAND=bsd
 INIT=$FLAVOR
 SHELL=zsh
-PACKAGE_MANAGER=alpm
-HOME_URL="https://github.com/apiwo/arctic-linux"
+PACKAGE_MANAGER=scraps
+HOME_URL="https://github.com/apiwo/scraplinux"
 EOF
-cp -f "$S/etc/arctic-release" "$S/etc/os-release"
+cp -f "$S/etc/scraplinux-release" "$S/etc/os-release"
 ok "release info written"
 
 # --------------------------------------------------------------- 6. the tarball

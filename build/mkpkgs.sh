@@ -1,5 +1,5 @@
 #!/bin/sh
-# Arctic Linux - package the components built by build-rootfs.sh into .alpmz
+# ScrapLinux - package the components built by build-rootfs.sh into .scrapsz
 # binaries and lay out the repositories.
 #
 # Everything here was genuinely compiled from source by build-rootfs.sh. The
@@ -7,22 +7,22 @@
 # because the objects are already built.
 set -u
 
-# Refuse to run outside the sandbox. Arctic's glibc installs to /usr/lib by
+# Refuse to run outside the sandbox. ScrapLinux's glibc installs to /usr/lib by
 # design, so a recipe that forgets DESTDIR would overwrite the host's libc and
 # take the machine down - which is exactly what happened once. Run through
-# arctic-sandbox, where the host filesystem is read-only.
-if [ "${ARCTIC_SANDBOX:-0}" != "1" ]; then
+# scraplinux-sandbox, where the host filesystem is read-only.
+if [ "${SCRAPLINUX_SANDBOX:-0}" != "1" ]; then
 	echo "$(basename "$0"): refusing to build outside the sandbox." >&2
-	echo "  run it as:  arctic/build/arctic-sandbox $0 $*" >&2
-	echo "  (set ARCTIC_SANDBOX=1 only if you know the host is protected)" >&2
+	echo "  run it as:  scraplinux/build/scraplinux-sandbox $0 $*" >&2
+	echo "  (set SCRAPLINUX_SANDBOX=1 only if you know the host is protected)" >&2
 	exit 1
 fi
 
-B=/home/apiwo/arctic-build
+B=/home/apiwo/scraplinux-build
 W=$B/work
 R=$B/stage/rootfs
 DEPS=$B/stage/deps
-SRCTREE=/home/apiwo/arctic
+SRCTREE=/home/apiwo/scraplinux
 REPO=$B/repo
 PKGDIRS=$B/stage/pkgs
 J=$(nproc)
@@ -47,7 +47,7 @@ emit() {
 	isize=$(du -sk "$pd" 2>/dev/null | cut -f1); isize=$(( ${isize:-0} * 1024 ))
 
 	{
-		printf '# Arctic Linux package, built %s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+		printf '# ScrapLinux package, built %s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
 		printf 'format = 2\nname = %s\nversion = %s\nrelease = 1\narch = %s\n' \
 			"$name" "$ver" "$ARCH"
 		printf 'desc = %s\nurl = %s\nlicense = %s\n' "$desc" "$url" "$lic"
@@ -60,7 +60,7 @@ emit() {
 	( cd "$pd" && find . -type f -o -type l ) | sed 's|^\.||' \
 		| grep -v '^/\.\(PKGINFO\|FILES\|INSTALL\)$' | sort >"$pd/.FILES"
 
-	out="$REPO/$repo/$ARCH/$name-$ver-1.$ARCH.alpmz"
+	out="$REPO/$repo/$ARCH/$name-$ver-1.$ARCH.scrapsz"
 	( cd "$pd" && tar -cf - . | xz -T0 -6 >"$out" ) || { bad "$name: tar failed"; return 1; }
 	ok "$(basename "$out") ($(du -h "$out" | cut -f1), $(wc -l <"$pd/.FILES") files)"
 }
@@ -79,8 +79,8 @@ reinstall() {
 # ------------------------------------------------------------------ main repo
 step "packaging glibc"
 if pd=$(reinstall glibc "$W/glibc-build"); then
-	# glibc ships ldd(1) as a #!/bin/bash script, and Arctic has no bash - it
-	# simply cannot run. arctic-base provides a POSIX ldd instead, so drop
+	# glibc ships ldd(1) as a #!/bin/bash script, and ScrapLinux has no bash - it
+	# simply cannot run. scraplinux-base provides a POSIX ldd instead, so drop
 	# glibc's copy rather than leaving a broken tool and a file conflict.
 	rm -f "$pd/usr/bin/ldd"
 	emit "$pd" glibc 2.44 main "The GNU C library" "LGPL-2.1-or-later" \
@@ -126,12 +126,12 @@ if ( cd "$W/netbsd-curses-0.3.2" && \
 else bad netbsd-curses; fi
 
 step "packaging busybox"
-pd=$PKGDIRS/busybox; rm -rf "$pd"; mkdir -p "$pd/usr/bin" "$pd/usr/lib/arctic" "$pd/usr/share/busybox"
+pd=$PKGDIRS/busybox; rm -rf "$pd"; mkdir -p "$pd/usr/bin" "$pd/usr/lib/scraplinux" "$pd/usr/share/busybox"
 install -Dm755 "$W/busybox-1.38.0/busybox" "$pd/usr/bin/busybox"
 [ -f "$B/stage/busybox.static" ] && \
-	install -Dm755 "$B/stage/busybox.static" "$pd/usr/lib/arctic/busybox.static"
+	install -Dm755 "$B/stage/busybox.static" "$pd/usr/lib/scraplinux/busybox.static"
 install -Dm644 "$W/busybox-1.38.0/.config" "$pd/usr/share/busybox/config"
-# Only the applets Arctic wants from busybox; toybox owns the rest.
+# Only the applets ScrapLinux wants from busybox; toybox owns the rest.
 for a in init getty mdev sh ash login su passwd chpasswd adduser addgroup \
 	deluser delgroup mount umount swapon swapoff mkswap fsck blkid findfs \
 	mountpoint losetup switch_root pivot_root udhcpc ip ifconfig route ping \
@@ -168,7 +168,7 @@ step "packaging zsh"
 if pd=$(reinstall zsh "$W/zsh-5.9.2"); then
 	mkdir -p "$pd/etc"
 	printf '/bin/zsh\n/usr/bin/zsh\n' >"$pd/etc/shells"
-	emit "$pd" zsh 5.9.2 main "The Z shell, Arctic's login shell" \
+	emit "$pd" zsh 5.9.2 main "The Z shell, ScrapLinux's login shell" \
 		"MIT-Modern-Variant" "https://www.zsh.org/" "glibc netbsd-curses"
 fi
 
@@ -177,7 +177,7 @@ DOASDIR=$(ls -d "$W"/OpenDoas-* 2>/dev/null | head -1)
 if [ -n "$DOASDIR" ] && pd=$(reinstall doas "$DOASDIR"); then
 	chmod 4755 "$pd/usr/bin/doas" 2>/dev/null || :
 	mkdir -p "$pd/etc"
-	printf '# Arctic Linux - doas rules\npermit persist :wheel\npermit nopass :wheel cmd alpm args fetch all\n' \
+	printf '# ScrapLinux - doas rules\npermit persist :wheel\npermit nopass :wheel cmd scraps args fetch all\n' \
 		>"$pd/etc/doas.conf"
 	chmod 400 "$pd/etc/doas.conf"
 	emit "$pd" doas 6.8.2 main "Execute commands as another user" "ISC" \
@@ -230,31 +230,31 @@ step "packaging limine"
 pd=$PKGDIRS/limine; rm -rf "$pd"; mkdir -p "$pd/usr/bin" "$pd/usr/share/limine"
 cp -f "$R/usr/bin/limine" "$pd/usr/bin/limine" 2>/dev/null || :
 cp -f "$R"/usr/share/limine/* "$pd/usr/share/limine/" 2>/dev/null || :
-emit "$pd" limine 12.5.2 main "The Arctic bootloader, BIOS and UEFI" \
+emit "$pd" limine 12.5.2 main "The ScrapLinux bootloader, BIOS and UEFI" \
 	"BSD-2-Clause" "https://limine-bootloader.org/" "glibc"
 
-# --------------------------------------------------------------- arctic's own
-step "packaging alpm"
-pd=$PKGDIRS/alpm; rm -rf "$pd"
-mkdir -p "$pd/usr/bin" "$pd/usr/lib/alpm" "$pd/etc/alpm/repos.d"
-install -Dm755 "$SRCTREE/alpm/alpm"       "$pd/usr/bin/alpm"
-install -Dm755 "$SRCTREE/alpm/alpm-build" "$pd/usr/bin/alpm-build"
-install -Dm755 "$SRCTREE/alpm/alpm-repo"  "$pd/usr/bin/alpm-repo"
-install -Dm644 "$SRCTREE/alpm/libalpm.sh" "$pd/usr/lib/alpm/libalpm.sh"
-install -Dm644 "$SRCTREE/skel/etc/alpm/alpm.conf" "$pd/etc/alpm/alpm.conf"
-cp -f "$SRCTREE/skel/etc/alpm/repos.d/"*.repo "$pd/etc/alpm/repos.d/"
-emit "$pd" alpm 1.0.0 main "Arctic Linux Package Manager" "BSD-2-Clause" \
-	"https://github.com/apiwo/arctic-linux" "busybox"
+# --------------------------------------------------------------- scraplinux's own
+step "packaging scraps"
+pd=$PKGDIRS/scraps; rm -rf "$pd"
+mkdir -p "$pd/usr/bin" "$pd/usr/lib/scraps" "$pd/etc/scraps/repos.d"
+install -Dm755 "$SRCTREE/scraps/scraps"       "$pd/usr/bin/scraps"
+install -Dm755 "$SRCTREE/scraps/scraps-build" "$pd/usr/bin/scraps-build"
+install -Dm755 "$SRCTREE/scraps/scraps-repo"  "$pd/usr/bin/scraps-repo"
+install -Dm644 "$SRCTREE/scraps/libscraps.sh" "$pd/usr/lib/scraps/libscraps.sh"
+install -Dm644 "$SRCTREE/skel/etc/scraps/scraps.conf" "$pd/etc/scraps/scraps.conf"
+cp -f "$SRCTREE/skel/etc/scraps/repos.d/"*.repo "$pd/etc/scraps/repos.d/"
+emit "$pd" scraps 1.0.0 main "ScrapLinux Package Manager" "BSD-2-Clause" \
+	"https://github.com/apiwo/scraplinux" "busybox"
 
-step "packaging arctic-base"
-pd=$PKGDIRS/arctic-base; rm -rf "$pd"; mkdir -p "$pd/usr/share/arctic" "$pd/var/lib/arctic"
+step "packaging scraplinux-base"
+pd=$PKGDIRS/scraplinux-base; rm -rf "$pd"; mkdir -p "$pd/usr/share/scraplinux" "$pd/var/lib/scraplinux"
 cp -a "$SRCTREE/skel/etc" "$pd/etc"
 # The whole skel/usr tree, not just bin/ - mkiso already does this for the
 # live image (cp -a skel/usr/. ), and a file placed anywhere else under
 # skel/usr (skel/usr/share/udhcpc/default.script, for one) was silently
 # absent from every real install while still being on the ISO.
 cp -a "$SRCTREE/skel/usr/." "$pd/usr/"
-rm -rf "$pd/etc/alpm"   # alpm owns those files
+rm -rf "$pd/etc/scraps"   # scraps owns those files
 chmod +x "$pd/etc/rc.boot" "$pd/etc/rc.shutdown" "$pd/etc/rc.d"/* "$pd/usr/bin"/*
 # git only tracks the executable bit, not full permission modes, so a fresh
 # checkout of skel/etc/shadow comes out at whatever the umask gives regular
@@ -263,11 +263,11 @@ chmod +x "$pd/etc/rc.boot" "$pd/etc/rc.shutdown" "$pd/etc/rc.d"/* "$pd/usr/bin"/
 # matched the chmod mkiso already does for the live image.
 chmod 600 "$pd/etc/shadow"
 for d in ascii limine plasma wallpaper icons sddm misc; do
-	[ -d "$SRCTREE/branding/$d" ] && cp -a "$SRCTREE/branding/$d" "$pd/usr/share/arctic/"
+	[ -d "$SRCTREE/branding/$d" ] && cp -a "$SRCTREE/branding/$d" "$pd/usr/share/scraplinux/"
 done
-emit "$pd" arctic-base 1.0.0 main \
-	"Arctic base configuration, init scripts and branding" "BSD-2-Clause" \
-	"https://github.com/apiwo/arctic-linux" "busybox toybox zsh doas alpm libxcrypt"
+emit "$pd" scraplinux-base 1.0.0 main \
+	"ScrapLinux base configuration, init scripts and branding" "BSD-2-Clause" \
+	"https://github.com/apiwo/scraplinux" "busybox toybox zsh doas scraps libxcrypt"
 
 # --------------------------------------------- the tools that make it installable
 step "packaging util-linux (cfdisk, sfdisk, wipefs, lsblk)"
@@ -314,7 +314,7 @@ else bad "dosfstools (only $n tools)"; fi
 
 # libnl and wpa_supplicant are NOT packaged from $R here, on purpose: they
 # are real ports now (ports/main/libnl, ports/main/wpa_supplicant), built
-# through the ordinary alpm-build/build-batch.sh pipeline like everything
+# through the ordinary scraps-build/build-batch.sh pipeline like everything
 # else in main/extra/base. That build is the full-featured one
 # (wpa_supplicant with D-Bus control interface + EAP/802.1X, which
 # NetworkManager actually needs) - packaging $R's copy here instead would
@@ -395,7 +395,7 @@ if [ -f "$SRC_EXTRA/tzdata.tar.gz" ]; then
 	rm -rf "$W/tzdata"; mkdir -p "$W/tzdata"
 	tar -xf "$SRC_EXTRA/tzdata.tar.gz" -C "$W/tzdata"
 	# zic output is TZif data: architecture independent, so the host zic is fine.
-	( cd "$W/tzdata" && for z in africa antarctica asia australasia europe \
+	( cd "$W/tzdata" && for z in africa antscraplinuxa asia australasia europe \
 	    northamerica southamerica etcetera backward factory; do
 		[ -f "$z" ] && zic -d "$pd/usr/share/zoneinfo" "$z"
 	  done
@@ -441,40 +441,40 @@ step "packaging the meta packages"
 meta_pkg() {
 	name=$1 deps=$2 desc=$3
 	pd=$PKGDIRS/$name
-	rm -rf "$pd"; mkdir -p "$pd/usr/share/arctic/meta"
-	printf '%s\n' "$deps" >"$pd/usr/share/arctic/meta/$name"
+	rm -rf "$pd"; mkdir -p "$pd/usr/share/scraplinux/meta"
+	printf '%s\n' "$deps" >"$pd/usr/share/scraplinux/meta/$name"
 	emit "$pd" "$name" 1.0.0 main "$desc" "BSD-2-Clause" \
-		"https://github.com/apiwo/arctic-linux" "$deps"
+		"https://github.com/apiwo/scraplinux" "$deps"
 }
-meta_pkg arctic-init "busybox arctic-base" \
-	"Arctic init scripts and the service manager"
+meta_pkg scraplinux-init "busybox scraplinux-base" \
+	"ScrapLinux init scripts and the service manager"
 meta_pkg base \
-	"glibc busybox toybox zsh doas alpm arctic-base arctic-init libarchive mandoc onetrueawk libxcrypt" \
-	"A minimal but complete Arctic system"
+	"glibc busybox toybox zsh doas scraps scraplinux-base scraplinux-init libarchive mandoc onetrueawk libxcrypt" \
+	"A minimal but complete ScrapLinux system"
 meta_pkg base-devel "llvm bmake byacc pkgconf cmake ninja meson git" \
-	"The toolchain needed to build Arctic packages"
+	"The toolchain needed to build ScrapLinux packages"
 
 # ------------------------------------------------------------------- kernels
-step "packaging arctic-base-kernel"
-pd=$PKGDIRS/arctic-base-kernel; rm -rf "$pd"; mkdir -p "$pd/boot" "$pd/usr/lib/modules"
+step "packaging scraplinux-base-kernel"
+pd=$PKGDIRS/scraplinux-base-kernel; rm -rf "$pd"; mkdir -p "$pd/boot" "$pd/usr/lib/modules"
 cp -a "$B/stage/kernel-base/boot/." "$pd/boot/"
 cp -a "$B/stage/kernel-base/lib/modules/." "$pd/usr/lib/modules/"
 KREL=$(ls "$B/stage/kernel-base/lib/modules" | head -1)
 rm -f "$pd/usr/lib/modules/$KREL/build" "$pd/usr/lib/modules/$KREL/source"
-emit "$pd" arctic-base-kernel 7.1.3 kernels \
-	"Arctic Linux kernel, broad hardware support" "GPL-2.0-only" \
+emit "$pd" scraplinux-base-kernel 7.1.3 kernels \
+	"ScrapLinux kernel, broad hardware support" "GPL-2.0-only" \
 	"https://kernel.org/" "glibc"
 
-step "packaging arctic-kernel"
+step "packaging scraplinux-kernel"
 if [ -d "$B/stage/kernel-zen/boot" ]; then
-	pd=$PKGDIRS/arctic-kernel; rm -rf "$pd"; mkdir -p "$pd/boot" "$pd/usr/lib/modules"
+	pd=$PKGDIRS/scraplinux-kernel; rm -rf "$pd"; mkdir -p "$pd/boot" "$pd/usr/lib/modules"
 	cp -a "$B/stage/kernel-zen/boot/." "$pd/boot/"
 	cp -a "$B/stage/kernel-zen/lib/modules/." "$pd/usr/lib/modules/"
 	KREL=$(ls "$B/stage/kernel-zen/lib/modules" | head -1)
 	rm -f "$pd/usr/lib/modules/$KREL/build" "$pd/usr/lib/modules/$KREL/source"
-	emit "$pd" arctic-kernel 6.12.100 kernels \
+	emit "$pd" scraplinux-kernel 6.12.100 kernels \
 		"ZEN patchset on the 6.12 LTS line - PDS/BMQ, ACS override, ntsync, vhba" \
-		"GPL-2.0-only" "https://github.com/apiwo/arctic-kernel" "glibc"
+		"GPL-2.0-only" "https://github.com/apiwo/scraplinux-kernel" "glibc"
 else
 	echo "   (skipped - $B/stage/kernel-zen not built)"
 fi
@@ -489,20 +489,20 @@ else bad linux-headers; fi
 
 # ------------------------------------------------------- index the binary repos
 step "generating repository indexes"
-export ALPM_ROOT=/ ALPM_COLOR=never
+export SCRAPS_ROOT=/ SCRAPS_COLOR=never
 for r in main extra base kernels nonfree alt-nonfree multilib; do
-	c=$(ls -1 "$REPO/$r/$ARCH"/*.alpmz 2>/dev/null | wc -l | tr -d ' ')
+	c=$(ls -1 "$REPO/$r/$ARCH"/*.scrapsz 2>/dev/null | wc -l | tr -d ' ')
 	if [ "$c" = "0" ]; then
-		# An empty repo still needs a valid index so 'alpm fetch' succeeds.
+		# An empty repo still needs a valid index so 'scraps fetch' succeeds.
 		{
-			printf '# Arctic Linux %s repository index\n' "$r"
+			printf '# ScrapLinux %s repository index\n' "$r"
 			printf '# format\t2\n# generated\t%s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
 			printf '# fields\tname version release arch dlsize isize sha256 deps desc\n'
 		} >"$REPO/$r/$ARCH/INDEX"
 		printf '   %-14s (no binaries yet, empty index written)\n' "$r"
 		continue
 	fi
-	sh "$SRCTREE/alpm/alpm-repo" gen "$REPO/$r" "$ARCH" >/dev/null 2>&1 \
+	sh "$SRCTREE/scraps/scraps-repo" gen "$REPO/$r" "$ARCH" >/dev/null 2>&1 \
 		&& printf '   %-14s %s packages indexed\n' "$r" "$c" \
 		|| bad "indexing $r"
 done

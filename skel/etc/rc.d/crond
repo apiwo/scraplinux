@@ -4,5 +4,5 @@ CMD=/usr/bin/crond
 ARGS="-f -l 8"
 BACKGROUND=yes
 
-. /etc/arctic/svc.lib
+. /etc/scraplinux/svc.lib
 svc_main "$@"

@@ -1,5 +1,5 @@
 #!/bin/sh
-# service - start, stop and enable Arctic services
+# service - start, stop and enable ScrapLinux services
 #
 #   service list                 show every service, its state and its init
 #   service status <name>        is it installed, enabled, running?
@@ -7,7 +7,7 @@
 #   service enable|disable <name>
 #
 # A service is a script in /etc/rc.d taking start/stop/status. Enabling one
-# creates a marker in /etc/arctic/services, which rc.boot reads in order.
+# creates a marker in /etc/scraplinux/services, which rc.boot reads in order.
 #
 # Exit codes for 'status', so scripts can tell the cases apart:
 #   0  running        3  installed but stopped
@@ -27,8 +27,8 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # after || never runs - which made this tool die without printing anything
 # at all on a system missing rc.lib (or inside a chroot that has not got one
 # yet), rather than degrading to plain output.
-if [ -r /etc/arctic/rc.lib ]; then
-	. /etc/arctic/rc.lib
+if [ -r /etc/scraplinux/rc.lib ]; then
+	. /etc/scraplinux/rc.lib
 else
 	_R= ; _B= ; _MINT= ; _RED= ; _GREY= ; _SNOW= ; _AMB= ; _TEAL=
 	begin() { printf '  :: %s' "$*"; }
@@ -37,7 +37,7 @@ else
 fi
 
 RCD=/etc/rc.d
-ENA=/etc/arctic/services
+ENA=/etc/scraplinux/services
 
 need_root() { [ "$(id -u)" = "0" ] || { echo "Must be run as root." >&2; exit 1; }; }
 
@@ -63,7 +63,7 @@ svc_cmd() {
 
 # Is the program behind the service on this system at all? An rc.d script
 # ships with the base system whether or not the daemon it starts was ever
-# installed - /etc/rc.d/sddm exists on every Arctic install, sddm itself does
+# installed - /etc/rc.d/sddm exists on every ScrapLinux install, sddm itself does
 # not - so "the script is executable" says nothing about whether the service
 # can run. Checking $CMD is what tells "installed but stopped" apart from
 # "not installed", which used to come out as a flat, wrong "stopped".
@@ -83,16 +83,16 @@ running() {
 
 # Which init this system uses.
 #
-# /etc/arctic/init - written by the installer and rewritten by
-# arctic-init-setup - comes first, and pid 1 is only consulted when that file
+# /etc/scraplinux/init - written by the installer and rewritten by
+# scraplinux-init-setup - comes first, and pid 1 is only consulted when that file
 # is absent. It is the other way round from what you would expect, for one
-# reason: inside arctic-chroot (or any chroot) /proc/1 is the *host's* init,
+# reason: inside scraplinux-chroot (or any chroot) /proc/1 is the *host's* init,
 # not this system's, so trusting it there makes every answer wrong in the one
 # situation where someone is most likely to be repairing services by hand.
-# ARCTIC_INIT overrides both.
+# SCRAPLINUX_INIT overrides both.
 init_kind() {
-	if [ -n "${ARCTIC_INIT:-}" ]; then printf '%s\n' "$ARCTIC_INIT"; return; fi
-	if [ -s /etc/arctic/init ]; then head -1 /etc/arctic/init; return; fi
+	if [ -n "${SCRAPLINUX_INIT:-}" ]; then printf '%s\n' "$SCRAPLINUX_INIT"; return; fi
+	if [ -s /etc/scraplinux/init ]; then head -1 /etc/scraplinux/init; return; fi
 	_ik=$(readlink /proc/1/exe 2>/dev/null)
 	case "${_ik##*/}" in
 	dinit)            echo dinit ;;
@@ -181,7 +181,7 @@ status)
 	if ! installed "$n"; then
 		printf '  %s%s%s is %snot installed%s - %s is missing\n' \
 			"$_SNOW" "$n" "$_R" "$_AMB" "$_R" "$(svc_cmd "$n")"
-		printf '  %sinstall it with: alpm add %s%s\n' "$_GREY" "$n" "$_R"
+		printf '  %sinstall it with: scraps add %s%s\n' "$_GREY" "$n" "$_R"
 		exit 4
 	fi
 	if running "$n"; then

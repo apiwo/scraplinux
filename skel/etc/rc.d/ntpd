@@ -4,5 +4,5 @@ CMD=/usr/bin/ntpd
 ARGS="-n -p pool.ntp.org"
 BACKGROUND=yes
 
-. /etc/arctic/svc.lib
+. /etc/scraplinux/svc.lib
 svc_main "$@"

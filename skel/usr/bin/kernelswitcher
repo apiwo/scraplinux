@@ -7,9 +7,9 @@
 #   kernelswitcher add <kernel> bootentry   give <kernel> an entry of its own in the menu
 #   kernelswitcher upgrade                  upgrade every installed kernel
 #
-# A kernel is named the way the boot directory names it: `arctic-base` is
-# /boot/vmlinuz-arctic-base, whichever package installed it. The package name
-# is not the kernel name - arctic-kernel installs vmlinuz-arctic-zen - so
+# A kernel is named the way the boot directory names it: `scraplinux-base` is
+# /boot/vmlinuz-scraplinux-base, whichever package installed it. The package name
+# is not the kernel name - scraplinux-kernel installs vmlinuz-scraplinux-zen - so
 # both are accepted and both are shown.
 #
 # Only installed kernels are ever listed. A menu offering to boot something
@@ -19,14 +19,14 @@
 # What it edits, and what it does not: the entries this tool adds live
 # between its own two marker comments in limine.conf, so anything else in
 # there - other operating systems, hand-written entries, the generation
-# entries arctic-boot-generations writes - is left exactly as it was.
+# entries scraplinux-boot-generations writes - is left exactly as it was.
 #
 # shellcheck shell=sh disable=SC2039
 
 set -u
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-DB=${ALPM_DB:-/var/lib/alpm}
+DB=${SCRAPS_DB:-/var/lib/scraps}
 BEGIN="### kernelswitcher begin"
 END="### kernelswitcher end"
 
@@ -67,8 +67,8 @@ installed() {
 running() { printf '%s\n' "$(uname -r)" | cut -d- -f2-; }
 
 # Which package owns a kernel. Read out of the package database's own file
-# lists rather than by guessing from the name: arctic-kernel installs
-# vmlinuz-arctic-zen, and nothing about the one implies the other.
+# lists rather than by guessing from the name: scraplinux-kernel installs
+# vmlinuz-scraplinux-zen, and nothing about the one implies the other.
 pkg_of() {
 	_p=$(grep -lx "/boot/vmlinuz-$1" "$DB"/local/*/FILES 2>/dev/null | head -1) || :
 	[ -n "$_p" ] || return 1
@@ -87,11 +87,11 @@ release_of() {
 	# Not in the database (installed by hand, or the database is being
 	# rebuilt): `make modules_install` names the directory after the exact
 	# kernel release string with no prefix at all - /usr/lib/modules/7.1.3-
-	# arctic-base, not .../*-7.1.3-arctic-base. That glob can never match a
+	# scraplinux-base, not .../*-7.1.3-scraplinux-base. That glob can never match a
 	# bare, unprefixed name, which is exactly what a hand-copied kernel
 	# (nothing in the package database yet) always has: `kernelswitcher add`
 	# kept reporting "has no initramfs" even right after a successful
-	# arctic-mkinitramfs run, because release_of() itself was silently
+	# scraplinux-mkinitramfs run, because release_of() itself was silently
 	# failing to resolve at all, before initrd_of() ever got to check
 	# whether the initramfs file existed.
 	[ -d "/usr/lib/modules/$1" ] && { printf '%s\n' "$1"; return 0; }
@@ -120,7 +120,7 @@ resolve() {
 	return 1
 }
 
-need_conf() { [ -f "$CONF" ] || die "no $CONF - run arctic-rebuild first"; }
+need_conf() { [ -f "$CONF" ] || die "no $CONF - run scraplinux-rebuild first"; }
 
 cmd_list() {
 	run=$(running)
@@ -159,7 +159,7 @@ cmd_current() {
 cmd_switch() {
 	need_conf
 	k=$(resolve "$1") || die "$1 is not installed - kernelswitcher list"
-	img=$(initrd_of "$k") || die "$k has no initramfs - run arctic-mkinitramfs first"
+	img=$(initrd_of "$k") || die "$k has no initramfs - run scraplinux-mkinitramfs first"
 	tmp=$CONF.new.$$
 	awk -v k="$k" -v img="$img" -v b="$BEGIN" -v e="$END" '
 		$0 == b { inblk = 1 }
@@ -175,7 +175,7 @@ cmd_switch() {
 	mv -f "$tmp" "$CONF"
 	# Older Limine reads the .cfg; keep the pair in step.
 	if [ -f "$BOOTDIR/limine.cfg" ]; then
-		sed 's|^/Arctic|:Arctic|; s|^    \([a-z_]*\): |    \1=|' "$CONF" \
+		sed 's|^/ScrapLinux|:ScrapLinux|; s|^    \([a-z_]*\): |    \1=|' "$CONF" \
 			>"$BOOTDIR/limine.cfg" 2>/dev/null || :
 	fi
 	say "$k will boot next time ($(release_of "$k" 2>/dev/null))"
@@ -186,11 +186,11 @@ cmd_switch() {
 cmd_add() {
 	need_conf
 	k=$(resolve "$1") || die "$1 is not installed - kernelswitcher list"
-	img=$(initrd_of "$k") || die "$k has no initramfs - run arctic-mkinitramfs first"
+	img=$(initrd_of "$k") || die "$k has no initramfs - run scraplinux-mkinitramfs first"
 	cmdline=$(awk '/^[[:space:]]*kernel_cmdline:/{sub(/^[^:]*:[[:space:]]*/,""); print; exit}' "$CONF")
 	[ -n "$cmdline" ] || die "could not read kernel_cmdline from $CONF"
 
-	if grep -q "^/Arctic linux ($k)$" "$CONF" 2>/dev/null; then
+	if grep -q "^/ScrapLinux linux ($k)$" "$CONF" 2>/dev/null; then
 		say "$k already has an entry"
 		return 0
 	fi
@@ -200,7 +200,7 @@ cmd_add() {
 		# Insert before the closing marker, keeping the block together.
 		awk -v e="$END" -v k="$k" -v img="$img" -v c="$cmdline" '
 			$0 == e {
-				printf "\n/Arctic linux (%s)\n", k
+				printf "\n/ScrapLinux linux (%s)\n", k
 				print  "    protocol: linux"
 				printf "    kernel_path: boot():/vmlinuz-%s\n", k
 				printf "    kernel_cmdline: %s\n", c
@@ -212,7 +212,7 @@ cmd_add() {
 		{
 			cat "$CONF"
 			printf '\n%s\n' "$BEGIN"
-			printf '\n/Arctic linux (%s)\n' "$k"
+			printf '\n/ScrapLinux linux (%s)\n' "$k"
 			printf '    protocol: linux\n'
 			printf '    kernel_path: boot():/vmlinuz-%s\n' "$k"
 			printf '    kernel_cmdline: %s\n' "$cmdline"
@@ -222,7 +222,7 @@ cmd_add() {
 	fi
 	mv -f "$tmp" "$CONF"
 	if [ -f "$BOOTDIR/limine.cfg" ]; then
-		sed 's|^/Arctic|:Arctic|; s|^    \([a-z_]*\): |    \1=|' "$CONF" \
+		sed 's|^/ScrapLinux|:ScrapLinux|; s|^    \([a-z_]*\): |    \1=|' "$CONF" \
 			>"$BOOTDIR/limine.cfg" 2>/dev/null || :
 	fi
 	say "added a boot entry for $k"
@@ -237,14 +237,14 @@ cmd_upgrade() {
 	[ -n "$pkgs" ] || die "no installed kernel came from a package - nothing to upgrade"
 	say "upgrading:$pkgs"
 	# shellcheck disable=SC2086
-	alpm -y ins $pkgs || die "the kernel upgrade failed - the running kernel is untouched"
+	scraps -y ins $pkgs || die "the kernel upgrade failed - the running kernel is untouched"
 	# A new kernel is a new module directory, and the initramfs that goes
 	# with it does not exist until it is built.
 	for k in $(installed); do
 		r=$(release_of "$k" 2>/dev/null) || continue
 		[ -f "$BOOTDIR/initramfs-$r.img" ] && continue
 		say "building the initramfs for $r"
-		arctic-mkinitramfs "$r" || printf '  %scould not build one for %s%s\n' "$RED" "$r" "$R"
+		scraplinux-mkinitramfs "$r" || printf '  %scould not build one for %s%s\n' "$RED" "$r" "$R"
 	done
 	say "done - kernelswitcher list"
 }

@@ -3,7 +3,7 @@
 #
 #   build/check-conflicts.sh [dir ...]      default: the published site tree
 #
-# alpm refuses to install a package whose files another package already owns,
+# scraps refuses to install a package whose files another package already owns,
 # unless the two files are byte-for-byte identical or the incoming recipe says
 # it `replaces` the owner. The refusal is correct, but it lands on the machine
 # being installed, part way through the base system, and every path is found
@@ -18,8 +18,8 @@
 
 set -eu
 
-B=${ARCTIC_BUILD:-/home/apiwo/arctic-build}
-SITE=${ARCTIC_SITE:-$B/src-extra/arctic-linux-pkgs}
+B=${SCRAPLINUX_BUILD:-/home/apiwo/scraplinux-build}
+SITE=${SCRAPLINUX_SITE:-$B/src-extra/scraplinux-pkgs}
 ARCH=x86_64
 WORK=$B/tmp/conflicts
 
@@ -74,7 +74,7 @@ scan_one() {
 total=0
 for d in $DIRS; do
 	[ -d "$d" ] || continue
-	for a in "$d"/*.alpmz; do
+	for a in "$d"/*.scrapsz; do
 		[ -f "$a" ] || continue
 		total=$((total + 1))
 		printf '\r  scanned %s packages' "$total" >&2
@@ -86,7 +86,7 @@ printf '\r  scanned %s packages\n' "$total" >&2
 
 # A conflict is a path claimed by two packages with different content. The
 # `replaces` escape is honoured in either direction: which of the two is
-# installed second decides whether alpm needs it, and the resolver - not this
+# installed second decides whether scraps needs it, and the resolver - not this
 # script - decides that order.
 replaced() {
 	grep -qx "$1	$2" "$REPLACES" 2>/dev/null || grep -qx "$2	$1" "$REPLACES" 2>/dev/null
@@ -101,7 +101,7 @@ while read -r path; do
 	[ -n "$path" ] || continue
 	pkgs=$(awk -F'\t' -v p="$path" '$1 == p { print $2 }' "$WORK/owners.sorted" | sort -u)
 	sigs=$(awk -F'\t' -v p="$path" '$1 == p { print $3 }' "$WORK/owners.sorted" | sort -u)
-	# Identical content everywhere: alpm hands the path over and moves on.
+	# Identical content everywhere: scraps hands the path over and moves on.
 	[ "$(printf '%s\n' "$sigs" | wc -l)" -gt 1 ] || continue
 	first=$(printf '%s\n' "$pkgs" | head -1)
 	rest=$(printf '%s\n' "$pkgs" | tail -n +2)

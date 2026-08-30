@@ -16,7 +16,7 @@
 
 set -u
 
-TREE=${ARCTIC_TREE:-/home/apiwo/arctic}
+TREE=${SCRAPLINUX_TREE:-/home/apiwo/scraplinux}
 PORTS=$TREE/ports
 
 if [ $# -gt 0 ]; then
@@ -74,7 +74,7 @@ for r in $RECIPES; do
 		grep -q "^$f=" "$r" || bad "$rel" "no $f="
 	done
 
-	# 5. The name has to match the directory, or alpm installs a package
+	# 5. The name has to match the directory, or scraps installs a package
 	#    under one name from a port everything else calls another.
 	got=$(sed -n 's/^name=//p' "$r" | head -1 | tr -d '"')
 	[ "$got" = "$want" ] || bad "$rel" "name=$got but the directory is $want"

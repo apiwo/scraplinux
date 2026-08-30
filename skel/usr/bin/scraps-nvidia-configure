@@ -1,0 +1,54 @@
+#!/bin/sh
+# scraps-nvidia-configure - apply (or undo) ScrapLinux's NVIDIA driver configuration.
+#
+# The nvidia-drivers package asks whether scraps should configure the driver when
+# it is installed. If you said no and changed your mind, this does the same job.
+#
+#   scraps-nvidia-configure           apply the configuration
+#   scraps-nvidia-configure --undo    remove it again
+#   scraps-nvidia-configure --show    print what is currently set
+# shellcheck shell=sh
+
+set -u
+[ "$(id -u)" = "0" ] || { echo "Must be run as root." >&2; exit 1; }
+
+case "${1:-apply}" in
+--show)
+	for f in /etc/modprobe.d/nvidia.conf /etc/modprobe.d/nouveau-blacklist.conf \
+	         /etc/modules-load.d/nvidia.conf; do
+		if [ -f "$f" ]; then
+			printf '\n--- %s\n' "$f"; cat "$f"
+		else
+			printf '\n--- %s (not present)\n' "$f"
+		fi
+	done
+	exit 0 ;;
+--undo)
+	rm -f /etc/modprobe.d/nvidia.conf /etc/modprobe.d/nouveau-blacklist.conf \
+	      /etc/modules-load.d/nvidia.conf
+	command -v scraplinux-mkinitramfs >/dev/null 2>&1 && scraplinux-mkinitramfs >/dev/null 2>&1
+	echo "NVIDIA configuration removed. Reboot to take effect."
+	exit 0 ;;
+esac
+
+mkdir -p /etc/modprobe.d /etc/modules-load.d
+
+cat >/etc/modprobe.d/nvidia.conf <<'CONF'
+# Written by scraps-nvidia-configure.
+options nvidia NVreg_PreserveVideoMemoryAllocations=1
+options nvidia_drm modeset=1 fbdev=1
+CONF
+
+cat >/etc/modprobe.d/nouveau-blacklist.conf <<'CONF'
+blacklist nouveau
+options nouveau modeset=0
+CONF
+
+cat >/etc/modules-load.d/nvidia.conf <<'CONF'
+nvidia
+nvidia_modeset
+nvidia_drm
+CONF
+
+command -v scraplinux-mkinitramfs >/dev/null 2>&1 && scraplinux-mkinitramfs >/dev/null 2>&1
+echo "NVIDIA driver configured. Reboot for it to take over the console."

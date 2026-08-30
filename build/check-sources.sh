@@ -5,8 +5,8 @@
 # versions are guesses. This finds the wrong ones before a build wastes time on a
 # 404, and the report tells us which recipes are worth trying.
 set -u
-PORTS=/home/apiwo/arctic/ports
-OUT=/home/apiwo/arctic-build/logs/sources
+PORTS=/home/apiwo/scraplinux/ports
+OUT=/home/apiwo/scraplinux-build/logs/sources
 mkdir -p "$OUT"; : >"$OUT/ok"; : >"$OUT/bad"; : >"$OUT/skip"
 
 # One package per line: repo name ver url
@@ -41,7 +41,7 @@ export OUT
 # 24 at a time; these are all tiny HEAD requests.
 awk -F'\t' '{print}' "$OUT/todo" | xargs -P 24 -I{} sh -c '
 	IFS="	"; set -- {}
-	OUT=/home/apiwo/arctic-build/logs/sources
+	OUT=/home/apiwo/scraplinux-build/logs/sources
 	u=$4
 	code=$(curl -sIL --max-time 25 -o /dev/null -w "%{http_code}" "$u" 2>/dev/null)
 	case "$code" in 200|206) ;; *) code=$(curl -sL --max-time 25 -r 0-0 -o /dev/null -w "%{http_code}" "$u" 2>/dev/null) ;; esac

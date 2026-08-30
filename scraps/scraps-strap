@@ -1,0 +1,32 @@
+#!/bin/sh
+# scraps-strap <target-root>  -  run once, right after extracting the base
+# tarball onto <target-root> and before anything else. scraps itself ships
+# already installed in the tarball; this only has to get fresh repo
+# indexes into the extracted tree so the first `scraps add` has something
+# to resolve against.
+#
+# shellcheck shell=sh disable=SC2039
+
+set -u
+T=${1:?usage: scraps-strap <target-root>}
+
+[ -x "$T/usr/bin/scraps" ] || {
+	echo "scraps-strap: $T doesn't look like an extracted ScrapLinux tarball (no usr/bin/scraps)" >&2
+	exit 1
+}
+
+mkdir -p \
+	"$T/var/lib/scraps/local" "$T/var/lib/scraps/sync" \
+	"$T/var/lib/scraps/hold" "$T/var/lib/scraps/snapshots" \
+	"$T/var/cache/scraps/pkg" "$T/var/cache/scraps/src" "$T/var/cache/scraps/build"
+
+# libscraps.sh keeps SCRAPS_CONF/SCRAPS_REPOD host-absolute even under --root by
+# default - correct for the old installer, which ran from a live ScrapLinux
+# session that already had real repo config at /etc/scraps. There is no such
+# host here: whatever booted this is some other live Linux with no
+# /etc/scraps at all, so the target's own copies have to be named explicitly.
+SCRAPS_ROOT="$T" \
+SCRAPS_CONF="$T/etc/scraps/scraps.conf" \
+SCRAPS_REPOD="$T/etc/scraps/repos.d" \
+SCRAPS_YES=1 \
+	"$T/usr/bin/scraps" fetch all

@@ -1,0 +1,236 @@
+#!/bin/sh
+# scraplinux-shell - an ephemeral, reproducible package environment
+#
+#   scraplinux-shell [--network] [--keep] <pkg>...
+#   scraplinux-shell [--network] [--keep] <pkg>... -- <cmd>...
+#   scraplinux-shell [--network] [--keep] <pkg>... -  <cmd>...
+#
+# Builds a scratch root with exactly the named packages installed (plus the
+# same minimal glibc/busybox/toybox base every ScrapLinux root needs to have a
+# working shell at all), then chroots into it with the current directory
+# available at the same path, so local files are right there.
+#
+#   scraplinux-shell clang                      drop into an interactive shell
+#   scraplinux-shell clang -- clang file.c      run it, then tear the env down
+#   scraplinux-shell clang -  clang file.c      run it, stay in the shell after
+#   scraplinux-shell --keep rust cargo           reused next time the exact same
+#                                            package set is asked for again
+#
+# --network gives the environment a real network connection; without it, the
+# environment cannot reach the network at all (a separate network namespace,
+# same as `unshare --net` on its own gives you). --keep leaves the built root
+# on disk afterward instead of deleting it - `scraplinux gc` is what cleans up
+# anything left over that has gone unused for a while.
+#
+# The prompt inside looks like: [scraplinux-shell@user|dir=/home/projects]
+# shellcheck shell=sh disable=SC2039
+
+set -u
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+need_root() { [ "$(id -u)" = "0" ] || { echo "Must be run as root." >&2; exit 1; }; }
+
+if [ -t 1 ]; then
+	R=$(printf '\033[0m'); TEAL=$(printf '\033[38;5;44m'); RED=$(printf '\033[38;5;203m')
+else
+	R= ; TEAL= ; RED=
+fi
+note() { printf '%s::%s %s\n' "$TEAL" "$R" "$*"; }
+die()  { printf '%serror:%s %s\n' "$RED" "$R" "$*" >&2; exit 1; }
+shquote() { printf '%s' "$1" | sed "s/'/'\\\\''/g" | sed "1s/^/'/;\$s/\$/'/"; }
+
+case "${1:-}" in
+-h|--help|help) sed -n '2,25p' "$0" | sed 's/^# \?//'; exit 0 ;;
+esac
+need_root
+
+NETWORK=0
+KEEP=0
+pkgs=""
+mode=""    # "" | "exec" (--) | "keepopen" (-)
+cmd=""
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+	--network) NETWORK=1; shift ;;
+	--keep)    KEEP=1; shift ;;
+	--)        shift; mode=exec; break ;;
+	-)         shift; mode=keepopen; break ;;
+	*)         pkgs="$pkgs $1"; shift ;;
+	esac
+done
+if [ -n "${mode:-}" ]; then
+	for a in "$@"; do
+		cmd="$cmd $(shquote "$a")"
+	done
+fi
+
+pkgs=$(printf '%s\n' $pkgs | sort -u | tr '\n' ' ')
+pkgs=${pkgs% }
+[ -n "$pkgs" ] || die "usage: scraplinux-shell [--network] [--keep] <pkg>... [-- cmd | - cmd]"
+
+hash=$(printf '%s' "$pkgs" | { sha256sum 2>/dev/null || cksum; } | cut -d' ' -f1 | cut -c1-16)
+BASE=${SCRAPLINUX_SHELL_BASE:-/var/cache/scraplinux-shell}
+ENVROOT="$BASE/$hash"
+mkdir -p "$BASE"
+
+# A session that is killed outright (SIGKILL, a host crash) takes /dev,
+# /proc and /sys down with it - trap cleanup below only runs on a normal
+# exit or a caught signal, and neither happens for a -9. The next
+# invocation of anything is what finds out, usually as `rm: sys: Device or
+# resource busy` from something unrelated trying to clean the same tree, or
+# as a bind mount from a live disk showing up twice in lsblk. Swept here so
+# that is found and fixed automatically instead of by hand from lsblk.
+reap_orphans() {
+	for d in "$BASE"/*/; do
+		[ -d "$d" ] || continue
+		d=${d%/}
+		[ "$d" = "$ENVROOT" ] && continue
+		lock="$d/.scraplinux-shell-lock"
+		if [ -f "$lock" ]; then
+			pid=$(cat "$lock" 2>/dev/null)
+			[ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && continue
+		fi
+		mounted=$(awk -v d="$d/" 'index($2 "/", d) == 1 {print $2}' /proc/mounts)
+		[ -n "$mounted" ] || continue
+		note "cleaning up an orphaned environment left by a crashed session: $d"
+		printf '%s\n' "$mounted" | awk '{ print length, $0 }' | sort -rn | cut -d' ' -f2- | \
+		while IFS= read -r m; do
+			umount "$m" 2>/dev/null || umount -l "$m" 2>/dev/null || :
+		done
+		if awk -v d="$d/" 'index($2 "/", d) == 1 { f = 1 } END { exit !f }' /proc/mounts; then
+			printf '  %sstill mounted, left in place: %s%s\n' "$RED" "$d" "$R" >&2
+			continue
+		fi
+		[ -f "$d/.scraplinux-shell-keep" ] || rm -rf "$d"
+	done
+}
+reap_orphans
+
+note "environment $hash ($pkgs)"
+if [ ! -d "$ENVROOT/usr" ]; then
+	note "building it - this only happens once per package set"
+	mkdir -p "$ENVROOT/var/lib/scraps/sync"
+	# SCRAPS_DB follows SCRAPS_ROOT, so a scratch root starts with no sync index
+	# of its own - copy the one this session already has, same job
+	# scraps-strap does for a freshly extracted tarball. SCRAPS_CONF/SCRAPS_REPOD
+	# stay host-absolute regardless (see libscraps.sh), so the repo
+	# definitions themselves do not need copying in, only the index.
+	cp -a /var/lib/scraps/sync/. "$ENVROOT/var/lib/scraps/sync/" 2>/dev/null || :
+	# ScrapLinux is merged-/usr - /bin, /sbin, /lib are symlinks into usr/, and
+	# /lib64 -> usr/lib (not usr/lib64 - glibc has no separate lib64 here,
+	# but the host gcc used for every native build still bakes in
+	# /lib64/ld-linux-x86-64.so.2 as the interpreter regardless). A plain
+	# package install has nowhere to create these; set them up by hand for
+	# the same reason a fresh manual install does before its first
+	# `scraps add`.
+	mkdir -p "$ENVROOT/usr/bin" "$ENVROOT/usr/sbin" "$ENVROOT/usr/lib"
+	for l in bin sbin lib; do
+		[ -e "$ENVROOT/$l" ] || ln -s "usr/$l" "$ENVROOT/$l"
+	done
+	[ -e "$ENVROOT/lib64" ] || ln -s usr/lib "$ENVROOT/lib64"
+	# glibc dropped crypt() itself; libxcrypt provides libcrypt.so.2. Neither
+	# busybox nor toybox declares it as a dependency, so scraps never pulls it
+	# in on its own - but toybox's id/which/ls/grep (and more) link it, and
+	# every real install gets it anyway as part of the base meta-package.
+	# Without it here, packages installed into the environment just fine and
+	# the shell dropped into it could not run any of the ordinary commands
+	# needed to use them: "error while loading shared libraries:
+	# libcrypt.so.2: cannot open shared object file".
+	# shellcheck disable=SC2086
+	SCRAPS_ROOT="$ENVROOT" SCRAPS_YES=1 scraps add glibc busybox toybox libxcrypt $pkgs \
+		|| die "could not build the environment - see above"
+	printf '%s\n' "$pkgs" >"$ENVROOT/.scraplinux-shell-pkgs"
+else
+	note "reusing the environment already built for this package set"
+fi
+date '+%s' >"$ENVROOT/.scraplinux-shell-last-used"
+# --keep is sticky once set: a later invocation that forgets to pass it
+# again must not silently delete an environment a previous run asked to
+# keep. Only --keep itself ever writes the marker; nothing un-sets it here.
+[ "$KEEP" = 1 ] && : >"$ENVROOT/.scraplinux-shell-keep"
+
+# Bring the current directory along at the same path, so relative paths and
+# $PWD inside the environment still mean what they meant outside it.
+HERE=$PWD
+mkdir -p "$ENVROOT$HERE"
+mount --bind "$HERE" "$ENVROOT$HERE" 2>/dev/null
+
+mkdir -p "$ENVROOT/dev" "$ENVROOT/proc" "$ENVROOT/sys" "$ENVROOT/etc"
+mount --bind /dev  "$ENVROOT/dev"  2>/dev/null
+mount -t proc proc "$ENVROOT/proc" 2>/dev/null
+mount -t sysfs sys  "$ENVROOT/sys" 2>/dev/null
+[ -f /etc/resolv.conf ] && cp -f /etc/resolv.conf "$ENVROOT/etc/resolv.conf" 2>/dev/null
+
+# What reap_orphans() above checks on the next invocation to tell a session
+# still running from one that is not.
+echo $$ >"$ENVROOT/.scraplinux-shell-lock"
+
+# toybox umount has no -R (that is a util-linux flag) - unmount each bind by
+# name and actually verify it let go before ever touching rm -rf. A tree
+# with a live mount still under it must never be rm -rf'd: that is exactly
+# how a chroot test once emptied this host's real /dev.
+still_mounted() { awk -v d="$1" '$2==d{f=1} END{exit !f}' /proc/mounts; }
+
+cleanup() {
+	for m in "$ENVROOT$HERE" "$ENVROOT/dev" "$ENVROOT/proc" "$ENVROOT/sys"; do
+		still_mounted "$m" || continue
+		umount "$m" 2>/dev/null || umount -l "$m" 2>/dev/null
+	done
+	for m in "$ENVROOT$HERE" "$ENVROOT/dev" "$ENVROOT/proc" "$ENVROOT/sys"; do
+		if still_mounted "$m"; then
+			printf '  %sstill mounted, leaving in place: %s%s\n' "$RED" "$m" "$R" >&2
+			return 1
+		fi
+	done
+	rm -f "$ENVROOT/.scraplinux-shell-lock"
+	if [ -f "$ENVROOT/.scraplinux-shell-keep" ]; then
+		note "kept for next time: $ENVROOT"
+	else
+		rm -rf "$ENVROOT"
+	fi
+}
+trap cleanup EXIT INT TERM
+
+SH=/bin/sh
+[ -x "$ENVROOT/bin/zsh" ] && SH=/bin/zsh
+
+# The prompt has to answer "what am I inside of" at a glance: an scraplinux-shell
+# looks like the host's shell in every other way, and forgetting you are in
+# one means installing into an environment that evaporates on exit.
+#
+# Passed as environment rather than as PS1: the inner shell is usually zsh,
+# and /etc/zsh/zshrc sets its own PROMPT, which would overwrite anything
+# exported as PS1 before the user ever saw it. zshrc looks for
+# SCRAPLINUX_SHELL_ENV and renders the environment into its own prompt instead.
+# PS1 is still set for the /bin/sh fallback, which has no zshrc.
+_env_pkgs=$pkgs
+[ -n "$_env_pkgs" ] || _env_pkgs="(empty)"
+_env_net=offline
+[ "$NETWORK" = 1 ] && _env_net=network
+_env_life=ephemeral
+[ "$KEEP" = 1 ] && _env_life=kept
+
+PS1_TAG="scraplinux-shell [$_env_net,$_env_life]"
+PS1RAW="($PS1_TAG) "'$ '
+inner="export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; export PS1=$(shquote "$PS1RAW"); export SCRAPLINUX_SHELL_ENV=$(shquote "$_env_pkgs"); export SCRAPLINUX_SHELL_NET=$_env_net; export SCRAPLINUX_SHELL_LIFE=$_env_life; export HOME=/root; cd $(shquote "$HERE") 2>/dev/null || cd /"
+
+run_in() {
+	if [ "$NETWORK" = 1 ]; then
+		chroot "$ENVROOT" "$SH" -c "$*"
+	else
+		unshare -n chroot "$ENVROOT" "$SH" -c "$*"
+	fi
+}
+
+case "$mode" in
+exec)
+	run_in "$inner; $cmd"
+	;;
+keepopen)
+	run_in "$inner; $cmd; exec $SH -i"
+	;;
+*)
+	run_in "$inner; exec $SH -i"
+	;;
+esac

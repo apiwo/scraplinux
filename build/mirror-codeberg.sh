@@ -1,10 +1,10 @@
 #!/bin/sh
-# mirror-codeberg.sh - push every Arctic repository to Codeberg as well as GitHub.
+# mirror-codeberg.sh - push every ScrapLinux repository to Codeberg as well as GitHub.
 #
 #   build/mirror-codeberg.sh              push them all
-#   build/mirror-codeberg.sh arctic-docs  push one
+#   build/mirror-codeberg.sh scraplinux-docs  push one
 #
-# Everything Arctic lives in two places: github.com/apiwo/<name> and
+# Everything ScrapLinux lives in two places: github.com/apiwo/<name> and
 # codeberg.org/apiwo/<name>. GitHub stays the working remote; Codeberg is
 # pushed the same commits so the project does not live on one host's
 # goodwill.
@@ -17,8 +17,8 @@
 
 set -u
 
-B=${ARCTIC_BUILD:-/home/apiwo/arctic-build}
-TREE=${ARCTIC_TREE:-/home/apiwo/arctic}
+B=${SCRAPLINUX_BUILD:-/home/apiwo/scraplinux-build}
+TREE=${SCRAPLINUX_TREE:-/home/apiwo/scraplinux}
 
 # Set CODEBERG_KEY to an ssh private key if the one ssh would pick on its own
 # is not the right one - running this as root is the usual reason, since ~ then
@@ -31,12 +31,12 @@ fi
 # repo-name:checkout
 #
 # The distribution and the kernel only. The binary package repository is
-# hundreds of megabytes of .alpmz and it filled the account's storage quota,
+# hundreds of megabytes of .scrapsz and it filled the account's storage quota,
 # which is per account - so mirroring it stopped every *other* repository from
 # being pushed too. Binaries are served from GitHub, which is what
-# /etc/alpm/repos.d points at, so nothing depends on them being here.
-REPOS="arctic-linux:$TREE
-arctic-kernel:$B/src-extra/arctic-kernel"
+# /etc/scraps/repos.d points at, so nothing depends on them being here.
+REPOS="scraplinux:$TREE
+scraplinux-kernel:$B/src-extra/scraplinux-kernel"
 
 only=${1:-}
 fail=0
@@ -69,7 +69,7 @@ for entry in $REPOS; do
 	case "$out" in
 	*"Quota exceeded"*)
 		# Codeberg caps how much a user may store, and a repository full of
-		# .alpmz binaries reaches it quickly. This is not something a retry
+		# .scrapsz binaries reaches it quickly. This is not something a retry
 		# fixes: either the binaries stay on the GitHub mirror only, or the
 		# quota has to be raised on Codeberg's side. The cap is per account,
 		# so the repository that fills it stops every other repository from

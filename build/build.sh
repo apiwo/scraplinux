@@ -1,22 +1,22 @@
 #!/bin/sh
-# build.sh - build all of Arctic Linux, start to finish.
+# build.sh - build all of ScrapLinux, start to finish.
 #
 #   build/build.sh                run the whole pipeline
 #   build/build.sh rootfs pkgs     run only these steps
 #
 # Steps, in order: fetch, kernel, rootfs, usable (the disk/wireless tools
 # layered on top - see docs/STATUS.md), pkgs (package everything into
-# .alpmz and index the repos). No ISO step - build-tarball.sh (run
+# .scrapsz and index the repos). No ISO step - build-tarball.sh (run
 # separately, after pkgs) is what produces the shippable base tarballs.
 #
-# Every step that touches the filesystem runs through arctic-sandbox, so this
-# script does not need ARCTIC_SANDBOX set and should not be run inside one
+# Every step that touches the filesystem runs through scraplinux-sandbox, so this
+# script does not need SCRAPLINUX_SANDBOX set and should not be run inside one
 # itself. Each underlying step is idempotent - already-built pieces are
 # skipped - so a failed run can be fixed and re-run without starting over.
 set -eu
 
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-SANDBOX="$HERE/arctic-sandbox"
+SANDBOX="$HERE/scraplinux-sandbox"
 
 step() { printf '\n\033[1;35m== %s ==\033[0m\n' "$*"; }
 
