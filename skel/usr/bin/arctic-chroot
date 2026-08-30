@@ -10,6 +10,32 @@
 
 set -u
 
+# Every mount this script makes - bind-mounting /proc, /sys, /dev, /run into
+# the target - happens inside a private mount namespace from here on, not the
+# host's real one. A bug in this script's own mount/unmount logic (a wrong
+# path, a race between two invocations sharing a target, a backgrounded
+# process losing track of $TARGET) can then only ever corrupt the private,
+# throwaway view this process created - gone the instant it exits - instead
+# of the real system. Without this, exactly that class of bug once lazily
+# unmounted the *host's actual* /dev and /run out from under a live desktop
+# session mid-way through an unrelated chroot test: /dev/null replaced by a
+# plain file, every device node in /dev gone, the Wayland and D-Bus session
+# sockets in /run/user/<uid> wiped, the desktop frozen and every new
+# application unable to launch until both were rebuilt by hand. See
+# docs/STATUS.md. --propagation private, not just a bare new namespace: on a
+# host where mounts are marked MS_SHARED (systemd's default, and this one's),
+# a fresh mount namespace still propagates changes back to the parent through
+# that shared peer group unless the tree is explicitly made private first -
+# a bare `unshare --mount` alone would not have stopped the incident above.
+if [ "${ARCTIC_CHROOT_UNSHARED:-0}" != "1" ]; then
+	command -v unshare >/dev/null 2>&1 || {
+		echo "arctic-chroot: unshare (util-linux) is required, not found" >&2
+		exit 1
+	}
+	export ARCTIC_CHROOT_UNSHARED=1
+	exec unshare --mount --propagation private -- "$0" "$@"
+fi
+
 TARGET=${1:-/mnt}
 case "$TARGET" in
 -h|--help)
@@ -17,6 +43,16 @@ case "$TARGET" in
 	exit 0 ;;
 esac
 [ -d "$TARGET" ] && shift 2>/dev/null || TARGET=/mnt
+
+# Belt and suspenders alongside the namespace isolation above: refuse a
+# target that would make "$TARGET/dev" collapse onto a real, dangerous path
+# if $TARGET were ever empty or "/" - rather than rely on the namespace
+# alone to make that harmless.
+case "$TARGET" in
+""|/|.|/dev|/proc|/sys|/run)
+	echo "arctic-chroot: refusing to use '$TARGET' as a target" >&2
+	exit 1 ;;
+esac
 
 [ "$(id -u)" = "0" ] || { echo "Must be run as root." >&2; exit 1; }
 
