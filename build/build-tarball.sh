@@ -174,7 +174,32 @@ unpack_pkg() {
 # involved. Confirmed end to end: extracting the tarball fresh, entering
 # the chroot with no other network tooling pre-staged, `alpm add
 # arctic-base` now fetches and installs on the first try.
-BASE_EXPLICIT="glibc toybox busybox zsh doas e2fsprogs util-linux dosfstools onetrueawk xz libarchive eudev iw wpa_supplicant ca-certificates curl"
+# bmake: `alpm add -s <pkg>` (a source build - the primary way this package
+# manager is meant to be used, binaries being the fallback) refuses outright
+# with "this system cannot build from source yet - missing: bmake" on a
+# completely fresh install. bmake was documented in this file's own header
+# and in docs/STATUS.md's "Core system" list as part of the base image the
+# whole time; it was just never actually in BASE_EXPLICIT, so no fresh
+# install has ever been able to build a single package from source without
+# first fetching bmake by hand from a binary repo it also could not yet
+# reach for the same reason curl couldn't (see above) - a fresh install with
+# no other network tooling staged had no path to a working source build at
+# all, not even a degraded one. byacc/mandoc: same "documented as core,
+# never actually bundled" gap for the other two tools this file's own header
+# names as always-present - byacc for any recipe needing yacc/bison-shaped
+# grammar generation, mandoc for anything that generates a man page as part
+# of its own install step.
+# gmake: bmake is deliberately Arctic's /usr/bin/make (see the comment in
+# gen-ports.py's autotools template), but that same template just as
+# deliberately calls a *separate* `gmake` for the actual build/install steps
+# - bmake cannot drive automake's dependency-tracking .deps fragments, which
+# need nested variable expansion bmake does not have. A real, packaged
+# `gmake` (GNU Make 4.4.1) already existed in the repo the whole time; it
+# simply had no manifest entry and was never in this list either, so every
+# autotools recipe - the large majority of the ports tree - failed at the
+# first `gmake -j"$JOBS"` on a fresh install with "gmake: not found", not
+# from any actual problem with the package being built.
+BASE_EXPLICIT="glibc toybox busybox zsh doas e2fsprogs util-linux dosfstools onetrueawk xz libarchive eudev iw wpa_supplicant ca-certificates curl bmake byacc mandoc gmake"
 BASE_SET=$(pkg_deps $BASE_EXPLICIT)
 # e2fsprogs depends on util-linux-libs, which BASE_EXPLICIT's own util-linux
 # already replaces (same libmount/libblkid/libuuid, see its recipe) - this
