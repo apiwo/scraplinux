@@ -1,23 +1,23 @@
 #!/bin/sh
-# Repackage upstream browser binaries into .alpmz.
+# Repackage upstream browser binaries into .scrapsz.
 #
 # Firefox and Chrome from source are hours of compute each and need a Rust and
 # Node toolchain on top. Mozilla and Google both publish working x86_64 builds,
 # so these are repackaged as-is: same binaries you would get from their website,
-# just delivered through alpm so they can be listed, verified and removed like
+# just delivered through scraps so they can be listed, verified and removed like
 # anything else.
 set -u
 
-if [ "${ARCTIC_SANDBOX:-0}" != "1" ]; then
-	echo "refusing to build outside the sandbox - use arctic/build/arctic-sandbox" >&2
+if [ "${SCRAPLINUX_SANDBOX:-0}" != "1" ]; then
+	echo "refusing to build outside the sandbox - use scraplinux/build/scraplinux-sandbox" >&2
 	exit 1
 fi
 
-B=/home/apiwo/arctic-build
+B=/home/apiwo/scraplinux-build
 SRC=$B/src
 W=$B/work/browsers
 R=$B/repo
-TREE=/home/apiwo/arctic
+TREE=/home/apiwo/scraplinux
 ARCH=x86_64
 DATE=$(date '+%s')
 
@@ -31,7 +31,7 @@ emit() {
 	pd=$1 name=$2 ver=$3 repo=$4 desc=$5 lic=$6 url=$7 deps=$8
 	isize=$(du -sk "$pd" 2>/dev/null | cut -f1); isize=$(( ${isize:-0} * 1024 ))
 	{
-		printf '# Arctic Linux package, built %s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+		printf '# ScrapLinux package, built %s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
 		printf 'format = 2\nname = %s\nversion = %s\nrelease = 1\narch = %s\n' \
 			"$name" "$ver" "$ARCH"
 		printf 'desc = %s\nurl = %s\nlicense = %s\n' "$desc" "$url" "$lic"
@@ -42,14 +42,14 @@ emit() {
 	} >"$pd/.PKGINFO"
 	( cd "$pd" && find . -type f -o -type l ) | sed 's|^\.||' \
 		| grep -v '^/\.\(PKGINFO\|FILES\|INSTALL\)$' | sort >"$pd/.FILES"
-	out="$R/$repo/$ARCH/$name-$ver-1.$ARCH.alpmz"
+	out="$R/$repo/$ARCH/$name-$ver-1.$ARCH.scrapsz"
 	( cd "$pd" && tar -cf - . | xz -T0 -3 >"$out" ) || { bad "$name: tar failed"; return 1; }
 	ok "$(basename "$out") ($(du -h "$out" | cut -f1), $(wc -l <"$pd/.FILES") files)"
 }
 
 # ------------------------------------------------------------------- firefox
 step "packaging Firefox from Mozilla's official build"
-if ! ls "$R/base/$ARCH"/firefox-*.alpmz >/dev/null 2>&1; then
+if ! ls "$R/base/$ARCH"/firefox-*.scrapsz >/dev/null 2>&1; then
 	FF=$SRC/firefox-latest.tar.xz
 	[ -s "$FF" ] || curl -fL --retry 3 -o "$FF" \
 		'https://download.mozilla.org/?product=firefox-latest-ssl&os=linux64&lang=en-US' \
@@ -98,7 +98,7 @@ fi
 
 # -------------------------------------------------------------------- chrome
 step "packaging Google Chrome from Google's official build"
-if ! ls "$R/base/$ARCH"/google-chrome-*.alpmz >/dev/null 2>&1; then
+if ! ls "$R/base/$ARCH"/google-chrome-*.scrapsz >/dev/null 2>&1; then
 	CH=$SRC/google-chrome-stable.deb
 	[ -s "$CH" ] || curl -fL --retry 3 -o "$CH" \
 		'https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb' \
@@ -137,6 +137,6 @@ else
 	ok "chrome already packaged"
 fi
 
-sh "$TREE/alpm/alpm-repo" gen "$R/base" "$ARCH" >/dev/null 2>&1 || :
+sh "$TREE/scraps/scraps-repo" gen "$R/base" "$ARCH" >/dev/null 2>&1 || :
 printf '\n  base now has %s binaries\n' \
-	"$(ls -1 "$R/base/$ARCH"/*.alpmz 2>/dev/null | wc -l | tr -d ' ')"
+	"$(ls -1 "$R/base/$ARCH"/*.scrapsz 2>/dev/null | wc -l | tr -d ' ')"

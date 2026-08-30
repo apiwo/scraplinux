@@ -1,0 +1,8 @@
+# ScrapLinux - base repository
+# The bulk of the distribution. Desktops, browsers, toolchains, games, everything.
+name = base
+url = https://raw.githubusercontent.com/apiwo/scraplinux-pkgs/main/ALL/base
+mirror = https://raw.githubusercontent.com/apiwo/scraplinux-pkgs/main/ALL/base
+mirror = https://pkg-scraplinux.apiwow.net/ALL/base
+enabled = yes
+priority = 30

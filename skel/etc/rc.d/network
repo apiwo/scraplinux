@@ -1,5 +1,5 @@
 #!/bin/sh
-# Arctic Linux - bring up wired DHCP on whatever interface comes up.
+# ScrapLinux - bring up wired DHCP on whatever interface comes up.
 #
 # Deliberately dumb: no wifi branch (that's rc.d/wifi, reading
 # network.conf), no static config - just "find a wired interface, DHCP

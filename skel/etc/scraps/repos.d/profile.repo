@@ -1,0 +1,8 @@
+# ScrapLinux - profile repository
+# Whole-environment meta packages - a desktop, an audio stack, in one name.
+name = profile
+url = https://raw.githubusercontent.com/apiwo/scraplinux-pkgs/main/ALL/profile
+mirror = https://raw.githubusercontent.com/apiwo/scraplinux-pkgs/main/ALL/profile
+mirror = https://pkg-scraplinux.apiwow.net/ALL/profile
+enabled = yes
+priority = 35

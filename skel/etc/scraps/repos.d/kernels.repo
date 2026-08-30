@@ -1,0 +1,10 @@
+# ScrapLinux - kernels repository
+# Kernel flavours: scraplinux-base-kernel, scraplinux-libre-kernel, scraplinux-small-kernel, and their headers.
+# Kernel/firmware packages are too large for the free-tier pkg mirror - get
+# them from the ISO itself or a GitHub release until they land here too.
+name = kernels
+url = https://raw.githubusercontent.com/apiwo/scraplinux-pkgs/main/ALL/kernels
+mirror = https://raw.githubusercontent.com/apiwo/scraplinux-pkgs/main/ALL/kernels
+mirror = https://pkg-scraplinux.apiwow.net/ALL/kernels
+enabled = yes
+priority = 15

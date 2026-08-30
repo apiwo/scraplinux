@@ -1,11 +1,11 @@
 #!/bin/sh
-# Arctic Linux - compressed swap in RAM, sized and compressed per
-# /etc/arctic/zram.conf (ZRAM_SIZE, ZRAM_ALGO - written by hand). Composes
+# ScrapLinux - compressed swap in RAM, sized and compressed per
+# /etc/scraplinux/zram.conf (ZRAM_SIZE, ZRAM_ALGO - written by hand). Composes
 # with disk swap rather than replacing it: this is given the higher
 # priority, so disk swap only catches whatever does not fit once zram is
 # full.
 NAME=zram
-CONF=/etc/arctic/zram.conf
+CONF=/etc/scraplinux/zram.conf
 [ -f "$CONF" ] && . "$CONF"
 ZRAM_SIZE=${ZRAM_SIZE:-50%}
 ZRAM_ALGO=${ZRAM_ALGO:-zstd}

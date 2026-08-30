@@ -1,20 +1,20 @@
 #!/bin/sh
-# publish-ports.sh - copy the ports tree into the ports-arctic checkout and
+# publish-ports.sh - copy the ports tree into the ports-scraplinux checkout and
 # regenerate its directory listings.
 #
-#   build/publish-ports.sh [checkout]   default /home/apiwo/arctic-build/src-extra/arctic-linux-ports
+#   build/publish-ports.sh [checkout]   default /home/apiwo/scraplinux-build/src-extra/scraplinux-ports
 #
 # Recipes only, and every recipe: this host is the one place a source build
-# ever fetches from (alpm's ALPM_PORTS), and the binary mirror carries no
+# ever fetches from (scraps's SCRAPS_PORTS), and the binary mirror carries no
 # recipes at all. The layout it serves is ALL/<repo>/<name>/recipe, which is
-# what alpm's ports_repo_of() looks a package up in manifest.tsv to build.
+# what scraps's ports_repo_of() looks a package up in manifest.tsv to build.
 # shellcheck shell=sh disable=SC2039
 
 set -eu
 
-B=${ARCTIC_BUILD:-/home/apiwo/arctic-build}
-TREE=${ARCTIC_TREE:-/home/apiwo/arctic}
-SITE=${1:-$B/src-extra/arctic-linux-ports}
+B=${SCRAPLINUX_BUILD:-/home/apiwo/scraplinux-build}
+TREE=${SCRAPLINUX_TREE:-/home/apiwo/scraplinux}
+SITE=${1:-$B/src-extra/scraplinux-ports}
 
 REPOS="main extra base kernels profile nonfree alt-nonfree multilib"
 
@@ -52,9 +52,9 @@ for r in $REPOS; do
 		mkdir -p "$dst/$p"
 		# The whole directory, not a fixed filename list: a recipe's
 		# local (non-URL) source= entries can be anything - busybox's
-		# arctic.config and busybox.conf, genfstab's own script, a
+		# scraplinux.config and busybox.conf, genfstab's own script, a
 		# profile package's session.sh. A named whitelist here missed
-		# every one of those, so `alpm add -s <pkg>` on any recipe with
+		# every one of those, so `scraps add -s <pkg>` on any recipe with
 		# a local source file downloaded the recipe fine and then died
 		# with "local source missing" against the real published host,
 		# while working the whole time against a local checkout that
@@ -101,13 +101,13 @@ listing() {
 </head>
 <body>
 <nav class="topbar">
-  <a href="https://arctic-linux.apiwow.net">main</a>
-  <a href="https://arctic-docs.apiwow.net">docs</a>
-  <a href="https://pkg-arctic.apiwow.net">packages</a>
-  <a href="https://ports-arctic.apiwow.net">ports</a>
-  <a href="https://arctic-releases.apiwow.net">releases</a>
-  <a href="https://github.com/apiwo/arctic-linux">github</a>
-  <a href="https://codeberg.org/apiwo/arctic-linux">codeberg</a>
+  <a href="https://scraplinux.apiwow.net">main</a>
+  <a href="https://scraplinux-docs.apiwow.net">docs</a>
+  <a href="https://pkg-scraplinux.apiwow.net">packages</a>
+  <a href="https://ports-scraplinux.apiwow.net">ports</a>
+  <a href="https://scraplinux-releases.apiwow.net">releases</a>
+  <a href="https://github.com/apiwo/scraplinux">github</a>
+  <a href="https://codeberg.org/apiwo/scraplinux">codeberg</a>
 </nav>
 <div class="wrap">
   <header class="hero" style="padding:28px 0 8px;">
@@ -133,7 +133,7 @@ EOF
     </table>
   </section>
   <footer>
-    <p>Arctic Linux — <a href="https://github.com/apiwo/arctic-linux">source on GitHub</a></p>
+    <p>ScrapLinux — <a href="https://github.com/apiwo/scraplinux">source on GitHub</a></p>
   </footer>
 </div>
 </body>
@@ -167,13 +167,13 @@ if [ -f "$SITE/index.html" ]; then
 fi
 
 step "writing directory listings"
-listing "$SITE/ALL" "arctic-linux/ALL/"
+listing "$SITE/ALL" "scraplinux/ALL/"
 for r in $REPOS; do
 	[ -d "$SITE/ALL/$r" ] || continue
-	listing "$SITE/ALL/$r" "arctic-linux/ALL/$r/"
+	listing "$SITE/ALL/$r" "scraplinux/ALL/$r/"
 	for d in "$SITE/ALL/$r"/*/; do
 		[ -d "$d" ] || continue
-		listing "${d%/}" "arctic-linux/ALL/$r/$(basename "$d")/"
+		listing "${d%/}" "scraplinux/ALL/$r/$(basename "$d")/"
 	done
 done
 note "listings written"

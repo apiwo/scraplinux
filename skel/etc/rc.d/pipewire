@@ -1,5 +1,5 @@
 #!/bin/sh
-# Arctic Linux - audio.
+# ScrapLinux - audio.
 # pipewire is a per-session daemon, so this only makes sure the system pieces
 # exist; the user session starts the daemon itself.
 NAME=pipewire

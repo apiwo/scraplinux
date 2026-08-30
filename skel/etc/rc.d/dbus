@@ -5,7 +5,7 @@
 # used to give back.
 #
 # dbus-daemon --system refuses to start at all without a machine ID at
-# /etc/machine-id (or /var/lib/dbus/machine-id) - nothing on Arctic ever
+# /etc/machine-id (or /var/lib/dbus/machine-id) - nothing on ScrapLinux ever
 # generated one, so dbus-daemon was exiting immediately on every boot, and
 # rc.boot's service loop swallows stderr, so it looked like nothing was
 # wrong until whatever needed the bus tried to connect and failed. Generated
@@ -20,5 +20,5 @@ BACKGROUND=no
 # <pidfile>), not the /run/dbus.pid svc.lib would otherwise default to.
 PIDFILE=/run/dbus/pid
 PRESTART="mkdir -p /run/dbus; [ -s /etc/machine-id ] || { command -v dbus-uuidgen >/dev/null 2>&1 && dbus-uuidgen > /etc/machine-id || head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n' > /etc/machine-id; }"
-. /etc/arctic/svc.lib
+. /etc/scraplinux/svc.lib
 svc_main "$@"

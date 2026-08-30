@@ -1,0 +1,8 @@
+# ScrapLinux - nonfree repository
+# Proprietary firmware and drivers: NVIDIA, Broadcom, microcode, various blobs.
+name = nonfree
+url = https://raw.githubusercontent.com/apiwo/scraplinux-pkgs/main/ALL/nonfree
+mirror = https://raw.githubusercontent.com/apiwo/scraplinux-pkgs/main/ALL/nonfree
+mirror = https://pkg-scraplinux.apiwow.net/ALL/nonfree
+enabled = yes
+priority = 40

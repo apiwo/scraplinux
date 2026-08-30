@@ -29,7 +29,7 @@ import urllib.parse
 HERE = os.path.dirname(os.path.abspath(__file__))
 TREE = os.path.dirname(HERE)
 MANIFEST = os.path.join(TREE, "ports", "manifest.tsv")
-BAD = "/home/apiwo/arctic-build/logs/sources/bad"
+BAD = "/home/apiwo/scraplinux-build/logs/sources/bad"
 
 VER_RE = re.compile(r"\d[\d.]*\d|\d")
 

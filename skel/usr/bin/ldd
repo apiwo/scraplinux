@@ -1,7 +1,7 @@
 #!/bin/sh
 # ldd - list the shared libraries a program needs.
 #
-# glibc ships ldd(1) as a bash script. Arctic has no bash, so this asks the
+# glibc ships ldd(1) as a bash script. ScrapLinux has no bash, so this asks the
 # dynamic loader to do the work instead, which is all ldd ever did anyway.
 
 LOADER=

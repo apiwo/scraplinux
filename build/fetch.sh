@@ -9,10 +9,10 @@
 # separate, untracked copy in the build tree could (and did) go stale the
 # moment sources.list changed in git without anyone re-copying it, silently
 # losing checksums or falling behind on versions with nothing to say so.
-: "${ARCTIC_BUILD:=/home/apiwo/arctic-build}"
-: "${ARCTIC_TREE:=/home/apiwo/arctic}"
-mkdir -p "$ARCTIC_BUILD/src"
-cd "$ARCTIC_BUILD/src" || exit 1
+: "${SCRAPLINUX_BUILD:=/home/apiwo/scraplinux-build}"
+: "${SCRAPLINUX_TREE:=/home/apiwo/scraplinux}"
+mkdir -p "$SCRAPLINUX_BUILD/src"
+cd "$SCRAPLINUX_BUILD/src" || exit 1
 
 sha256() {
   if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1
@@ -50,7 +50,7 @@ while read -r name url want; do
     fi
   fi
   mv "$name.part" "$name"
-done < "$ARCTIC_TREE/build/sources.list"
+done < "$SCRAPLINUX_TREE/build/sources.list"
 echo "=== FETCH DONE ==="
 ls -la
 exit $fail

@@ -4,5 +4,5 @@ CMD=/usr/bin/udevd
 ARGS="--daemon"
 BACKGROUND=no
 
-. /etc/arctic/svc.lib
+. /etc/scraplinux/svc.lib
 svc_main "$@"

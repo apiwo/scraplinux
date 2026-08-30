@@ -1,5 +1,5 @@
 #!/bin/sh
-# Arctic Linux - discard unused blocks on solid state disks.
+# ScrapLinux - discard unused blocks on solid state disks.
 # Enabled as a service so it runs once per boot; crond handles the weekly run.
 NAME=fstrim
 case "${1:-}" in

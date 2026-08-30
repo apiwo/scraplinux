@@ -1,7 +1,7 @@
 #!/bin/sh
-# Arctic Linux - reconnect wireless from network.conf on boot.
+# ScrapLinux - reconnect wireless from network.conf on boot.
 #
-# wifi-connect writes a saved SSID/PSK to /etc/arctic/network.conf every
+# wifi-connect writes a saved SSID/PSK to /etc/scraplinux/network.conf every
 # time it associates. This regenerates a real wpa_supplicant config from
 # that and brings the link up the same way wifi-connect's own connect()
 # does - the same wpa_supplicant + udhcpc pairing, just driven from a
@@ -10,8 +10,8 @@
 # association or a DHCP lease.
 NAME=wifi
 CTRL_DIR=/run/wpa_supplicant
-CONF_LIB=/etc/arctic/conf.lib
-NET_CONF=/etc/arctic/network.conf
+CONF_LIB=/etc/scraplinux/conf.lib
+NET_CONF=/etc/scraplinux/network.conf
 
 conf_escape() {
 	printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'

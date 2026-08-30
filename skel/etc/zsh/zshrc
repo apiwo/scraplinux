@@ -1,4 +1,4 @@
-# Arctic Linux - system zsh configuration
+# ScrapLinux - system zsh configuration
 # Loaded for every interactive zsh. Per-user overrides go in ~/.zshrc.
 
 # ------------------------------------------------------------------- behaviour
@@ -15,9 +15,9 @@ setopt PROMPT_SUBST
 # Ctrl-D at an empty prompt ends the shell. On the live image that hands tty1
 # back to init to respawn, and a few in a row make busybox init disable the
 # console for five minutes as "respawning too fast" - which reads as the live
-# session simply breaking. arctic-welcome sets ARCTIC_IGNORE_EOF there; a real
+# session simply breaking. scraplinux-welcome sets SCRAPLINUX_IGNORE_EOF there; a real
 # install leaves Ctrl-D alone, where logging out is what it should do.
-[[ -n $ARCTIC_IGNORE_EOF ]] && setopt IGNORE_EOF
+[[ -n $SCRAPLINUX_IGNORE_EOF ]] && setopt IGNORE_EOF
 
 # History that survives, shared between shells, without duplicates.
 HISTFILE=${HOME}/.zsh_history
@@ -33,7 +33,7 @@ autoload -Uz compinit
 # fresh boot with no terminal history the prompt just sits there unanswered -
 # "run compaudit for a list of insecure directories, or press '"'y'"' to
 # continue?" - which reads as tab completion not working at all, because
-# nothing following it in the shell startup ever runs either. Arctic controls
+# nothing following it in the shell startup ever runs either. ScrapLinux controls
 # permissions on every directory in $fpath; there is nothing to audit.
 compinit -u -d "${XDG_CACHE_HOME:-$HOME/.cache}/zcompdump"
 
@@ -46,8 +46,8 @@ zstyle ':completion:*:warnings' format '%F{203}no match%f'
 zstyle ':completion:*' use-cache on
 zstyle ':completion:*' cache-path "${XDG_CACHE_HOME:-$HOME/.cache}/zcompcache"
 
-# alpm completion: subcommands, then package names from the real database.
-_alpm() {
+# scraps completion: subcommands, then package names from the real database.
+_scraps() {
 	local -a cmds
 	cmds=(
 		ins:'install packages' del:'remove packages' get:'fetch without installing'
@@ -65,19 +65,19 @@ _alpm() {
 		del+deps+junk:'remove with both'
 	)
 	if (( CURRENT == 2 )); then
-		_describe 'alpm command' cmds
+		_describe 'scraps command' cmds
 		return
 	fi
 	case ${words[2]} in
 	del|del+deps|del+junk|del+deps+junk|info|files|deps|rdeps|why|hold|unhold|mark|verify|reins|commit)
-		_values 'installed package' $(ls /var/lib/alpm/local 2>/dev/null) ;;
+		_values 'installed package' $(ls /var/lib/scraps/local 2>/dev/null) ;;
 	ins|get|update)
-		_values 'package' $(cut -f1 /var/lib/alpm/sync/*.idx 2>/dev/null | sort -u) ;;
+		_values 'package' $(cut -f1 /var/lib/scraps/sync/*.idx 2>/dev/null | sort -u) ;;
 	fetch)
 		_values 'repository' all main extra base kernels profile nonfree alt-nonfree multilib ;;
 	esac
 }
-compdef _alpm alpm 2>/dev/null
+compdef _scraps scraps 2>/dev/null
 
 compdef _gnu_generic service 2>/dev/null
 
@@ -109,7 +109,7 @@ zstyle ':vcs_info:git:*' formats ' %F{99}%b%f'
 zstyle ':vcs_info:git:*' actionformats ' %F{215}%b|%a%f'
 precmd() { vcs_info }
 
-_arctic_prompt() {
+_scraplinux_prompt() {
 	local ret=$?
 	local arrow_colour=44
 	(( ret != 0 )) && arrow_colour=203
@@ -121,31 +121,31 @@ _arctic_prompt() {
 	(( ret != 0 )) && print -n " %F{203}[$ret]%f"
 	print -n " %F{$arrow_colour}%B>%b%f "
 }
-PROMPT='$(_arctic_prompt)'
+PROMPT='$(_scraplinux_prompt)'
 RPROMPT='%F{238}%*%f'
 
-# Inside an `arctic-shell`, say so on every prompt. An ephemeral environment
+# Inside an `scraplinux-shell`, say so on every prompt. An ephemeral environment
 # is otherwise indistinguishable from the real system right up until it
 # disappears on exit, taking whatever was installed into it. Just
-# "arctic-shell" plus whether the network is reachable from inside it and
+# "scraplinux-shell" plus whether the network is reachable from inside it and
 # whether it survives exit - the package set is what you asked for, already
 # on screen when you ran the command, and not worth repeating on every
 # single line after.
-if [[ -n $ARCTIC_SHELL_ENV ]]; then
-	_arctic_shell_bar() {
-		local net=${ARCTIC_SHELL_NET:-offline} life=${ARCTIC_SHELL_LIFE:-ephemeral}
+if [[ -n $SCRAPLINUX_SHELL_ENV ]]; then
+	_scraplinux_shell_bar() {
+		local net=${SCRAPLINUX_SHELL_NET:-offline} life=${SCRAPLINUX_SHELL_LIFE:-ephemeral}
 		local netcol=203; [[ $net == network ]] && netcol=49
 		local lifecol=215; [[ $life == kept ]] && lifecol=49
-		print -n "%F{44}%Barctic-shell%b%f"
+		print -n "%F{44}%Bscraplinux-shell%b%f"
 		print -n " %F{$netcol}${net}%f%F{238}/%f%F{$lifecol}${life}%f"
 	}
-	PROMPT='$(_arctic_shell_bar)
-$(_arctic_prompt)'
+	PROMPT='$(_scraplinux_shell_bar)
+$(_scraplinux_prompt)'
 	RPROMPT=''
 fi
 
 # --------------------------------------------------------------------- aliases
-# Arctic's userland is toybox and busybox, so ls has no --color=auto. Both
+# ScrapLinux's userland is toybox and busybox, so ls has no --color=auto. Both
 # implementations honour the -F and -h flags used here.
 alias ls='ls -F'
 alias ll='ls -lhF'
@@ -160,16 +160,16 @@ alias du='du -h'
 alias free='free -m'
 alias mkdir='mkdir -p'
 alias ip='ip -c 2>/dev/null || ip'
-alias fetch='arcticfetch'
-alias ff='arcticfetch'
+alias fetch='scraplinuxfetch'
+alias ff='scraplinuxfetch'
 
-# alpm shorthands, matching how people actually type.
-alias ins='doas alpm add'
-alias del='doas alpm rem'
-alias up='doas alpm update'
-alias sync='doas alpm fetch all'
-alias pkgs='alpm list'
-alias search='alpm search'
+# scraps shorthands, matching how people actually type.
+alias ins='doas scraps add'
+alias del='doas scraps rem'
+alias up='doas scraps update'
+alias sync='doas scraps fetch all'
+alias pkgs='scraps list'
+alias search='scraps search'
 
 # Root without typing doas every time.
 alias please='doas'
@@ -189,7 +189,7 @@ unpack() {
 ports() { doas netstat -tulpn 2>/dev/null || doas ss -tulpn; }
 
 # Which package owns the thing in $PATH.
-whopkg() { alpm owns "$(command -v "$1")"; }
+whopkg() { scraps owns "$(command -v "$1")"; }
 
 # ---------------------------------------------------------------------- extras
 # Autosuggestions, and nothing else. Syntax highlighting recolours the line
@@ -204,5 +204,5 @@ ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=238'
 # Anything dropped in here is picked up automatically.
 for f in /etc/zsh/zshrc.d/*.zsh(N); do source $f; done
 
-# No greeting here any more. arctic-firstboot covers the same ground once,
+# No greeting here any more. scraplinux-firstboot covers the same ground once,
 # on the first real boot, rather than printing something on every shell.

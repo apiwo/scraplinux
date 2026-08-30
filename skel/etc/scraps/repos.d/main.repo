@@ -1,0 +1,8 @@
+# ScrapLinux - main repository
+# Everything needed to install and boot ScrapLinux: glibc, busybox, toybox, zsh, doas, scraps itself.
+name = main
+url = https://raw.githubusercontent.com/apiwo/scraplinux-pkgs/main/ALL/main
+mirror = https://raw.githubusercontent.com/apiwo/scraplinux-pkgs/main/ALL/main
+mirror = https://pkg-scraplinux.apiwow.net/ALL/main
+enabled = yes
+priority = 10

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Arctic Linux - load the packet filter
+# ScrapLinux - load the packet filter
 NAME=nftables
 RULES=/etc/nftables.conf
 case "${1:-}" in

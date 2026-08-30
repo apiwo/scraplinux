@@ -4,7 +4,7 @@ Pull requests are welcome. I read through everything myself before merging,
 so don't take a delay personally — I'm one person.
 
 Package changes go through `ports/manifest.tsv` in
-[arctic-linux-ports](https://github.com/apiwo/arctic-linux-ports), not this
+[scraplinux-ports](https://github.com/apiwo/scraplinux-ports), not this
 repo. Recipes are generated from the manifest; edit that, not the recipe
 file, unless the recipe needs a `recipe.local` hand fix.
 

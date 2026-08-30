@@ -1,0 +1,123 @@
+#!/bin/sh
+# scraplinux-chroot - enter an installed ScrapLinux system with the kernel filesystems
+# already bound, so package operations and bootloader work behave normally.
+#
+#   scraplinux-chroot                 enter /mnt
+#   scraplinux-chroot /mnt            same, explicitly
+#   scraplinux-chroot /mnt scraps list  run one command and come back out
+#
+# shellcheck shell=sh disable=SC2039
+
+set -u
+
+# Every mount this script makes - bind-mounting /proc, /sys, /dev, /run into
+# the target - happens inside a private mount namespace from here on, not the
+# host's real one. A bug in this script's own mount/unmount logic (a wrong
+# path, a race between two invocations sharing a target, a backgrounded
+# process losing track of $TARGET) can then only ever corrupt the private,
+# throwaway view this process created - gone the instant it exits - instead
+# of the real system. Without this, exactly that class of bug once lazily
+# unmounted the *host's actual* /dev and /run out from under a live desktop
+# session mid-way through an unrelated chroot test: /dev/null replaced by a
+# plain file, every device node in /dev gone, the Wayland and D-Bus session
+# sockets in /run/user/<uid> wiped, the desktop frozen and every new
+# application unable to launch until both were rebuilt by hand. See
+# docs/STATUS.md. --propagation private, not just a bare new namespace: on a
+# host where mounts are marked MS_SHARED (systemd's default, and this one's),
+# a fresh mount namespace still propagates changes back to the parent through
+# that shared peer group unless the tree is explicitly made private first -
+# a bare `unshare --mount` alone would not have stopped the incident above.
+if [ "${SCRAPLINUX_CHROOT_UNSHARED:-0}" != "1" ]; then
+	command -v unshare >/dev/null 2>&1 || {
+		echo "scraplinux-chroot: unshare (util-linux) is required, not found" >&2
+		exit 1
+	}
+	export SCRAPLINUX_CHROOT_UNSHARED=1
+	exec unshare --mount --propagation private -- "$0" "$@"
+fi
+
+TARGET=${1:-/mnt}
+case "$TARGET" in
+-h|--help)
+	sed -n '2,9p' "$0" | sed 's/^# \?//'
+	exit 0 ;;
+esac
+[ -d "$TARGET" ] && shift 2>/dev/null || TARGET=/mnt
+
+# Belt and suspenders alongside the namespace isolation above: refuse a
+# target that would make "$TARGET/dev" collapse onto a real, dangerous path
+# if $TARGET were ever empty or "/" - rather than rely on the namespace
+# alone to make that harmless.
+case "$TARGET" in
+""|/|.|/dev|/proc|/sys|/run)
+	echo "scraplinux-chroot: refusing to use '$TARGET' as a target" >&2
+	exit 1 ;;
+esac
+
+[ "$(id -u)" = "0" ] || { echo "Must be run as root." >&2; exit 1; }
+
+[ -d "$TARGET" ] || { echo "scraplinux-chroot: $TARGET does not exist" >&2; exit 1; }
+if [ ! -x "$TARGET/bin/sh" ] && [ ! -x "$TARGET/usr/bin/sh" ]; then
+	echo "scraplinux-chroot: $TARGET does not look like a root filesystem" >&2
+	echo "  (no /bin/sh - is it mounted?)" >&2
+	exit 1
+fi
+
+MOUNTED=""
+
+bind() {
+	src=$1 dst="$TARGET$2" type=${3:-bind}
+	mkdir -p "$dst" 2>/dev/null || return 0
+	mountpoint -q "$dst" 2>/dev/null && return 0
+	case "$type" in
+	bind)  mount --bind "$src" "$dst" 2>/dev/null || return 0 ;;
+	rbind) mount --rbind "$src" "$dst" 2>/dev/null || return 0
+	       mount --make-rslave "$dst" 2>/dev/null || : ;;
+	*)     mount -t "$type" "$type" "$dst" 2>/dev/null || return 0 ;;
+	esac
+	MOUNTED="$dst $MOUNTED"
+}
+
+cleanup() {
+	# Deepest first, and lazily, so a busy mount does not wedge the exit.
+	for m in $MOUNTED; do
+		umount -l "$m" 2>/dev/null || :
+	done
+}
+trap cleanup EXIT INT TERM
+
+bind /proc /proc proc
+bind /sys /sys sysfs
+bind /dev /dev rbind
+bind /run /run rbind
+[ -d /sys/firmware/efi/efivars ] && bind /sys/firmware/efi/efivars /sys/firmware/efi/efivars
+
+# Name resolution inside the chroot, without clobbering a real file.
+if [ -f /etc/resolv.conf ] && [ ! -s "$TARGET/etc/resolv.conf" ]; then
+	cp -f /etc/resolv.conf "$TARGET/etc/resolv.conf" 2>/dev/null || :
+fi
+
+SHELL_IN=/bin/zsh
+[ -x "$TARGET$SHELL_IN" ] || SHELL_IN=/bin/sh
+
+if [ $# -gt 0 ]; then
+	chroot "$TARGET" "$SHELL_IN" -lc "$*"
+	exit $?
+fi
+
+printf '\033[38;5;44m::\033[0m entering %s (exit or ctrl-d to leave)\n' "$TARGET"
+# stty before the shell, because the target may have no terminfo database yet
+# - it is a system that is still being installed. Without one the line editor
+# does not know what the terminal sends for erase, and backspace moved the
+# cursor forward instead of deleting: the terminal sends ^?, the editor was
+# expecting ^H, and neither end had a description to agree on. Setting the
+# erase character explicitly does not need terminfo at all.
+env -i \
+	HOME=/root \
+	TERM="${TERM:-linux}" \
+	PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+	SCRAPLINUX_CHROOT=1 \
+	chroot "$TARGET" /bin/sh -c 'stty sane erase ^? 2>/dev/null; exec '"$SHELL_IN"' -l' 
+rc=$?
+printf '\033[38;5;44m::\033[0m left %s\n' "$TARGET"
+exit $rc

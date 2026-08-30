@@ -1,10 +1,10 @@
 #!/bin/sh
-# Arctic Linux - stage 1: build the userland from source into a root filesystem.
+# ScrapLinux - stage 1: build the userland from source into a root filesystem.
 #
 # Layout is merged-/usr: everything real lives under /usr/bin and /usr/lib,
 # and /bin /sbin /lib /lib64 /usr/sbin are symlinks.
 #
-# A note on the toolchain. Arctic ships LLVM: clang, lld, libc++. But glibc
+# A note on the toolchain. ScrapLinux ships LLVM: clang, lld, libc++. But glibc
 # itself cannot be compiled by clang - upstream requires GCC - so GCC is used
 # here as a stage-0 bootstrap tool only. It is not installed into the image and
 # no GNU userland is shipped: coreutils duties go to toybox (0BSD) and busybox,
@@ -12,25 +12,25 @@
 # terminal library is netbsd-curses. glibc is the only GNU component present.
 set -u
 
-# Refuse to run outside the sandbox. Arctic's glibc installs to /usr/lib by
+# Refuse to run outside the sandbox. ScrapLinux's glibc installs to /usr/lib by
 # design, so a recipe that forgets DESTDIR would overwrite the host's libc and
 # take the machine down - which is exactly what happened once. Run through
-# arctic-sandbox, where the host filesystem is read-only.
-if [ "${ARCTIC_SANDBOX:-0}" != "1" ]; then
+# scraplinux-sandbox, where the host filesystem is read-only.
+if [ "${SCRAPLINUX_SANDBOX:-0}" != "1" ]; then
 	echo "$(basename "$0"): refusing to build outside the sandbox." >&2
-	echo "  run it as:  arctic/build/arctic-sandbox $0 $*" >&2
-	echo "  (set ARCTIC_SANDBOX=1 only if you know the host is protected)" >&2
+	echo "  run it as:  scraplinux/build/scraplinux-sandbox $0 $*" >&2
+	echo "  (set SCRAPLINUX_SANDBOX=1 only if you know the host is protected)" >&2
 	exit 1
 fi
 
-B=/home/apiwo/arctic-build
+B=/home/apiwo/scraplinux-build
 SRC=$B/src
 W=$B/work
 R=$B/stage/rootfs
 L=$B/logs
 J=$(nproc)
 KVER=7.1.3
-KREL=7.1.3-arctic-base
+KREL=7.1.3-scraplinux-base
 
 mkdir -p "$W" "$R" "$L"
 
@@ -51,12 +51,12 @@ step "creating the filesystem skeleton"
 for d in usr/bin usr/lib usr/include usr/share usr/local etc dev proc sys run \
 	tmp var home root boot opt srv mnt media \
 	var/log var/cache var/lib var/tmp var/empty \
-	etc/alpm/repos.d etc/rc.d etc/arctic/services etc/skel \
-	var/lib/alpm/local var/lib/alpm/sync var/lib/arctic var/cache/alpm/pkg
+	etc/scraps/repos.d etc/rc.d etc/scraplinux/services etc/skel \
+	var/lib/scraps/local var/lib/scraps/sync var/lib/scraplinux var/cache/scraps/pkg
 do
 	mkdir -p "$R/$d"
 done
-# The merged-/usr symlinks. Everything else in Arctic assumes these exist.
+# The merged-/usr symlinks. Everything else in ScrapLinux assumes these exist.
 for l in bin sbin lib lib64; do
 	[ -e "$R/$l" ] || ln -sfn "usr/${l#s}" "$R/$l"
 done
@@ -208,7 +208,7 @@ else
 fi
 
 # ------------------------------------------- 2. compression libraries (0BSD/BSD)
-# libarchive needs these, and Arctic wants them anyway: liblzma is public domain,
+# libarchive needs these, and ScrapLinux wants them anyway: liblzma is public domain,
 # zlib and zstd are BSD-style. None of them are GNU.
 step "building zlib 1.3.1"
 if [ ! -f "$DEPS/usr/lib/libz.so" ]; then
@@ -222,7 +222,7 @@ else
 	ok "zlib already built"
 fi
 
-step "building xz 5.8.3 (liblzma, so .alpmz packages can be read)"
+step "building xz 5.8.3 (liblzma, so .scrapsz packages can be read)"
 if [ ! -f "$DEPS/usr/lib/liblzma.so" ]; then
 	unpack xz-5.8.3 xz-5.8.3.tar.gz || softfail xz-unpack
 	if [ -d "$W/xz-5.8.3" ]; then
@@ -252,7 +252,7 @@ fi
 
 # ----------------------------------------------------------------------- libmd
 # libarchive wants a message-digest library. BSD's libmd is the natural fit for
-# Arctic, and building it keeps libarchive from linking the host's copy.
+# ScrapLinux, and building it keeps libarchive from linking the host's copy.
 step "building libmd 1.1.0 (BSD message digests)"
 if [ ! -f "$DEPS/usr/lib/libmd.so" ]; then
 	unpack libmd-1.1.0 libmd-1.1.0.tar.xz || softfail libmd-unpack
@@ -308,7 +308,7 @@ if [ ! -f "$DEPS/usr/lib/libcurses.so" ]; then
 		# util-linux and others) tries "-ltinfow" before "-ltinfo", and
 		# without this symlink that search finds nothing under $DEPS and
 		# falls through to the build host's real libtinfow.so instead -
-		# which Arctic does not ship, so the resulting binary fails on the
+		# which ScrapLinux does not ship, so the resulting binary fails on the
 		# target with "libtinfow.so.6: cannot open shared object file".
 		for base in "$DEPS" "$R"; do
 			[ -f "$base/usr/lib/libcurses.so" ] || continue
@@ -375,7 +375,7 @@ if [ ! -x "$R/usr/bin/busybox" ]; then
 	             LINUX_MODULE_LOADER_BUILTIN SELINUX; do
 		sed -i "s/^CONFIG_$off=y/# CONFIG_$off is not set/" .config
 	  done
-	  # Applets Arctic actively relies on.
+	  # Applets ScrapLinux actively relies on.
 	  for on in INIT INIT_TERMINAL_TYPE FEATURE_USE_INITTAB GETTY MDEV \
 	            FEATURE_MDEV_CONF FEATURE_MDEV_EXEC FEATURE_MDEV_LOAD_FIRMWARE \
 	            ASH ASH_INTERNAL_GLOB SH_IS_ASH MOUNT UMOUNT SWAPON SWAPOFF \
@@ -427,7 +427,7 @@ if [ ! -x "$R/usr/bin/toybox" ]; then
 		( cd "$W/toybox-0.8.14"
 		  make defconfig >/dev/null 2>&1
 		  # su, login and mkpasswd are the only applets that need crypt(), and
-		  # busybox already owns those three on Arctic. Dropping them here means
+		  # busybox already owns those three on ScrapLinux. Dropping them here means
 		  # toybox needs no libcrypt and can link statically.
 		  for off in SU LOGIN MKPASSWD; do
 			sed -i "s/^CONFIG_$off=y/# CONFIG_$off is not set/" .config
@@ -508,13 +508,13 @@ fi
 # more binary from an older build of this script (from before that flag
 # existed) was found still sitting there, silently shadowing the symlink
 # and shipping with a dangling libmagic.so.1 dependency that made it fail
-# to start at all. Nothing in Arctic is meant to provide a real, separate
+# to start at all. Nothing in ScrapLinux is meant to provide a real, separate
 # more binary; reassert the symlink unconditionally so this cannot recur
 # regardless of what an earlier build left behind.
 [ -x "$R/usr/bin/toybox" ] && ln -sf toybox "$R/usr/bin/more" 2>/dev/null || :
 
 # --------------------------------------------------------------------- 5. zsh
-step "building zsh 5.9.2 (the Arctic login shell)"
+step "building zsh 5.9.2 (the ScrapLinux login shell)"
 if [ ! -x "$R/usr/bin/zsh" ]; then
 	unpack zsh-5.9.2 zsh-5.9.2.tar.xz || softfail zsh-unpack
 	if [ -d "$W/zsh-5.9.2" ]; then
@@ -560,7 +560,7 @@ else
 fi
 
 # -------------------------------------------------------------- 7. libarchive
-step "building libarchive 3.8.9 (bsdtar, the .alpmz reader)"
+step "building libarchive 3.8.9 (bsdtar, the .scrapsz reader)"
 if [ ! -x "$R/usr/bin/bsdtar" ]; then
 	unpack libarchive-3.8.9 libarchive-3.8.9.tar.gz || softfail libarchive-unpack
 	if [ -d "$W/libarchive-3.8.9" ]; then

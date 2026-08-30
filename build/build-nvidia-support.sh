@@ -1,8 +1,8 @@
 #!/bin/sh
-# Arctic Linux - the pieces the NVIDIA proprietary driver needs.
+# ScrapLinux - the pieces the NVIDIA proprietary driver needs.
 #
 # WHY THESE ARE HERE
-#   Arctic's rule is "no GNU except glibc". Reading the actual NVIDIA driver
+#   ScrapLinux's rule is "no GNU except glibc". Reading the actual NVIDIA driver
 #   shipped on this machine shows that rule cannot hold if the proprietary
 #   driver is to work:
 #
@@ -14,7 +14,7 @@
 #   kernel module is a second case - Linux's kbuild is written against GNU make
 #   and bmake cannot drive it.
 #
-#   So Arctic ships three GNU runtime pieces, and nothing more:
+#   So ScrapLinux ships three GNU runtime pieces, and nothing more:
 #     gcc-libs   libstdc++.so.6 and libgcc_s.so.1, runtime only, no compiler
 #     gmake      GNU make, installed as gmake; /usr/bin/make is still bmake
 #     (glibc, which was always there)
@@ -24,12 +24,12 @@
 #   added, and only because a binary blob demands them.
 set -u
 
-if [ "${ARCTIC_SANDBOX:-0}" != "1" ]; then
-	echo "refusing to build outside the sandbox - use arctic/build/arctic-sandbox" >&2
+if [ "${SCRAPLINUX_SANDBOX:-0}" != "1" ]; then
+	echo "refusing to build outside the sandbox - use scraplinux/build/scraplinux-sandbox" >&2
 	exit 1
 fi
 
-B=/home/apiwo/arctic-build
+B=/home/apiwo/scraplinux-build
 SRC=$B/src
 W=$B/work
 R=$B/stage/rootfs
@@ -49,7 +49,7 @@ if [ ! -x "$R/usr/bin/gmake" ]; then
 	  ./configure --prefix=/usr --program-prefix=g --disable-nls && \
 	  make -j"$J" && make DESTDIR="$R" install \
 	) >"$L/gmake.log" 2>&1 && {
-		# Do not let it become /usr/bin/make: bmake owns that name on Arctic.
+		# Do not let it become /usr/bin/make: bmake owns that name on ScrapLinux.
 		rm -f "$R/usr/bin/make.gnu"
 		ok "gmake"
 	} || bad "gmake (see logs/gmake.log)"
@@ -80,7 +80,7 @@ if [ ! -f "$R/usr/lib/libstdc++.so.6" ]; then
 	  && make -j"$J" \
 	) >"$L/gcc.log" 2>&1 || bad "gcc (see logs/gcc.log)"
 
-	# Install only the two runtime libraries. Arctic does not ship the compiler:
+	# Install only the two runtime libraries. ScrapLinux does not ship the compiler:
 	# clang is the toolchain, and these exist purely so the NVIDIA blobs resolve.
 	if [ -d "$W/gcc-build" ]; then
 		found=0

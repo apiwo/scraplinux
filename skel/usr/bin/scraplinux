@@ -1,0 +1,123 @@
+#!/bin/sh
+# scraplinux - the declarative system commands, in one place
+#
+#   scraplinux rebuild              reconcile the system to /etc/scraplinux/system.conf
+#   scraplinux shell <pkgs>...      ephemeral package environment (scraplinux-shell)
+#   scraplinux gc                   prune the package cache, orphans, unused shells
+#   scraplinux generations          list system generations
+#   scraplinux rollback [id]        go back to one (the previous, or a given id)
+#   scraplinux diff <a> [b]         what changed between two generations
+#   scraplinux snapshots            list filesystem snapshots instead
+#
+# Generations and snapshots are different things and both are worth having.
+# A generation is what the system was *declared* to be - system.conf, the
+# package set, the enabled services - and rolling back to one re-reconciles
+# the machine to that declaration. A snapshot is the btrfs filesystem as it
+# literally was, restored file for file. Generations survive a reinstall and
+# work on any filesystem; snapshots undo things a package never declared.
+#
+# rebuild and shell are also their own commands (scraplinux-rebuild, scraplinux-shell)
+# if that is easier to type or script against.
+# shellcheck shell=sh disable=SC2039
+
+set -u
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+for d in /usr/lib/scraps "$(dirname "$0")/../scraps" ./scraps; do
+	[ -f "$d/libscraps.sh" ] && { . "$d/libscraps.sh"; break; }
+done
+
+if [ -t 1 ]; then
+	R=$(printf '\033[0m'); TEAL=$(printf '\033[38;5;44m'); GREY=$(printf '\033[38;5;245m')
+else
+	R= ; TEAL= ; GREY=
+fi
+note() { printf '%s::%s %s\n' "$TEAL" "$R" "$*"; }
+
+need_root() { [ "$(id -u)" = "0" ] || { echo "Must be run as root." >&2; exit 1; }; }
+
+cmd_gc() {
+	need_root
+	note "removing orphaned packages"
+	SCRAPS_YES=1 scraps autoremove
+
+	note "pruning the package cache (keeping the installed version of each)"
+	pruned=0
+	for f in /var/cache/scraps/pkg/*.scrapsz; do
+		[ -f "$f" ] || continue
+		b=$(basename "$f")
+		p=${b%-*-*.scrapsz}
+		iv=$(installed_version "$p" 2>/dev/null)
+		[ -n "$iv" ] && case "$b" in "$p-$iv"*) continue ;; esac
+		rm -f "$f"; pruned=$((pruned+1))
+	done
+	[ "$pruned" -gt 0 ] && note "removed $pruned old cached package(s)" || note "cache already minimal"
+
+	if command -v scraplinux-snapshot >/dev/null 2>&1; then
+		note "pruning old snapshots"
+		scraplinux-snapshot prune >/dev/null 2>&1 || :
+	fi
+
+	note "removing unused scraplinux-shell environments"
+	n=0
+	for d in /var/cache/scraplinux-shell/*/; do
+		[ -d "$d" ] || continue
+		[ -f "${d}.scraplinux-shell-keep" ] && continue
+		last=$(cat "${d}.scraplinux-shell-last-used" 2>/dev/null || echo 0)
+		now=$(date '+%s')
+		# Older than 7 days and not marked --keep.
+		[ $(( now - last )) -gt 604800 ] || continue
+		rm -rf "$d"; n=$((n+1))
+	done
+	[ "$n" -gt 0 ] && note "removed $n unused shell environment(s)"
+
+	note "done"
+}
+
+cmd_generations() {
+	command -v scraplinux-generation >/dev/null 2>&1 || \
+		{ echo "scraplinux-generation is not installed" >&2; exit 1; }
+	scraplinux-generation list
+}
+
+cmd_snapshots() {
+	command -v scraplinux-snapshot >/dev/null 2>&1 || \
+		{ echo "scraplinux-snapshot is not installed" >&2; exit 1; }
+	scraplinux-snapshot list
+}
+
+cmd_diff() {
+	command -v scraplinux-generation >/dev/null 2>&1 || \
+		{ echo "scraplinux-generation is not installed" >&2; exit 1; }
+	[ $# -gt 0 ] || { echo "usage: scraplinux diff <a> [b]" >&2; exit 1; }
+	scraplinux-generation diff "$@"
+}
+
+cmd_rollback() {
+	command -v scraplinux-generation >/dev/null 2>&1 || \
+		{ echo "scraplinux-generation is not installed" >&2; exit 1; }
+	if [ $# -gt 0 ]; then
+		scraplinux-generation switch "$1"
+		return
+	fi
+	# No id given: go back one. Rolling back should not need you to look up
+	# a number first - the common case is undoing the rebuild you just did.
+	cur=$(scraplinux-generation current 2>/dev/null)
+	prev=$(scraplinux-generation list 2>/dev/null | \
+		awk 'NR>1 && $1 ~ /^[*]?[0-9]+$/ { gsub(/[*]/,"",$1); print $1 }' | \
+		awk -v c="$cur" '$1 != c' | head -1)
+	[ -n "$prev" ] || { echo "no earlier generation to roll back to" >&2; exit 1; }
+	scraplinux-generation switch "$prev"
+}
+
+case "${1:-}" in
+rebuild) shift; exec scraplinux-rebuild "$@" ;;
+shell)   shift; exec scraplinux-shell "$@" ;;
+gc)      cmd_gc ;;
+generations|gens) cmd_generations ;;
+snapshots) cmd_snapshots ;;
+diff) shift; cmd_diff "$@" ;;
+rollback) shift; cmd_rollback "$@" ;;
+-h|--help|help|"") sed -n '2,10p' "$0" | sed 's/^# \?//' ;;
+*) echo "scraplinux: unknown command '$1' (see 'scraplinux help')" >&2; exit 1 ;;
+esac

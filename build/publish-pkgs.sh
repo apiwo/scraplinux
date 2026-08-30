@@ -1,11 +1,11 @@
 #!/bin/sh
-# publish-pkgs.sh - copy the built binary repositories into the pkg-arctic
+# publish-pkgs.sh - copy the built binary repositories into the pkg-scraplinux
 # checkout, reindex them, and regenerate the directory listings.
 #
-#   build/publish-pkgs.sh [checkout]     default /home/apiwo/arctic-build/src-extra/arctic-linux-pkgs
+#   build/publish-pkgs.sh [checkout]     default /home/apiwo/scraplinux-build/src-extra/scraplinux-pkgs
 #
-# The site is a plain static tree: ALL/<repo>/<arch>/<pkg>.alpmz plus an
-# INDEX alpm fetches, and an index.html per directory because GitHub Pages
+# The site is a plain static tree: ALL/<repo>/<arch>/<pkg>.scrapsz plus an
+# INDEX scraps fetches, and an index.html per directory because GitHub Pages
 # does not generate listings of its own. Both are written from what is
 # actually in the tree, never from a list kept somewhere else - a repository
 # advertising a package it does not host is worse than not advertising it,
@@ -18,9 +18,9 @@
 
 set -eu
 
-B=${ARCTIC_BUILD:-/home/apiwo/arctic-build}
-TREE=${ARCTIC_TREE:-/home/apiwo/arctic}
-SITE=${1:-$B/src-extra/arctic-linux-pkgs}
+B=${SCRAPLINUX_BUILD:-/home/apiwo/scraplinux-build}
+TREE=${SCRAPLINUX_TREE:-/home/apiwo/scraplinux}
+SITE=${1:-$B/src-extra/scraplinux-pkgs}
 ARCH=x86_64
 
 # The binding constraint here is not GitHub's raw 100 MiB push limit - this
@@ -38,16 +38,16 @@ MAXSIZE=$((25*1024*1024))
 REPOS="main extra base kernels profile nonfree alt-nonfree multilib fix"
 
 # The index is signed when the publishing machine holds the key. It is not in
-# any repository and never will be - see skel/etc/alpm/keys/README. Publishing
+# any repository and never will be - see skel/etc/scraps/keys/README. Publishing
 # without it is allowed, because a mirror can be rebuilt on a machine that has
 # no business holding the key, but it says so rather than quietly shipping an
 # index nobody can check.
-ALPM_SIGN_KEY=${ALPM_SIGN_KEY:-/home/apiwo/arctic-keys/arctic-pkg.sec}
-if [ -f "$ALPM_SIGN_KEY" ]; then
-	export ALPM_SIGN_KEY
+SCRAPS_SIGN_KEY=${SCRAPS_SIGN_KEY:-/home/apiwo/scraplinux-keys/scraplinux-pkg.sec}
+if [ -f "$SCRAPS_SIGN_KEY" ]; then
+	export SCRAPS_SIGN_KEY
 else
-	echo "$(basename "$0"): no signing key at $ALPM_SIGN_KEY - indexes will be unsigned" >&2
-	unset ALPM_SIGN_KEY
+	echo "$(basename "$0"): no signing key at $SCRAPS_SIGN_KEY - indexes will be unsigned" >&2
+	unset SCRAPS_SIGN_KEY
 fi
 
 
@@ -86,7 +86,7 @@ for r in $REPOS; do
 	# ~90-99 MiB kernel packages ended up committed and broke every
 	# Cloudflare Pages deploy afterward, silently, since nothing here ever
 	# went back and removed them) would otherwise sit in the tree forever.
-	for f in "$dst"/*.alpmz; do
+	for f in "$dst"/*.scrapsz; do
 		[ -f "$f" ] || continue
 		b=$(basename "$f")
 		if [ ! -f "$src/$b" ]; then
@@ -96,7 +96,7 @@ for r in $REPOS; do
 		fi
 	done
 	n=0; big=0
-	for f in "$src"/*.alpmz; do
+	for f in "$src"/*.scrapsz; do
 		[ -f "$f" ] || continue
 		sz=$(wc -c <"$f")
 		if [ "$sz" -ge "$MAXSIZE" ]; then
@@ -109,15 +109,15 @@ for r in $REPOS; do
 		# client holding the older index: it fetches the new package, checks
 		# it against the old checksum and refuses to install it - which is
 		# exactly how an install died halfway through the base system after
-		# alpm was rebuilt twice as 1.2.5-1. Bump the release instead.
-		# ARCTIC_REPUBLISH=yes is for a mirror being rebuilt from scratch,
+		# scraps was rebuilt twice as 1.2.5-1. Bump the release instead.
+		# SCRAPLINUX_REPUBLISH=yes is for a mirror being rebuilt from scratch,
 		# where nothing has been handed out yet.
 		if [ -f "$dst/$(basename "$f")" ] && ! cmp -s "$f" "$dst/$(basename "$f")"; then
-			if [ "${ARCTIC_REPUBLISH:-no}" != yes ]; then
+			if [ "${SCRAPLINUX_REPUBLISH:-no}" != yes ]; then
 				echo "publish-pkgs.sh: $(basename "$f") has already been published with different contents." >&2
 				echo "  A release is what a client's index refers to; changing what it points at" >&2
 				echo "  makes every stale index fatal. Bump the release and build again, or set" >&2
-				echo "  ARCTIC_REPUBLISH=yes if this mirror has never been handed out." >&2
+				echo "  SCRAPLINUX_REPUBLISH=yes if this mirror has never been handed out." >&2
 				exit 1
 			fi
 			note "$r: republished $(basename "$f") with different contents"
@@ -126,8 +126,8 @@ for r in $REPOS; do
 		n=$((n+1))
 	done
 	# The fix repository carries one file that is not a package and not an
-	# index: without FIXES beside them, its .alpmz files are just two ordinary
-	# packages and "alpm system fix" has nothing to read.
+	# index: without FIXES beside them, its .scrapsz files are just two ordinary
+	# packages and "scraps system fix" has nothing to read.
 	if [ -f "$src/FIXES" ]; then
 		cmp -s "$src/FIXES" "$dst/FIXES" 2>/dev/null || cp -f "$src/FIXES" "$dst/"
 	fi
@@ -138,12 +138,12 @@ done
 step "reindexing"
 for r in $REPOS; do
 	d="$SITE/ALL/$r"
-	if ls "$d/$ARCH"/*.alpmz >/dev/null 2>&1; then
-		sh "$TREE/alpm/alpm-repo" gen "$d" "$ARCH" >/dev/null
+	if ls "$d/$ARCH"/*.scrapsz >/dev/null 2>&1; then
+		sh "$TREE/scraps/scraps-repo" gen "$d" "$ARCH" >/dev/null
 		printf '   %-12s %s package(s) indexed\n' "$r" "$(grep -vc '^#' "$d/$ARCH/INDEX")"
 	else
 		{
-			printf '# Arctic Linux %s repository index\n' "$r"
+			printf '# ScrapLinux %s repository index\n' "$r"
 			printf '# format\t2\n# generated\t%s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
 			printf '# fields\tname version release arch dlsize isize sha256 deps desc\n'
 		} >"$d/$ARCH/INDEX"
@@ -151,9 +151,9 @@ for r in $REPOS; do
 		# An empty repository is still a repository, and it was the only
 		# kind shipping an index nobody could check - which is exactly what
 		# a machine with sig = required would refuse.
-		if [ -n "${ALPM_SIGN_KEY:-}" ]; then
+		if [ -n "${SCRAPS_SIGN_KEY:-}" ]; then
 			rm -f "$d/$ARCH/INDEX.sig"
-			signify -S -s "$ALPM_SIGN_KEY" -m "$d/$ARCH/INDEX" \
+			signify -S -s "$SCRAPS_SIGN_KEY" -m "$d/$ARCH/INDEX" \
 				-x "$d/$ARCH/INDEX.sig" >/dev/null
 		fi
 		printf '   %-12s empty\n' "$r"
@@ -184,13 +184,13 @@ listing() {
 </head>
 <body>
 <nav class="topbar">
-  <a href="https://arctic-linux.apiwow.net">main</a>
-  <a href="https://arctic-docs.apiwow.net">docs</a>
-  <a href="https://pkg-arctic.apiwow.net">packages</a>
-  <a href="https://ports-arctic.apiwow.net">ports</a>
-  <a href="https://arctic-releases.apiwow.net">releases</a>
-  <a href="https://github.com/apiwo/arctic-linux">github</a>
-  <a href="https://codeberg.org/apiwo/arctic-linux">codeberg</a>
+  <a href="https://scraplinux.apiwow.net">main</a>
+  <a href="https://scraplinux-docs.apiwow.net">docs</a>
+  <a href="https://pkg-scraplinux.apiwow.net">packages</a>
+  <a href="https://ports-scraplinux.apiwow.net">ports</a>
+  <a href="https://scraplinux-releases.apiwow.net">releases</a>
+  <a href="https://github.com/apiwo/scraplinux">github</a>
+  <a href="https://codeberg.org/apiwo/scraplinux">codeberg</a>
 </nav>
 <div class="wrap">
   <header class="hero" style="padding:28px 0 8px;">
@@ -216,7 +216,7 @@ EOF
     </table>
   </section>
   <footer>
-    <p>Arctic Linux — <a href="https://github.com/apiwo/arctic-linux">source on GitHub</a></p>
+    <p>ScrapLinux — <a href="https://github.com/apiwo/scraplinux">source on GitHub</a></p>
   </footer>
 </div>
 </body>
@@ -226,11 +226,11 @@ EOF
 }
 
 step "writing directory listings"
-listing "$SITE/ALL" "arctic-linux/ALL/"
+listing "$SITE/ALL" "scraplinux/ALL/"
 for r in $REPOS $BIGREPO; do
 	[ -d "$SITE/ALL/$r" ] || continue
-	listing "$SITE/ALL/$r" "arctic-linux/ALL/$r/"
-	[ -d "$SITE/ALL/$r/$ARCH" ] && listing "$SITE/ALL/$r/$ARCH" "arctic-linux/ALL/$r/$ARCH/"
+	listing "$SITE/ALL/$r" "scraplinux/ALL/$r/"
+	[ -d "$SITE/ALL/$r/$ARCH" ] && listing "$SITE/ALL/$r/$ARCH" "scraplinux/ALL/$r/$ARCH/"
 done
 note "listings written"
 

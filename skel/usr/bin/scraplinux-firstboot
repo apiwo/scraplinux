@@ -1,0 +1,24 @@
+#!/bin/sh
+# scraplinux-firstboot - shown once, the first time a finished install boots.
+# Also usable by hand: scraplinux-firstboot
+# shellcheck shell=sh disable=SC2039
+
+if [ -t 1 ]; then
+	R=$(printf '\033[0m'); B=$(printf '\033[1m')
+	TEAL=$(printf '\033[38;5;44m'); SNOW=$(printf '\033[38;5;231m')
+	GREY=$(printf '\033[38;5;245m')
+else
+	R= ; B= ; TEAL= ; SNOW= ; GREY=
+fi
+
+# No mascot. A first login is not the moment for one, any more than a
+# failed install was - see bail() for the same call made the other way.
+if [ "${1:-}" != "-q" ]; then
+	rel=/etc/scraplinux-release
+	k=$(sed -n 's/^KERNEL=//p' "$rel" 2>/dev/null)
+	printf '\n  %sScrapLinux%s   %skernel%s %s   %spackages%s %s installed\n' \
+		"$TEAL$B" "$R" "$GREY" "$R" "${k:-$(uname -r)}" \
+		"$GREY" "$R" "$(ls -1 /var/lib/scraps/local 2>/dev/null | wc -l | tr -d ' ')"
+	printf '  %sscraps%s to install things, %sservice%s to run them, %sdoas%s for root.\n\n' \
+		"$SNOW" "$R" "$SNOW" "$R" "$SNOW" "$R"
+fi

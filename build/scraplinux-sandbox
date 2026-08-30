@@ -1,0 +1,177 @@
+#!/bin/sh
+# scraplinux-sandbox - run a build command with the host filesystem read-only.
+#
+# WHY THIS EXISTS
+#   ScrapLinux's glibc is configured with slibdir=/usr/lib so the target gets a
+#   merged-/usr layout. If any recipe's "make install" runs without DESTDIR, it
+#   writes that glibc straight into the *host's* /usr/lib, and every dynamically
+#   linked program on the machine stops working. That happened once. It is not
+#   allowed to happen again, and a rule in a README is not good enough - the
+#   filesystem has to refuse.
+#
+#   So every build runs in here. The whole host is bind-mounted read-only; only
+#   the build tree, the source tree and /tmp are writable. A recipe that forgets
+#   DESTDIR now fails with EROFS instead of taking the machine down.
+#
+# USAGE
+#   scraplinux-sandbox <command> [args...]
+#   scraplinux-sandbox --check              prove the sandbox actually holds
+#
+#   SCRAPLINUX_BUILD   writable build tree   (default /home/apiwo/scraplinux-build)
+#   SCRAPLINUX_TREE    writable source tree  (default /home/apiwo/scraplinux)
+#
+# WITHOUT BUBBLEWRAP
+#   bwrap is not a hard requirement of the build - a host without it (an
+#   old kernel with no unprivileged user namespaces, a container that
+#   already can't nest one, whatever) can still build ScrapLinux. Set
+#   SCRAPLINUX_UNSANDBOXED=i-accept-the-risk and this script will run the
+#   command directly, with a warning, instead of refusing. Nothing else
+#   changes: build-rootfs.sh and friends still only check for
+#   SCRAPLINUX_SANDBOX=1, which this sets either way.
+#
+#   That switch is for a human who has read the WHY THIS EXISTS note above
+#   and decided the risk is theirs to take on their own machine. An agent
+#   building on someone else's behalf should not flip it on its own
+#   initiative - ask first, the same as any other unsandboxed build.
+#
+# shellcheck shell=sh
+
+set -u
+
+: "${SCRAPLINUX_BUILD:=/home/apiwo/scraplinux-build}"
+: "${SCRAPLINUX_TREE:=/home/apiwo/scraplinux}"
+
+HAVE_BWRAP=1
+command -v bwrap >/dev/null 2>&1 || HAVE_BWRAP=0
+
+if [ "$HAVE_BWRAP" = 0 ]; then
+	if [ "${SCRAPLINUX_UNSANDBOXED:-}" != "i-accept-the-risk" ]; then
+		echo "scraplinux-sandbox: bubblewrap (bwrap) is not installed" >&2
+		echo "  without it a build can write to the host, which is how the host" >&2
+		echo "  libc got replaced last time. Refusing to run unsandboxed." >&2
+		echo "  Install bubblewrap, or if you understand the risk and accept it" >&2
+		echo "  on this machine, set SCRAPLINUX_UNSANDBOXED=i-accept-the-risk." >&2
+		exit 1
+	fi
+	echo "scraplinux-sandbox: WARNING - no bubblewrap, running UNSANDBOXED" >&2
+	echo "  a recipe that forgets DESTDIR can overwrite this host's own libc." >&2
+fi
+
+mkdir -p "$SCRAPLINUX_BUILD" "$SCRAPLINUX_BUILD/tmp"
+
+# --ro-bind / / makes the entire host read-only. Everything writable is listed
+# explicitly below, and nothing outside those paths can be modified.
+sandbox() {
+	if [ "$HAVE_BWRAP" = 1 ]; then
+		bwrap \
+			--ro-bind / / \
+			--dev /dev \
+			--proc /proc \
+			--tmpfs /run \
+			--bind "$SCRAPLINUX_BUILD" "$SCRAPLINUX_BUILD" \
+			--bind "$SCRAPLINUX_TREE" "$SCRAPLINUX_TREE" \
+			--bind "$SCRAPLINUX_BUILD/tmp" /tmp \
+			--unshare-pid \
+			--unshare-uts \
+			--unshare-ipc \
+			--cap-drop CAP_SYS_ADMIN \
+			--cap-drop CAP_SYS_MODULE \
+			--die-with-parent \
+			--new-session \
+			--setenv TMPDIR /tmp \
+			--setenv SCRAPLINUX_SANDBOX 1 \
+			--setenv SCRAPLINUX_BUILD "$SCRAPLINUX_BUILD" \
+			--setenv SCRAPLINUX_TREE "$SCRAPLINUX_TREE" \
+			--chdir "$SCRAPLINUX_BUILD" \
+			"$@"
+	else
+		# No isolation at all here - this only runs after the explicit
+		# SCRAPLINUX_UNSANDBOXED opt-in above. Just set what build-rootfs.sh and
+		# friends check for and run in place.
+		( cd "$SCRAPLINUX_BUILD" && \
+		  TMPDIR="$SCRAPLINUX_BUILD/tmp" SCRAPLINUX_SANDBOX=1 \
+		  SCRAPLINUX_BUILD="$SCRAPLINUX_BUILD" SCRAPLINUX_TREE="$SCRAPLINUX_TREE" \
+		  "$@" )
+	fi
+}
+
+if [ "${1:-}" = "--check" ]; then
+	if [ "$HAVE_BWRAP" = 0 ]; then
+		printf 'no bubblewrap on this host - running SCRAPLINUX_UNSANDBOXED, nothing to check.\n'
+		printf 'there is no isolation: a build can write anywhere on this machine.\n'
+		exit 1
+	fi
+	printf 'checking that the sandbox actually holds...\n\n'
+	fail=0
+
+	printf '  %-46s' "host /usr/lib is read-only"
+	if sandbox /bin/sh -c 'touch /usr/lib/.scraplinux-sandbox-probe 2>/dev/null' ; then
+		printf 'FAIL - it is writable\n'; fail=1
+		rm -f /usr/lib/.scraplinux-sandbox-probe
+	else
+		printf 'ok\n'
+	fi
+
+	printf '  %-46s' "host /etc is read-only"
+	if sandbox /bin/sh -c 'touch /etc/.scraplinux-sandbox-probe 2>/dev/null'; then
+		printf 'FAIL - it is writable\n'; fail=1
+		rm -f /etc/.scraplinux-sandbox-probe
+	else
+		printf 'ok\n'
+	fi
+
+	printf '  %-46s' "host /lib64 is read-only"
+	if sandbox /bin/sh -c 'touch /lib64/.scraplinux-sandbox-probe 2>/dev/null'; then
+		printf 'FAIL - it is writable\n'; fail=1
+		rm -f /lib64/.scraplinux-sandbox-probe
+	else
+		printf 'ok\n'
+	fi
+
+	printf '  %-46s' "the build tree IS writable"
+	if sandbox /bin/sh -c 'touch "$SCRAPLINUX_BUILD/.probe" && rm -f "$SCRAPLINUX_BUILD/.probe"' \
+		2>/dev/null; then printf 'ok\n'; else printf 'FAIL\n'; fail=1; fi
+
+	printf '  %-46s' "the network works (sources can be fetched)"
+	if sandbox /bin/sh -c 'command -v curl >/dev/null' 2>/dev/null; then
+		printf 'ok\n'; else printf 'FAIL\n'; fail=1; fi
+
+	printf '  %-46s' "a stray install to /usr/lib fails, not succeeds"
+	out=$(sandbox /bin/sh -c 'cp /bin/true /usr/lib/libc.so.6 2>&1' 2>&1)
+	case "$out" in
+	*"Read-only file system"*|*"Permission denied"*) printf 'ok\n' ;;
+	*) printf 'FAIL - got: %s\n' "$out"; fail=1 ;;
+	esac
+
+	# The read-only bind above is a mount flag, not a permission - a process
+	# with CAP_SYS_ADMIN could remount it read-write from the inside and then
+	# write straight through to the real host file, no EROFS in the way at
+	# all. Dropping that one capability is what closes it, and it matters
+	# most on this machine specifically, since builds run as real root here -
+	# an unprivileged user gets this for free from bwrap's user namespace
+	# regardless, but root does not unless the capability is dropped.
+	#
+	# CAP_SYS_ADMIN and CAP_SYS_MODULE, not "ALL": a build legitimately needs
+	# CAP_CHOWN/CAP_FOWNER/CAP_DAC_OVERRIDE to unpack a tarball and write
+	# into a tree it does not own, and dropping everything turned every
+	# source build into a wall of "Can't set user=1000/group=1000" and
+	# "Can't unlink already-existing object" before it compiled a line.
+	printf '  %-46s' "remounting /usr/lib read-write is refused"
+	out=$(sandbox /bin/sh -c 'mount -o remount,rw /usr/lib 2>&1' 2>&1)
+	case "$out" in
+	*"Operation not permitted"*|*"permission denied"*|*"Permission denied"*) printf 'ok\n' ;;
+	"") printf 'FAIL - the remount had no error output (may have succeeded)\n'; fail=1 ;;
+	*) printf 'FAIL - got: %s\n' "$out"; fail=1 ;;
+	esac
+
+	printf '\n'
+	if [ "$fail" = 0 ]; then
+		printf 'the sandbox holds. builds cannot touch the host.\n'
+		exit 0
+	fi
+	printf 'the sandbox does NOT hold - do not build until this is fixed.\n'
+	exit 1
+fi
+
+[ $# -gt 0 ] || { echo "usage: scraplinux-sandbox <command> [args...]" >&2; exit 1; }
+sandbox "$@"

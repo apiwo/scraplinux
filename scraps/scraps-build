@@ -1,0 +1,692 @@
+#!/bin/sh
+# scraps-build - turn an ScrapLinux port recipe into an .scrapsz binary package
+#
+# .scrapsz is the ScrapLinux Package Management Zip: a tar.xz archive.
+#
+# A recipe is a POSIX sh fragment. Required: name version release desc.
+# Optional: url license arch depend makedepend source sha256 options
+# Functions: prepare() build() check() package()
+#
+# Inside those functions you get:
+#   $srcdir   unpacked sources
+#   $pkgdir   staging root - install here, this becomes the package payload
+#   $JOBS     parallel job count
+#
+# shellcheck shell=sh disable=SC2039,SC2154
+
+set -eu
+
+for p in /usr/lib/scraps/libscraps.sh ./libscraps.sh "$(dirname "$0")/libscraps.sh"; do
+	[ -f "$p" ] && { . "$p"; break; }
+done
+[ -n "${SCRAPS_VERSION:-}" ] || { echo "scraps-build: cannot locate libscraps.sh" >&2; exit 1; }
+
+recipe=${1:-recipe}
+[ -f "$recipe" ] || die "no such recipe: $recipe"
+recipe=$(cd "$(dirname "$recipe")" && printf '%s/%s' "$(pwd)" "$(basename "$recipe")")
+
+# Captured before PATH gains $SCRAPS_SYSROOT/usr/bin below, and used for every
+# rm/mkdir scraps-build does of its own bookkeeping from here on (never for
+# anything a recipe's build()/package() does - those should see whatever the
+# recipe's own build system finds on PATH). The sysroot's own coreutils are
+# dynamically linked and this early nothing has pointed LD_LIBRARY_PATH at
+# them yet - deliberately, see the LD_LIBRARY_PATH comment further down - so
+# calling `rm`/`mkdir` bare here can resolve to a sysroot binary running
+# without its own runtime libraries and misbehaving in a way that has nothing
+# to do with what it was actually asked to do ("rm: invalid option -- 'r'").
+_HOST_RM=$(command -v rm)
+_HOST_MKDIR=$(command -v mkdir)
+_HOST_BASENAME=$(command -v basename)
+_HOST_LN=$(command -v ln)
+_HOST_SED=$(command -v sed)
+_HOST_DIRNAME=$(command -v dirname)
+_HOST_TAR=$(command -v tar)
+_HOST_CP=$(command -v cp)
+_HOST_INSTALL=$(command -v install)
+_HOST_CHMOD=$(command -v chmod)
+_HOST_DU=$(command -v du)
+_HOST_CUT=$(command -v cut)
+export _HOST_TAR _HOST_CP _HOST_INSTALL _HOST_CHMOD
+
+: "${SCRAPS_BUILDROOT:=$SCRAPS_CACHE/build}"
+OUT="$SCRAPS_BUILDROOT/out"
+
+# The build sysroot: everything already built, unpacked into one tree that
+# later builds compile and link against.
+#
+# Without it a build only ever saw the *host's* headers and libraries, so a
+# package could not use one ScrapLinux had just produced. libxcb is the clearest
+# case - it needs the XML descriptions out of xcb-proto, and with xcb-proto
+# built as a package but invisible, c_client.py got no input file and every
+# generated source failed with "IndexError: list index out of range". It also
+# means anything that did build was linked against whatever the host happened
+# to have installed, which is not what ends up on an ScrapLinux system.
+: "${SCRAPS_SYSROOT:=$SCRAPS_BUILDROOT/sysroot}"
+# The source cache has to exist before anything is downloaded into it.
+mkdir -p "$OUT" "$SCRAPS_CACHE/src" "$SCRAPS_CACHE/pkg"
+
+# glibc/linux-headers headers, specifically - not the rest of the sysroot
+# mechanism above, which only ever holds what an scraps-build session itself
+# just packaged. On a real install (`scraps add -s <pkg>`, the whole point of
+# a source-based package manager) glibc was never "just built this
+# session" - it came with the base tarball - so $SCRAPS_SYSROOT/usr/include
+# had no C standard headers in it at all, and the unconditional
+# --sysroot=$SCRAPS_SYSROOT below (clang treats --sysroot as a full replacement
+# for the default header search, not an addition to it) took stdlib.h off
+# the table for anything doing its own C compilation - which is common
+# inside a Rust build: cc-rs-based crates that bundle a small C library
+# (oniguruma for bat's syntax highlighting, libgit2-sys when it is told not
+# to use the build host's own copy - see bat/eza's recipes) failed with
+# "fatal error: 'stdlib.h' file not found" before a single object file
+# compiled, on a totally ordinary `scraps add -s bat`.
+#
+# Only done outside scraplinux-sandbox (SCRAPLINUX_SANDBOX unset): inside the
+# sandbox, /usr/include is the *build host's* real headers bind-mounted in
+# read-only, not ScrapLinux's own - symlinking those into the sysroot would be
+# exactly the host-contamination bug this sysroot mechanism exists to
+# prevent. Inside scraplinux-chroot, or on a real installed system running this
+# directly, /usr/include genuinely is ScrapLinux's own glibc, the same one
+# every other binary on the machine already links against - safe to trust.
+if [ "${SCRAPLINUX_SANDBOX:-0}" != "1" ] && [ ! -e "$SCRAPS_SYSROOT/usr/include" ]; then
+	mkdir -p "$SCRAPS_SYSROOT/usr"
+	ln -s /usr/include "$SCRAPS_SYSROOT/usr/include"
+fi
+# Same reasoning, for pkg-config: a dependency installed normally with
+# `scraps add` (cairo, glib, pango, ...) is real, present, and correct on a
+# real system - but PKG_CONFIG_PATH below only ever points inside
+# $SCRAPS_SYSROOT, which (like usr/include above) only holds what this same
+# scraps-build session has itself produced. A source build needing an
+# ordinarily-installed library - librsvg needing cairo, installed the
+# normal way - failed with "The system library `cairo` required by crate
+# `cairo-sys-rs` was not found", even though `pkg-config --libs cairo` from
+# an ordinary shell on the same machine worked perfectly.
+if [ "${SCRAPLINUX_SANDBOX:-0}" != "1" ] && [ ! -e "$SCRAPS_SYSROOT/usr/lib/pkgconfig" ]; then
+	mkdir -p "$SCRAPS_SYSROOT/usr/lib" "$SCRAPS_SYSROOT/usr/share"
+	ln -s /usr/lib/pkgconfig "$SCRAPS_SYSROOT/usr/lib/pkgconfig"
+	[ -e "$SCRAPS_SYSROOT/usr/share/pkgconfig" ] || ln -s /usr/share/pkgconfig "$SCRAPS_SYSROOT/usr/share/pkgconfig"
+fi
+
+# ---------------------------------------------------------------- ScrapLinux CFLAGS
+# ScrapLinux is an LLVM distribution: clang, lld and the llvm-* binutils, with
+# libc++ over libstdc++. glibc is the only GNU component in the system and
+# there is no second toolchain - a package built by gcc is not an ScrapLinux
+# package.
+#
+# So no silent fallback to whatever "cc" happens to be. Falling back looked
+# helpful and was the opposite: on a machine with gcc installed, every build
+# quietly produced gcc output that then linked against libstdc++ instead of
+# libc++, and nothing said so. Setting CC explicitly still works - that is
+# how a cross or bootstrap build overrides it - but the default is clang or
+# nothing.
+# Installed clang is not necessarily clang on PATH. Gentoo keeps it in
+# /usr/lib/llvm/<major>/bin and Debian in /usr/lib/llvm-<major>/bin, and
+# neither is linked into /usr/bin until a slot is selected - so a machine with
+# a complete LLVM toolchain still failed every source build with
+# "clang: not found". Look in the slot directories before concluding it is
+# missing, newest first.
+if ! command -v clang >/dev/null 2>&1; then
+	_best= _bestv=0
+	for _d in /usr/lib/llvm/*/bin /usr/lib/llvm-*/bin /usr/local/lib/llvm/*/bin; do
+		[ -x "$_d/clang" ] || continue
+		_v=${_d%/bin}; _v=${_v##*[!0-9]}
+		[ -n "$_v" ] || _v=0
+		[ "$_v" -gt "$_bestv" ] 2>/dev/null || continue
+		_bestv=$_v; _best=$_d
+	done
+	if [ -n "$_best" ]; then
+		PATH="$_best:$PATH"; export PATH
+	fi
+	unset _best _bestv _d _v
+fi
+
+export CC="${CC:-clang}" CXX="${CXX:-clang++}"
+export LD="${LD:-ld.lld}"
+
+# A build machine without clang cannot produce ScrapLinux packages, and saying so
+# is the point - but it has to be possible to say "yes, I know" while the
+# toolchain is being sorted out, or the distribution cannot be rebuilt at all
+# to fix the very thing that is wrong. SCRAPLINUX_ALLOW_GCC is that switch, it is
+# loud, and it is not for ordinary use: the result links against libstdc++
+# and libgcc rather than libc++, which is not what an ScrapLinux package is.
+if ! command -v "$CC" >/dev/null 2>&1 && [ "${SCRAPLINUX_ALLOW_GCC:-}" = "i-know-this-is-not-scraplinux" ]; then
+	CC=cc; CXX=c++; LD=ld
+	export CC CXX LD
+	warn "building with $(cc --version 2>/dev/null | head -1) - NOT an LLVM build"
+fi
+for _t in ar nm ranlib strip objcopy objdump; do
+	_u=$(printf '%s' "$_t" | tr '[:lower:]' '[:upper:]')
+	if command -v "llvm-$_t" >/dev/null 2>&1; then
+		eval "export $_u=\${$_u:-llvm-$_t}"
+	else
+		eval "export $_u=\${$_u:-$_t}"
+	fi
+done
+# A build's HOME has to be inside the build tree, on the same filesystem as
+# its temporary files. Left pointing at /root, tools that write a cache there
+# fail in two different ways: the sandbox has /root read-only, and anything
+# that builds a file under $TMPDIR and then renames it into the cache crosses
+# a filesystem boundary - harfbuzz's g-ir-scanner died on exactly that with
+# "OSError: [Errno 18] Invalid cross-device link". Same reason CARGO_HOME is
+# set for the Rust recipes.
+#
+# This has to run before PATH gains $SCRAPS_SYSROOT/usr/bin below: mkdir here
+# is scraps-build's own bookkeeping, not part of any package build, and calling
+# the sysroot's own (dynamically linked) mkdir this early - before
+# LD_LIBRARY_PATH points anywhere near it, which does not happen until right
+# before build() runs, deliberately, so it does not also reach curl - hits
+# the same class of bug as the "no grep" note further down: it loads without
+# its runtime libraries, and instead of a clean linker error it comes back
+# as toybox's applet dispatch resolving to the wrong applet entirely -
+# "mkdir: invalid option -- 'p'" from what turned out to be some other tool.
+export HOME="$SCRAPS_BUILDROOT/home"
+export XDG_CACHE_HOME="$HOME/.cache"
+export XDG_CONFIG_HOME="$HOME/.config"
+export XDG_DATA_HOME="$HOME/.local/share"
+mkdir -p "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME"
+
+export CFLAGS="${CFLAGS:--O2 -pipe -fstack-protector-strong -fno-plt}"
+export CXXFLAGS="${CXXFLAGS:-$CFLAGS}"
+if command -v ld.lld >/dev/null 2>&1; then
+	export LDFLAGS="${LDFLAGS:--fuse-ld=lld -Wl,-O1,--as-needed,-z,relro,-z,now}"
+else
+	export LDFLAGS="${LDFLAGS:--Wl,-O1,--as-needed,-z,relro,-z,now}"
+fi
+# Point every search path a build uses at the sysroot, ahead of the host's
+# own. -rpath-link, not -rpath: it tells the linker where to find the
+# dependencies of the libraries it is linking against, without recording the
+# build machine's paths into the binary that ships.
+if [ -d "$SCRAPS_SYSROOT/usr" ]; then
+	export PKG_CONFIG_PATH="$SCRAPS_SYSROOT/usr/lib/pkgconfig:$SCRAPS_SYSROOT/usr/share/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+	# cmake does not read PKG_CONFIG_PATH for find_package, so without this a
+	# cmake build cannot see anything ScrapLinux has built and either fails or -
+	# worse, and quietly - vendors its own copy. openexr shipped a second
+	# Imath that way, colliding with the imath package it already depends on.
+	export CMAKE_PREFIX_PATH="$SCRAPS_SYSROOT/usr${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
+	export ACLOCAL_PATH="$SCRAPS_SYSROOT/usr/share/aclocal${ACLOCAL_PATH:+:$ACLOCAL_PATH}"
+	_HOST_PATH=$PATH
+	# usr/local/bin too: meson (and anything else installed there instead of
+	# usr/bin) was invisible here, so it fell through to the host's own copy,
+	# which then crashes trying to link against this sysroot's incompatible
+	# glibc instead of running cleanly against the host's own.
+	export PATH="$SCRAPS_SYSROOT/usr/local/bin:$SCRAPS_SYSROOT/usr/bin:$PATH"
+	# --sysroot, not -isystem. -isystem is a plain search-path entry, so
+	# clang's driver put it ahead of the *implicit* c++/v1 path it adds for
+	# its own bundled libc++ - meaning libc++'s own <cctype> and <cmath>
+	# found the sysroot's plain <ctype.h>/<math.h> before libc++'s own
+	# wrapper of the same name and hit libc++'s own guard against exactly
+	# this: "<cctype> tried including <ctype.h> but didn't find libc++'s
+	# <ctype.h> header ... header search paths should contain the C++
+	# Standard Library headers before any C Standard Library." That is what
+	# qt6-svg's and qt6-shadertools's PCH failures actually were, and it
+	# would have hit every C++ package eventually - ninja and btop just got
+	# there first once BUILD_TESTING=OFF let them reach a real compile.
+	# --sysroot is clang's own answer to "point me at an alternate root": it
+	# slots the sysroot's C headers in after the compiler's own bundled
+	# libc++ headers instead of in front of them.
+	CFLAGS="--sysroot=$SCRAPS_SYSROOT $CFLAGS"
+	CXXFLAGS="--sysroot=$SCRAPS_SYSROOT $CXXFLAGS"
+	LDFLAGS="-L$SCRAPS_SYSROOT/usr/lib -Wl,-rpath-link,$SCRAPS_SYSROOT/usr/lib $LDFLAGS"
+	# Same missing-sysroot-entry problem as usr/include and
+	# usr/lib/pkgconfig above, at link time instead of compile time:
+	# --sysroot redirects ld's own default library search the same way it
+	# redirects the header search, and $SCRAPS_SYSROOT/usr/lib only ever
+	# holds what this scraps-build session itself produced. pkg-config
+	# correctly reports an ordinarily-installed library's flags (fixed
+	# above), but "ld.lld: error: unable to find library -lwlroots-0.20"
+	# followed anyway - pkg-config's own --libs output for most .pc files
+	# does not include an explicit -L/usr/lib (it is assumed to be a
+	# default search path), and --sysroot took that default away. An
+	# explicit -L to the real path fixes it without symlinking the whole
+	# directory - usr/lib has to stay a real, writable directory for the
+	# accumulation this sysroot exists for (packages built earlier in the
+	# same session), unlike usr/include and pkgconfig, which are pure
+	# read-only reference data.
+	[ "${SCRAPLINUX_SANDBOX:-0}" != "1" ] && LDFLAGS="-L/usr/lib $LDFLAGS"
+	# -B, not -L, for the C runtime objects.
+	#
+	# Scrt1.o and friends are found by the compiler driver, not through -L,
+	# so putting the 64-bit directory on the library path does not affect
+	# which one gets linked. On a multilib host /usr/lib/Scrt1.o is the
+	# 32-bit one; lld takes the output format from the first input that
+	# declares one, so any link that reaches it becomes elf32-i386 and then
+	# rejects crti.o and every object after it as "incompatible". -B is the
+	# switch that tells the driver where to look for those files first.
+	if [ -d /usr/lib64 ] && [ -f /usr/lib64/Scrt1.o ]; then
+		CFLAGS="-B/usr/lib64 $CFLAGS"
+		LDFLAGS="-B/usr/lib64 $LDFLAGS"
+		# CXXFLAGS does not get it. qt6-base built clean without any of this;
+		# qt6-svg and qt6-shadertools, the first C++/cmake packages built
+		# after this fix was added, failed with libc++'s <cmath> unable to
+		# find its own <math.h> - "header search paths are not configured
+		# properly" - which is libc++'s own diagnostic for exactly this: a
+		# -B directory shadowing clang's normal, implicit resource-relative
+		# discovery of its bundled c++/v1 headers. -B/usr/lib64 is only ever
+		# needed for the C-language autotools module link trap; C++ builds
+		# never hit that trap in the first place; and giving it to CXXFLAGS
+		# broke something -B was never meant to touch.
+		export CXXFLAGS="${CXXFLAGS:-}"
+		# -B on its own is not enough: it has to survive being forwarded
+		# through every build tool between the recipe and the actual clang
+		# invocation, and libtool's own link line for a `-module` target
+		# does not carry CFLAGS through at all - only what it recorded of
+		# LDFLAGS at configure time, which for some targets is nothing. One
+		# such module linked clean against a 64-bit crti.o *by full path*
+		# (proven with `file`) and still failed - because lld had already
+		# locked the output format from something earlier on the same line,
+		# reached the way clang finds crt objects it inserts itself: never
+		# through -L, always by searching its own driver paths plus
+		# LIBRARY_PATH. That variable is inherited by every subprocess
+		# regardless of what any one build tool decides to forward, which
+		# -B is not, so it is the fix that actually reaches every link.
+		export LIBRARY_PATH="/usr/lib64${LIBRARY_PATH:+:$LIBRARY_PATH}"
+	fi
+	export CFLAGS CXXFLAGS LDFLAGS
+fi
+
+# On a multilib build host /usr/lib is the *32-bit* library directory and the
+# 64-bit one is /usr/lib64. ScrapLinux installs to /usr/lib, so every .la file
+# records libdir=/usr/lib, and libtool puts -L/usr/lib on the link line when
+# it relinks at "make install" - ahead of the host's real 64-bit paths.
+#
+# What that finds there is /usr/lib/libc.so, a linker script beginning
+# OUTPUT_FORMAT(elf32-i386). lld obeys it, and every 64-bit object already on
+# the line becomes "incompatible with elf32-i386" - including the crt files
+# the compiler driver put there itself. libressl failed exactly this way and
+# it read as a libressl bug; it is not, and any autotools package with a
+# libtool dependency of its own can hit it. -m elf_x86_64 does not help: the
+# OUTPUT_FORMAT in the script wins over it.
+#
+# So the host's 64-bit directory goes on the line first - after the sysroot,
+# which still takes precedence over both.
+# The same trap, closed at the other end. Putting -L/usr/lib64 on the line
+# only helps while nothing gets in front of it, and libtool's own -L/usr/lib
+# does exactly that in some packages - libfm links, or rather does not, that
+# way. The sysroot is searched before any of them, so a libc.so *there*
+# settles it whatever order the rest arrives in. It is the host's own 64-bit
+# script, which is what these builds link against anyway.
+#
+# Every one of them, not just libc.so. lld takes the output format from the
+# first linker script it reads, so a single 32-bit script anywhere on the line
+# decides the whole link - and libfm went on failing with libc.so shimmed
+# because this host also has a 32-bit libbsd.so. Shimming one and not the
+# other only moves which package trips.
+if [ -d "$SCRAPS_SYSROOT/usr/lib" ]; then
+	# No grep, no od. This runs with $SCRAPS_SYSROOT/usr/bin already on PATH,
+	# where grep and sed are toybox symlinks, and reaching for either here
+	# killed scraps-build before it printed its first line. Shell built-ins
+	# only.
+	for _hl in /usr/lib/lib*.so; do
+		[ -f "$_hl" ] || continue
+		_hb=${_hl##*/}
+		[ -e "$SCRAPS_SYSROOT/usr/lib/$_hb" ] && continue
+		[ -f "/usr/lib64/$_hb" ] || continue
+		# A linker script is text; read a little of it and look for the
+		# 32-bit output format with a case pattern.
+		_head=$(head -c 300 "$_hl" 2>/dev/null) || continue
+		case "$_head" in
+		*"OUTPUT_FORMAT(elf32"*)
+			cp -f "/usr/lib64/$_hb" "$SCRAPS_SYSROOT/usr/lib/$_hb" 2>/dev/null || : ;;
+		esac
+	done
+	# And the C runtime objects, which are what actually decided it.
+	#
+	# lld takes the output format from the first input that declares one, and
+	# on a multilib host /usr/lib/Scrt1.o is the *32-bit* one. Anything that
+	# puts -L/usr/lib in front of the 64-bit directory - libtool does, in
+	# libfm and in any autotools package linking a module - reaches it first,
+	# lld sets the target to elf32-i386 from it, and then rejects crti.o and
+	# every object after as "incompatible with elf32-i386".
+	#
+	# Copied unconditionally when the sysroot has none: on a host with a
+	# /usr/lib64 at all, that is the copy these builds want, and testing the
+	# ELF class of the /usr/lib one needs a tool this cannot safely call.
+	for _co in Scrt1.o crt1.o crti.o crtn.o gcrt1.o rcrt1.o; do
+		[ -e "$SCRAPS_SYSROOT/usr/lib/$_co" ] && continue
+		[ -f "/usr/lib64/$_co" ] || continue
+		cp -f "/usr/lib64/$_co" "$SCRAPS_SYSROOT/usr/lib/$_co" 2>/dev/null || :
+	done
+fi
+
+# No grep here either, same reason as the loop above: with
+# $SCRAPS_SYSROOT/usr/bin on PATH ahead of everything else, "grep" can resolve
+# to the sysroot's own toybox symlink, and toybox's argv[0] dispatch outside
+# the environment it expects landed on the wrong applet entirely - "invalid
+# option -- 'q'" from what turned out to be iconv, not grep, silently failing
+# every build that reached this line once BUILD_TESTING=OFF let ninja and
+# btop compile far enough to need it.
+_lc_head=$(head -c 300 /usr/lib/libc.so 2>/dev/null) || _lc_head=""
+case "$_lc_head" in *"OUTPUT_FORMAT(elf32"*) _lc_32=1 ;; *) _lc_32=0 ;; esac
+if [ -e /usr/lib64/libc.so ] && [ "$_lc_32" = 1 ]; then
+	if [ -d "$SCRAPS_SYSROOT/usr" ]; then
+		# Behind the sysroot, which still answers first for anything ScrapLinux
+		# has built for itself.
+		LDFLAGS="-L$SCRAPS_SYSROOT/usr/lib -L/usr/lib64 ${LDFLAGS#-L$SCRAPS_SYSROOT/usr/lib }"
+	else
+		LDFLAGS="-L/usr/lib64 $LDFLAGS"
+	fi
+	export LDFLAGS
+fi
+
+export MAKEFLAGS="-j${SCRAPS_JOBS}"
+JOBS=$SCRAPS_JOBS
+export JOBS
+
+# SCRAPLINUX_NATIVE=1 tunes the build for this exact CPU. Source installs opt in.
+if [ "${SCRAPLINUX_NATIVE:-0}" = "1" ]; then
+	CFLAGS="$CFLAGS -march=native -mtune=native"
+	CXXFLAGS="$CXXFLAGS -march=native -mtune=native"
+	export CFLAGS CXXFLAGS
+fi
+
+# --------------------------------------------------------------- load the recipe
+name=""; version=""; release=1; desc=""; url=""; license="unknown"
+arch="${SCRAPS_ARCH:-x86_64}"; depend=""; makedepend=""; source=""; sha256=""
+options=""; provides=""; conflicts=""; replaces=""; backup=""; kind=""
+
+# shellcheck disable=SC1090
+. "$recipe"
+
+[ -n "$name" ]    || die "recipe has no name"
+[ -n "$version" ] || die "recipe has no version"
+[ -n "$desc" ]    || desc="$name"
+
+pkgbase="$name-$version-$release.$arch"
+srcdir="$SCRAPS_BUILDROOT/$name/src"
+pkgdir="$SCRAPS_BUILDROOT/$name/pkg"
+
+# pkgdir is exported; srcdir deliberately is not.
+#
+# "srcdir" is autoconf's own variable name for where a configure script's
+# sources live. Exporting ours puts a path autoconf never chose into the
+# environment of every configure script a recipe runs, and any of them that
+# re-exec a nested configure (vim's ./configure is a stub that runs
+# src/configure, which runs auto/configure) picks it up and looks for the
+# sources somewhere they are not. vim failed this way with no error at all:
+# configure produced empty output, the recipe's $(./configure --help) came
+# back blank, and set -e killed the build with nothing in the log.
+#
+# Recipes are sourced into this shell, so they still see $srcdir as an
+# ordinary variable - and subshells inherit it too. Only external programs
+# stop seeing it, which is exactly the point.
+export pkgdir
+
+# A source build needs a compiler and a make. Checked here, by name, with
+# the package that provides each - rather than letting the recipe fail
+# somewhere in its build() with "make: not found" and no indication that the
+# toolchain is simply not installed.
+_missing=""
+have "$CC" || _missing="$_missing $CC"
+have "$LD" || _missing="$_missing $LD"
+have make || have bmake || _missing="$_missing bmake"
+if [ -n "$_missing" ]; then
+	err "this system cannot build from source yet - missing:$_missing"
+	# It used to say "scraps ins base-devel". There is no base-devel package,
+	# so following the advice failed and left someone no better off. clang
+	# and lld come from llvm, which is a release asset in the big repository
+	# and wants about 1.2 GiB free to unpack.
+	printf '  %sScrapLinux builds with clang, lld and bmake. clang and lld are in llvm:%s\n' \
+		"$A_GREY" "$C_R" >&2
+	printf '  %s  scraps add llvm%s\n' "$A_GREY" "$C_R" >&2
+	printf '  %s  (about 1.2 GiB free is needed to unpack it)%s\n' "$A_GREY" "$C_R" >&2
+	exit 1
+fi
+
+# gcc being present is not an error - it is not what builds anything here.
+if have gcc && ! have clang; then
+	warn "gcc is installed but clang is not; ScrapLinux does not build with gcc"
+fi
+
+printf '\n'
+msg "Building $name $version-$release"
+info "compiler   $CC / $LD"
+info "flags      $CFLAGS"
+info "jobs       $JOBS"
+
+# Both trees, not just $pkgdir. A reused $srcdir carries every object file,
+# config.status and half-applied patch the last attempt left in it, and make
+# happily links yesterday's objects against today's flags: bzip2's shared
+# library failed with "recompile with -fPIC" against .o files that predated
+# the flag being passed at all, and a recipe that changed its source version
+# built the version still sitting on disk. Extraction is cheap - the
+# tarballs themselves are cached separately, under $SCRAPS_CACHE/src.
+"$_HOST_RM" -rf "$pkgdir" "$srcdir"
+"$_HOST_MKDIR" -p "$srcdir" "$pkgdir"
+
+# ------------------------------------------------------------------ get sources
+if [ -n "$source" ]; then
+	msg2 "retrieving sources"
+	i=0
+	for s in $source; do
+		i=$((i+1))
+		case "$s" in
+		*::*) fn=${s%%::*}; su=${s#*::} ;;
+		*)    su=$s; fn=$("$_HOST_BASENAME" "$s") ;;
+		esac
+		cache="$SCRAPS_CACHE/src/$fn"
+		case "$su" in
+		http://*|https://*|ftp://*)
+			if [ ! -s "$cache" ]; then
+				info "fetch $fn"
+				dl "$su" "$cache" || die "cannot fetch $su"
+			else
+				info "cached $fn"
+			fi
+			;;
+		git+*)
+			gu=${su#git+}
+			if [ ! -d "$cache" ]; then
+				info "clone $fn"
+				git clone --depth 1 "$gu" "$cache" || die "clone failed: $gu"
+			fi
+			"$_HOST_CP" -a "$cache" "$srcdir/" ; continue ;;
+		*)
+			cache="$("$_HOST_DIRNAME" "$recipe")/$su"
+			[ -e "$cache" ] || die "local source missing: $su" ;;
+		esac
+
+		# Verify against the recipe's checksum list, position by position.
+		want=$(printf '%s\n' $sha256 | "$_HOST_SED" -n "${i}p")
+		if [ -n "$want" ] && [ "$want" != "SKIP" ]; then
+			got=$(sha256 "$cache")
+			[ "$got" = "$want" ] || die "checksum mismatch for $fn
+  expected $want
+  got      $got"
+		fi
+
+		case "$fn" in
+		*.tar.gz|*.tgz|*.tar.xz|*.tar.bz2|*.tar.zst|*.tar)
+			info "unpack $fn"
+			( cd "$srcdir" && untar_src "$cache" . ) ;;
+		*.zip)
+			( cd "$srcdir" && unzip -q "$cache" ) ;;
+		*)
+			"$_HOST_CP" -a "$cache" "$srcdir/" ;;
+		esac
+	done
+fi
+
+# What a tarball actually unpacked into, whatever the recipe expected.
+#
+# A recipe says `cd "foo-1.2.3"` because that is what the filename implies,
+# and upstreams disagree constantly: a GitHub tag archive unpacks as
+# <repo>-<tag>, a Forgejo one as a bare <repo>, and some tarballs use a
+# different case or a suffix entirely. Guessing wrong gave "cd: foo-1.2.3:
+# No such file or directory" after a successful download, which reads like a
+# broken recipe rather than a naming mismatch.
+#
+# So: if the directory the recipe asks for is not there and exactly one
+# directory was unpacked, use that one. Exactly one - with several, there is
+# no safe guess and the original error is the honest answer.
+srcdir_fix() {
+	[ -d "$srcdir/$1" ] && return 0
+	_sf_n=0 _sf_d=""
+	for _sf_e in "$srcdir"/*/; do
+		[ -d "$_sf_e" ] || continue
+		_sf_n=$((_sf_n+1)); _sf_d=${_sf_e%/}
+	done
+	[ "$_sf_n" = 1 ] || return 1
+	"$_HOST_LN" -sfn "$("$_HOST_BASENAME" "$_sf_d")" "$srcdir/$1" 2>/dev/null || return 1
+	info "sources unpacked into $("$_HOST_BASENAME" "$_sf_d"), not $1 - linked"
+	return 0
+}
+
+# ---------------------------------------------------------------- build phases
+#
+# The recipe's own `cd` is what needs rescuing, and the recipe is already
+# sourced - so make `cd` inside a phase fall back to srcdir_fix when the
+# directory it names is missing. A recipe that cds somewhere legitimately
+# absent still fails, exactly as before; it just no longer fails because an
+# upstream renamed its tarball's top directory.
+cd() {
+	if [ $# -eq 1 ] && [ ! -d "$1" ] && [ ! -d "$srcdir/$1" ]; then
+		case "$1" in
+		/*|.|..|-) ;;
+		*) srcdir_fix "$1" || : ;;
+		esac
+	fi
+	command cd "$@"
+}
+
+cd "$srcdir"
+if command -v prepare >/dev/null 2>&1; then
+	msg2 "prepare()"; set -x; prepare; set +x
+fi
+cd "$srcdir"
+# Some builds do not just link against the sysroot, they *run* what they just
+# linked. gobject-introspection is the common one: g-ir-scanner compiles a
+# small program against the library being built and executes it to read the
+# types out. -rpath-link is a link-time answer and does nothing for that -
+# libxfce4ui stopped with "libstartup-notification-1.so.0: cannot open shared
+# object file" while the library sat in the sysroot the whole time.
+#
+# It goes on here rather than with the other environment settings because it
+# must not be in effect while sources are being fetched. Exported that early
+# it reaches curl, which then loads the sysroot's libressl against the host's
+# openssl.cnf and dies on "unknown module name: providers" - every download
+# failed with nothing to say why.
+if [ -d "$SCRAPS_SYSROOT/usr/lib" ]; then
+	export LD_LIBRARY_PATH="$SCRAPS_SYSROOT/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+
+if command -v build >/dev/null 2>&1; then
+	msg2 "build()"; set -x; build; set +x
+fi
+cd "$srcdir"
+if command -v check >/dev/null 2>&1 && [ "${SCRAPS_CHECK:-0}" = "1" ]; then
+	msg2 "check()"; set -x; check || { set +x; warn "tests failed"; }; set +x
+fi
+cd "$srcdir"
+command -v package >/dev/null 2>&1 || die "recipe has no package() function"
+msg2 "package()"
+set -x; package; set +x
+
+# Everything from here on is scraps-build's own bookkeeping - stripping,
+# .FILES, .PKGINFO - never a package's own build tooling, so there is no
+# reason left for any of it to run against the sysroot instead of the host.
+# Both PATH and LD_LIBRARY_PATH, not just one: LD_LIBRARY_PATH alone stops
+# a *captured* host binary from crashing against the sysroot's glibc, but a
+# bare name like `cut` or `du` still resolves through PATH to the sysroot's
+# own copy regardless - restoring PATH is what actually changes which
+# binary a plain, unqualified command name reaches from here on.
+[ -n "${_HOST_PATH:-}" ] && PATH=$_HOST_PATH
+export PATH
+unset LD_LIBRARY_PATH
+
+# --------------------------------------------------------------- tidy the payload
+msg2 "post-processing"
+case " $options " in
+*" !strip "*) ;;
+*)
+	find "$pkgdir" -type f -perm -u+x 2>/dev/null | while read -r f; do
+		case "$(head -c4 "$f" 2>/dev/null)" in
+		*ELF*) "$STRIP" --strip-unneeded "$f" 2>/dev/null || strip "$f" 2>/dev/null || : ;;
+		esac
+	done ;;
+esac
+
+# ScrapLinux ships mandoc, so man pages are stored uncompressed and .la files go.
+find "$pkgdir" -name '*.la' -delete 2>/dev/null || :
+find "$pkgdir" -name 'perllocal.pod' -delete 2>/dev/null || :
+"$_HOST_RM" -rf "$pkgdir/usr/share/info" 2>/dev/null || :
+
+isize=$(du -sk "$pkgdir" 2>/dev/null | cut -f1)
+isize=$(( ${isize:-0} * 1024 ))
+
+# ------------------------------------------------------------------- metadata
+cat >"$pkgdir/.PKGINFO" <<EOF
+# generated by scraps-build $SCRAPS_VERSION on $(date '+%Y-%m-%d %H:%M:%S')
+format = $SCRAPS_FORMAT
+name = $name
+version = $version
+release = $release
+arch = $arch
+desc = $desc
+url = $url
+license = $license
+isize = $isize
+builddate = $(date '+%s')
+builder = scraps-build $SCRAPS_VERSION
+EOF
+# kind=profile marks a package that installs a whole set and configures it.
+# scraps warns about those before it touches anything.
+[ -n "$kind" ] && printf 'kind = %s\n' "$kind" >>"$pkgdir/.PKGINFO"
+for d in $depend;    do printf 'depend = %s\n' "$d" >>"$pkgdir/.PKGINFO"; done
+for d in $makedepend;do printf 'makedepend = %s\n' "$d" >>"$pkgdir/.PKGINFO"; done
+for d in $provides;  do printf 'provides = %s\n' "$d" >>"$pkgdir/.PKGINFO"; done
+for d in $conflicts; do printf 'conflicts = %s\n' "$d" >>"$pkgdir/.PKGINFO"; done
+for d in $replaces;  do printf 'replaces = %s\n' "$d" >>"$pkgdir/.PKGINFO"; done
+for d in $backup;    do printf 'backup = %s\n' "$d" >>"$pkgdir/.PKGINFO"; done
+
+# An .INSTALL next to the recipe becomes the package's hook script.
+# LD_LIBRARY_PATH is cleared for both calls below: this runs after build()
+# has already pointed it at the sysroot, and a host binary loaded against
+# ScrapLinux's own glibc instead of the host's is exactly as broken as running
+# a sysroot binary without it - see the same fix in scraplinux-base's recipe.
+if [ -f "$(LD_LIBRARY_PATH= "$_HOST_DIRNAME" "$recipe")/install" ]; then
+	cp "$(LD_LIBRARY_PATH= "$_HOST_DIRNAME" "$recipe")/install" "$pkgdir/.INSTALL"
+fi
+
+( cd "$pkgdir" && find . -type f -o -type l ) | sed 's|^\.||' | \
+	grep -v '^/\.\(PKGINFO\|INSTALL\|FILES\)$' | sort >"$pkgdir/.FILES"
+
+# ---------------------------------------------------------------------- archive
+msg2 "creating $pkgbase.scrapsz"
+tarball="$OUT/$pkgbase.scrapsz"
+rm -f "$tarball"
+if have bsdtar; then
+	( cd "$pkgdir" && bsdtar --xz -cf "$tarball" .PKGINFO .FILES \
+		$( [ -f .INSTALL ] && printf '.INSTALL' ) \
+		$(ls -A | grep -v '^\.\(PKGINFO\|FILES\|INSTALL\)$') )
+else
+	( cd "$pkgdir" && tar -cf - . | xz -T0 -9 >"$tarball" )
+fi
+
+# Publish it into the sysroot so whatever is built next can use it.
+#
+# The .pc files are rewritten as they land: a pkg-config file names absolute
+# paths under /usr, and inside a sysroot those have to point at the sysroot
+# instead - otherwise "pkg-config --variable=xcbincludedir xcb-proto" answers
+# with a directory on the host that may hold a different version, or nothing
+# at all. Only whole /usr-rooted values are rewritten; anything built out of
+# ${prefix} already follows.
+msg2 "publishing into the build sysroot"
+"$_HOST_MKDIR" -p "$SCRAPS_SYSROOT"
+cp -a "$pkgdir/." "$SCRAPS_SYSROOT/" 2>/dev/null || :
+rm -f "$SCRAPS_SYSROOT/.PKGINFO" "$SCRAPS_SYSROOT/.FILES" "$SCRAPS_SYSROOT/.INSTALL"
+# Two plain expressions rather than one with \?, which is a GNU extension
+# busybox and toybox sed do not have - scraps-build runs on ScrapLinux too.
+for _pc in "$SCRAPS_SYSROOT"/usr/lib/pkgconfig/*.pc "$SCRAPS_SYSROOT"/usr/share/pkgconfig/*.pc; do
+	[ -f "$_pc" ] || continue
+	sed -i \
+		-e "s|^\\([a-zA-Z_][a-zA-Z0-9_]*\\)=/usr$|\\1=$SCRAPS_SYSROOT/usr|" \
+		-e "s|^\\([a-zA-Z_][a-zA-Z0-9_]*\\)=/usr/|\\1=$SCRAPS_SYSROOT/usr/|" \
+		"$_pc"
+done
+
+dsize=$(wc -c <"$tarball")
+printf '\n'
+ok "$pkgbase.scrapsz"
+printf '  %sdownload %-12s installed %-12s files %s%s\n\n' \
+	"$A_GREY" "$(human "$dsize")" "$(human "$isize")" \
+	"$(wc -l <"$pkgdir/.FILES" | tr -d ' ')" "$C_R"
+printf '%s\n' "$tarball"
