@@ -222,7 +222,7 @@ else
 	ok "zlib already built"
 fi
 
-step "building xz 5.8.3 (liblzma, so .scrapsz packages can be read)"
+step "building xz 5.8.3 (liblzma, so .spz packages can be read)"
 if [ ! -f "$DEPS/usr/lib/liblzma.so" ]; then
 	unpack xz-5.8.3 xz-5.8.3.tar.gz || softfail xz-unpack
 	if [ -d "$W/xz-5.8.3" ]; then
@@ -560,7 +560,7 @@ else
 fi
 
 # -------------------------------------------------------------- 7. libarchive
-step "building libarchive 3.8.9 (bsdtar, the .scrapsz reader)"
+step "building libarchive 3.8.9 (bsdtar, the .spz reader)"
 if [ ! -x "$R/usr/bin/bsdtar" ]; then
 	unpack libarchive-3.8.9 libarchive-3.8.9.tar.gz || softfail libarchive-unpack
 	if [ -d "$W/libarchive-3.8.9" ]; then

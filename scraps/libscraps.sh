@@ -3,7 +3,7 @@
 # POSIX sh only. Must run under busybox ash with no GNU utilities present.
 # shellcheck shell=sh disable=SC2039
 
-SCRAPS_VERSION="1.4.22"
+SCRAPS_VERSION="1.4.24"
 SCRAPS_FORMAT="2"
 
 : "${SCRAPS_ROOT:=/}"
@@ -25,7 +25,7 @@ SCRAPS_FORMAT="2"
 : "${SCRAPS_LOG:=${SCRAPS_ROOT%/}/var/log/scraps.log}"
 : "${SCRAPS_JOBS:=$(nproc 2>/dev/null || echo 1)}"
 # Recipes are not a repository. repos.d is binary-only - every entry in it
-# serves .scrapsz files and nothing else - and the ports tree is a separate
+# serves .spz files and nothing else - and the ports tree is a separate
 # host with its own layout (ALL/<repo>/<name>/recipe), reached only through
 # this setting. Keeping the two apart is what stops "what can be installed"
 # and "what can be compiled" from being the same list.
@@ -192,11 +192,11 @@ scraps_log() {
 have() { command -v "$1" >/dev/null 2>&1; }
 
 # A package/version/release/arch field is safe to drop straight into a
-# filesystem path (SCRAPS_CACHE/pkg/<name>-<ver>-<rel>.<arch>.scrapsz,
+# filesystem path (SCRAPS_CACHE/pkg/<name>-<ver>-<rel>.<arch>.spz,
 # SCRAPS_DB/local/<name>, ...) only if it cannot itself contain a path
 # separator. name/ver/rel/arch normally come from this machine's own repo
 # index or from a package's .PKGINFO - both are effectively remote input
-# (a compromised mirror, a MITM'd http:// repo, a hand-crafted .scrapsz), and
+# (a compromised mirror, a MITM'd http:// repo, a hand-crafted .spz), and
 # nothing upstream of fetch_pkg()/install_one() checks them. A version field
 # of "1.0/../../../etc/cron.d/x" would otherwise be free to walk the
 # resulting path anywhere a root-run scraps can write.
@@ -698,7 +698,7 @@ calc_done() {
 		"${T_CALC_DONE:-Done!}" "$C_R"
 }
 
-# .scrapsz is a plain tar.xz, so bsdtar or busybox tar both work.
+# .spz is a plain tar.xz, so bsdtar or busybox tar both work.
 #
 # Deliberately does not call fix_usrmerge itself: this also extracts a
 # package into a bare staging directory before the file-conflict check and
@@ -981,7 +981,7 @@ idx_lookup() {
 		[ -f "$f" ] || continue
 		# arch "src" marks a source-repo entry: a recipe, not an installable
 		# package. Binary resolution must skip those or it will try to download
-		# a .src.scrapsz that was never built.
+		# a .src.spz that was never built.
 		line=$(awk -F'\t' -v p="$want" '$1==p && $4!="src"{print; exit}' "$f") || :
 		if [ -n "$line" ]; then
 			printf '%s\t%s\n' "$(basename "$f" .idx)" "$line"

@@ -109,8 +109,8 @@ pkg_deps() {
 unpack_pkg() {
 	# $1 = package name, $2 = REASON (explicit/dep)
 	# Resolved through the INDEX (exact name match on column 1), not a
-	# filename glob: "busybox-*.scrapsz" also matches
-	# "busybox-musl-1.38.0-1...scrapsz" as a prefix, and sort -V ranked
+	# filename glob: "busybox-*.spz" also matches
+	# "busybox-musl-1.38.0-1...spz" as a prefix, and sort -V ranked
 	# that fake match above the real busybox build it was actually
 	# after - a completely different, wrong package silently installed
 	# in its place. The INDEX is also the fix for the mtime trap glob+
@@ -124,7 +124,7 @@ unpack_pkg() {
 		[ -f "$_up_i" ] || continue
 		_up_e=$(awk -F'\t' -v n="$_up_n" '$1==n{print $2"-"$3; exit}' "$_up_i")
 		[ -n "$_up_e" ] || continue
-		_up_pkg="$(dirname "$_up_i")/$_up_n-$_up_e.$ARCH.scrapsz"
+		_up_pkg="$(dirname "$_up_i")/$_up_n-$_up_e.$ARCH.spz"
 		[ -f "$_up_pkg" ] && break
 		_up_pkg=""
 	done
@@ -395,9 +395,9 @@ close_libs() {
 	# not.
 	_cl_sonames="$B/tarball/.sonames.$ARCH"
 	printf '   indexing what each package provides\n'
-	for pkg in "$REPO"/*/"$ARCH"/*.scrapsz; do
+	for pkg in "$REPO"/*/"$ARCH"/*.spz; do
 		[ -f "$pkg" ] || continue
-		_cl_n=$(basename "$pkg" | sed 's/-[^-]*-[0-9]*\.[^.]*\.scrapsz$//')
+		_cl_n=$(basename "$pkg" | sed 's/-[^-]*-[0-9]*\.[^.]*\.spz$//')
 		tar -xOf "$pkg" .FILES 2>/dev/null | \
 			sed -n 's|.*/\([^/]*\.so[^/]*\)$|\1|p' | \
 			while read -r so; do printf '%s\t%s\t%s\n' "$so" "$_cl_n" "$pkg"; done

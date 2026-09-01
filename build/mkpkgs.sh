@@ -1,5 +1,5 @@
 #!/bin/sh
-# ScrapLinux - package the components built by build-rootfs.sh into .scrapsz
+# ScrapLinux - package the components built by build-rootfs.sh into .spz
 # binaries and lay out the repositories.
 #
 # Everything here was genuinely compiled from source by build-rootfs.sh. The
@@ -60,7 +60,7 @@ emit() {
 	( cd "$pd" && find . -type f -o -type l ) | sed 's|^\.||' \
 		| grep -v '^/\.\(PKGINFO\|FILES\|INSTALL\)$' | sort >"$pd/.FILES"
 
-	out="$REPO/$repo/$ARCH/$name-$ver-1.$ARCH.scrapsz"
+	out="$REPO/$repo/$ARCH/$name-$ver-1.$ARCH.spz"
 	( cd "$pd" && tar -cf - . | xz -T0 -6 >"$out" ) || { bad "$name: tar failed"; return 1; }
 	ok "$(basename "$out") ($(du -h "$out" | cut -f1), $(wc -l <"$pd/.FILES") files)"
 }
@@ -491,7 +491,7 @@ else bad linux-headers; fi
 step "generating repository indexes"
 export SCRAPS_ROOT=/ SCRAPS_COLOR=never
 for r in main extra base kernels nonfree alt-nonfree multilib; do
-	c=$(ls -1 "$REPO/$r/$ARCH"/*.scrapsz 2>/dev/null | wc -l | tr -d ' ')
+	c=$(ls -1 "$REPO/$r/$ARCH"/*.spz 2>/dev/null | wc -l | tr -d ' ')
 	if [ "$c" = "0" ]; then
 		# An empty repo still needs a valid index so 'scraps fetch' succeeds.
 		{

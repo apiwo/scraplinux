@@ -1,5 +1,5 @@
 #!/bin/sh
-# verify-packages.sh - install every .scrapsz into a clean root and check it works.
+# verify-packages.sh - install every .spz into a clean root and check it works.
 #
 # Only packages that pass here get published. A package is considered good when:
 #
@@ -61,9 +61,9 @@ run_scraps() {
 printf '\n  %-24s %-9s %-7s %-7s %s\n' PACKAGE INSTALL FILES LIBS REMOVE
 printf '  %s\n' "----------------------------------------------------------------"
 
-for f in "$REPO"/main/$ARCH/*.scrapsz "$REPO"/kernels/$ARCH/*.scrapsz; do
+for f in "$REPO"/main/$ARCH/*.spz "$REPO"/kernels/$ARCH/*.spz; do
 	[ -f "$f" ] || continue
-	name=$(basename "$f" | sed 's/-[0-9][^-]*-[0-9]*\.'"$ARCH"'\.scrapsz$//')
+	name=$(basename "$f" | sed 's/-[0-9][^-]*-[0-9]*\.'"$ARCH"'\.spz$//')
 	if [ -n "$want" ]; then
 		case " $want " in *" $name "*) ;; *) continue ;; esac
 	fi

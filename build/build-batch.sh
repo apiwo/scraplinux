@@ -1,5 +1,5 @@
 #!/bin/sh
-# build-batch.sh - build a list of ports into .scrapsz binaries.
+# build-batch.sh - build a list of ports into .spz binaries.
 #
 # Feeds each recipe through scraps-build and files whatever succeeds into the
 # repository. Failures are expected and fine: a package that will not build
@@ -45,9 +45,9 @@ find_recipe() {
 }
 
 have_binary() {
-	for f in "$B/repo/$1/x86_64/"*.scrapsz; do
+	for f in "$B/repo/$1/x86_64/"*.spz; do
 		[ -f "$f" ] || continue
-		n=$(basename "$f" | sed 's/-[^-]*-[0-9]*\.[^.]*\.scrapsz$//')
+		n=$(basename "$f" | sed 's/-[^-]*-[0-9]*\.[^.]*\.spz$//')
 		[ "$n" = "$2" ] && return 0
 	done
 	return 1
@@ -69,8 +69,8 @@ for pkg in $TARGETS; do
 	# Already built and current? Leave it alone.
 	#
 	# Matched on the name a filename actually decodes to, not on
-	# "<name>-*.scrapsz": that glob makes every package a prefix of another
-	# one's name look built. wayland-protocols-1.48-1.x86_64.scrapsz answered
+	# "<name>-*.spz": that glob makes every package a prefix of another
+	# one's name look built. wayland-protocols-1.48-1.x86_64.spz answered
 	# for wayland, so wayland was reported "already built" and skipped on
 	# every run - while nothing in any repository provided it and every
 	# package that depended on it stayed uninstallable.
@@ -80,7 +80,7 @@ for pkg in $TARGETS; do
 	fi
 
 	if sh "$TREE/scraps/scraps-build" "$recipe" >"$L/$pkg.log" 2>&1; then
-		f=$(ls -t "$SCRAPS_BUILDROOT/out/$pkg"-*.scrapsz 2>/dev/null | head -1)
+		f=$(ls -t "$SCRAPS_BUILDROOT/out/$pkg"-*.spz 2>/dev/null | head -1)
 		if [ -n "$f" ]; then
 			mkdir -p "$B/repo/$repo/x86_64"
 			cp -f "$f" "$B/repo/$repo/x86_64/"
@@ -101,7 +101,7 @@ done
 # Reindex everything we touched.
 for r in main extra base kernels nonfree alt-nonfree multilib profile; do
 	[ -d "$B/repo/$r/x86_64" ] || continue
-	ls "$B/repo/$r/x86_64"/*.scrapsz >/dev/null 2>&1 || continue
+	ls "$B/repo/$r/x86_64"/*.spz >/dev/null 2>&1 || continue
 	sh "$TREE/scraps/scraps-repo" gen "$B/repo/$r" x86_64 >/dev/null 2>&1 || :
 done
 
@@ -109,6 +109,6 @@ printf '\n  %s built, %s failed, %s skipped\n' "$built" "$failed" "$skipped"
 [ -n "$FAILED_LIST" ] && printf '  still source-only:%s\n' "$FAILED_LIST"
 printf '\n'
 for r in main extra base kernels profile; do
-	c=$(ls -1 "$B/repo/$r/x86_64"/*.scrapsz 2>/dev/null | wc -l | tr -d ' ')
+	c=$(ls -1 "$B/repo/$r/x86_64"/*.spz 2>/dev/null | wc -l | tr -d ' ')
 	printf '  %-12s %s binaries\n' "$r" "$c"
 done

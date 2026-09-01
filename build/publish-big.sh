@@ -57,7 +57,7 @@ note() { printf '   %s\n' "$*"; }
 step "collecting packages over $((MINSIZE / 1048576)) MiB"
 rm -rf "$STAGE"; mkdir -p "$STAGE"
 n=0
-for f in "$B"/repo/*/"$ARCH"/*.scrapsz; do
+for f in "$B"/repo/*/"$ARCH"/*.spz; do
 	[ -f "$f" ] || continue
 	sz=$(wc -c <"$f")
 	[ "$sz" -ge "$MINSIZE" ] || continue
@@ -85,7 +85,7 @@ else
 fi
 
 step "uploading"
-for f in "$STAGE"/*.scrapsz; do
+for f in "$STAGE"/*.spz; do
 	[ -f "$f" ] || continue
 	# --clobber: a rebuilt package keeps its name when only its contents
 	# changed, and the asset has to follow it rather than the upload failing.

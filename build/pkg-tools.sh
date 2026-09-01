@@ -39,7 +39,7 @@ ok()   { printf '   ok %s\n' "$*"; }
 # Same .PKGINFO/.FILES layout mkpkgs.sh writes; kept identical on purpose so
 # a package from here is indistinguishable from one built by a full run.
 emit() {
-	pd=$1 name=$2 ver=$3 repo=$4 desc=$5 lic=$6 url=$7 deps=$8 backup=${9:-}
+	pd=$1 name=$2 ver=$3 repo=$4 desc=$5 lic=$6 url=$7 deps=$8 backup=${9:-} replaces=${10:-}
 	[ -d "$pd" ] || { echo "   $name: nothing staged" >&2; return 1; }
 	isize=$(du -sk "$pd" 2>/dev/null | cut -f1); isize=$(( ${isize:-0} * 1024 ))
 	{
@@ -51,13 +51,14 @@ emit() {
 			"$isize" "$DATE" "$repo"
 		for d in $deps; do printf 'depend = %s\n' "$d"; done
 		for b in $backup; do printf 'backup = %s\n' "$b"; done
+		for r in $replaces; do printf 'replaces = %s\n' "$r"; done
 	} >"$pd/.PKGINFO"
 	( cd "$pd" && find . -type f -o -type l ) | sed 's|^\.||' \
 		| grep -v '^/\.\(PKGINFO\|FILES\|INSTALL\)$' | sort >"$pd/.FILES"
 	# Remove any older build of the same package first, so the repository
 	# never holds two versions of it and the index cannot pick the stale one.
-	rm -f "$REPO/$repo/$ARCH/$name"-*.scrapsz
-	out="$REPO/$repo/$ARCH/$name-$ver-1.$ARCH.scrapsz"
+	rm -f "$REPO/$repo/$ARCH/$name"-*.spz
+	out="$REPO/$repo/$ARCH/$name-$ver-1.$ARCH.spz"
 	( cd "$pd" && tar -cf - . | xz -T0 -6 >"$out" )
 	ok "$(basename "$out") ($(du -h "$out" | cut -f1), $(wc -l <"$pd/.FILES") files)"
 }
@@ -95,7 +96,8 @@ done
 emit "$pd" scraplinux-base "$VERSION" main \
 	"ScrapLinux base configuration, init scripts and branding" "BSD-2-Clause" \
 	"https://github.com/apiwo/scraplinux" "busybox iw wpa_supplicant" \
-	"etc/passwd etc/group etc/shadow etc/gshadow etc/inittab etc/profile etc/zsh/zshrc etc/doas.conf etc/scraps/scraps.conf"
+	"etc/passwd etc/group etc/shadow etc/gshadow etc/inittab etc/profile etc/zsh/zshrc etc/doas.conf etc/scraps/scraps.conf" \
+	"arctic-base"
 
 step "reindexing main"
 sh "$SRCTREE/scraps/scraps-repo" gen "$REPO/main" "$ARCH" >/dev/null

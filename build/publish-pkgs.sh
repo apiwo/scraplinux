@@ -4,7 +4,7 @@
 #
 #   build/publish-pkgs.sh [checkout]     default /home/apiwo/scraplinux-build/src-extra/scraplinux-pkgs
 #
-# The site is a plain static tree: ALL/<repo>/<arch>/<pkg>.scrapsz plus an
+# The site is a plain static tree: ALL/<repo>/<arch>/<pkg>.spz plus an
 # INDEX scraps fetches, and an index.html per directory because GitHub Pages
 # does not generate listings of its own. Both are written from what is
 # actually in the tree, never from a list kept somewhere else - a repository
@@ -86,7 +86,7 @@ for r in $REPOS; do
 	# ~90-99 MiB kernel packages ended up committed and broke every
 	# Cloudflare Pages deploy afterward, silently, since nothing here ever
 	# went back and removed them) would otherwise sit in the tree forever.
-	for f in "$dst"/*.scrapsz; do
+	for f in "$dst"/*.spz; do
 		[ -f "$f" ] || continue
 		b=$(basename "$f")
 		if [ ! -f "$src/$b" ]; then
@@ -96,7 +96,7 @@ for r in $REPOS; do
 		fi
 	done
 	n=0; big=0
-	for f in "$src"/*.scrapsz; do
+	for f in "$src"/*.spz; do
 		[ -f "$f" ] || continue
 		sz=$(wc -c <"$f")
 		if [ "$sz" -ge "$MAXSIZE" ]; then
@@ -126,7 +126,7 @@ for r in $REPOS; do
 		n=$((n+1))
 	done
 	# The fix repository carries one file that is not a package and not an
-	# index: without FIXES beside them, its .scrapsz files are just two ordinary
+	# index: without FIXES beside them, its .spz files are just two ordinary
 	# packages and "scraps system fix" has nothing to read.
 	if [ -f "$src/FIXES" ]; then
 		cmp -s "$src/FIXES" "$dst/FIXES" 2>/dev/null || cp -f "$src/FIXES" "$dst/"
@@ -138,7 +138,7 @@ done
 step "reindexing"
 for r in $REPOS; do
 	d="$SITE/ALL/$r"
-	if ls "$d/$ARCH"/*.scrapsz >/dev/null 2>&1; then
+	if ls "$d/$ARCH"/*.spz >/dev/null 2>&1; then
 		sh "$TREE/scraps/scraps-repo" gen "$d" "$ARCH" >/dev/null
 		printf '   %-12s %s package(s) indexed\n' "$r" "$(grep -vc '^#' "$d/$ARCH/INDEX")"
 	else

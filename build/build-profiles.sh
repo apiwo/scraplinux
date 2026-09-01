@@ -14,7 +14,7 @@ for d in "$TREE"/ports/profile/*/; do
 	[ -f "$d/recipe" ] || continue
 	n=$(basename "$d")
 	if sh "$TREE/scraps/scraps-build" "$d/recipe" >"$B/logs/profile-$n.log" 2>&1; then
-		f=$(ls -t "$SCRAPS_BUILDROOT/out/$n"-*.scrapsz 2>/dev/null | head -1)
+		f=$(ls -t "$SCRAPS_BUILDROOT/out/$n"-*.spz 2>/dev/null | head -1)
 		if [ -n "$f" ]; then
 			cp -f "$f" "$B/repo/profile/x86_64/"
 			printf '   ok   %s\n' "$(basename "$f")"; ok=$((ok+1))

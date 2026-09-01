@@ -31,7 +31,7 @@ fi
 # repo-name:checkout
 #
 # The distribution and the kernel only. The binary package repository is
-# hundreds of megabytes of .scrapsz and it filled the account's storage quota,
+# hundreds of megabytes of .spz and it filled the account's storage quota,
 # which is per account - so mirroring it stopped every *other* repository from
 # being pushed too. Binaries are served from GitHub, which is what
 # /etc/scraps/repos.d points at, so nothing depends on them being here.
@@ -69,7 +69,7 @@ for entry in $REPOS; do
 	case "$out" in
 	*"Quota exceeded"*)
 		# Codeberg caps how much a user may store, and a repository full of
-		# .scrapsz binaries reaches it quickly. This is not something a retry
+		# .spz binaries reaches it quickly. This is not something a retry
 		# fixes: either the binaries stay on the GitHub mirror only, or the
 		# quota has to be raised on Codeberg's side. The cap is per account,
 		# so the repository that fills it stops every other repository from

@@ -6,7 +6,7 @@
 #
 # Steps, in order: fetch, kernel, rootfs, usable (the disk/wireless tools
 # layered on top - see docs/STATUS.md), pkgs (package everything into
-# .scrapsz and index the repos). No ISO step - build-tarball.sh (run
+# .spz and index the repos). No ISO step - build-tarball.sh (run
 # separately, after pkgs) is what produces the shippable base tarballs.
 #
 # Every step that touches the filesystem runs through scraplinux-sandbox, so this

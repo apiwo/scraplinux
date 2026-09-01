@@ -78,7 +78,7 @@ Binaries come from
 **[github.com/apiwo/scraplinux-pkgs](https://github.com/apiwo/scraplinux-pkgs)**,
 served over `raw.githubusercontent.com`; recipes from
 **[ports-scraplinux.apiwow.net](https://ports-scraplinux.apiwow.net)**. The two never
-mix: a repository in `/etc/scraps/repos.d` serves `.scrapsz` binaries and nothing
+mix: a repository in `/etc/scraps/repos.d` serves `.spz` binaries and nothing
 else, and `scraps add -s` is the only thing that reaches the ports host.
 
 Packages too large for a git mirror — the toolchain at 148 MiB, firmware at

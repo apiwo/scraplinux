@@ -14,7 +14,7 @@ where the scripts honour it, or edit `B=` at the top.
 through `scraplinux-sandbox` for you. Its steps, in order: `fetch` (every upstream
 tarball named in `sources.list`), `kernel`, `rootfs` (glibc, busybox, toybox,
 zsh, doas, and the rest), `usable` (the disk-partitioning and wireless tools
-layered on top - see `docs/STATUS.md`), `pkgs` (turn everything into `.scrapsz`
+layered on top - see `docs/STATUS.md`), `pkgs` (turn everything into `.spz`
 and index the repos), `iso` (master the bootable image). Each step is
 idempotent: anything already built is skipped, so a failed run can be fixed
 and re-run without starting over.
