@@ -160,8 +160,8 @@ alias du='du -h'
 alias free='free -m'
 alias mkdir='mkdir -p'
 alias ip='ip -c 2>/dev/null || ip'
-alias fetch='scraplinuxfetch'
-alias ff='scraplinuxfetch'
+alias fetch='fastfetch'
+alias ff='fastfetch'
 
 # scraps shorthands, matching how people actually type.
 alias ins='doas scraps add'

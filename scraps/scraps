@@ -1743,7 +1743,7 @@ system_fixes() {
 }
 
 # name/release/build/kernel/generation of the system as it stands - the same
-# facts scraplinuxfetch reads out of /etc/scraplinux-release, gathered for scripting
+# facts fastfetch/neofetch read out of /etc/scraplinux-release, gathered for scripting
 # rather than a person, and the one place that also says which generation
 # scraplinux-rebuild left the machine on.
 cmd_system_get() {
