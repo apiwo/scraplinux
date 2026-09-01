@@ -17,6 +17,11 @@ fi
 
 B=/home/apiwo/scraplinux-build
 TREE=/home/apiwo/scraplinux
+# The ports tree moved into its own repo (scraplinux-ports) and this never
+# followed - $TREE/ports is an empty leftover directory, so every recipe
+# lookup silently found nothing and every package here reported "skip - no
+# recipe" regardless of what was actually asked for.
+PORTS=${SCRAPLINUX_PORTS:-/home/apiwo/scraplinux-build/arctic-build/src-extra/arctic-linux-ports/ALL}
 L=$B/logs/batch
 mkdir -p "$L"
 
@@ -39,7 +44,7 @@ TARGETS=${*:-$DEFAULT}
 
 find_recipe() {
 	for r in main extra base kernels nonfree alt-nonfree multilib profile; do
-		[ -f "$TREE/ports/$r/$1/recipe" ] && { printf '%s|%s' "$r" "$TREE/ports/$r/$1/recipe"; return 0; }
+		[ -f "$PORTS/$r/$1/recipe" ] && { printf '%s|%s' "$r" "$PORTS/$r/$1/recipe"; return 0; }
 	done
 	return 1
 }

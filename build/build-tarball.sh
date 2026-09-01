@@ -1,11 +1,13 @@
 #!/bin/sh
 # build-tarball.sh - build an ScrapLinux base tarball.
 #
-#   build-tarball.sh def       busybox init (default)
-#   build-tarball.sh openrc    OpenRC wired up as init instead
-#   build-tarball.sh wayland   busybox init, SDDM + a Wayland compositor
-#                              lineup bundled directly (dwl, labwc, tinywl,
-#                              wio, niri - pick one at the SDDM login screen)
+#   build-tarball.sh          s6 + 66 wired up as init (default)
+#   build-tarball.sh s66      same, named explicitly
+#   build-tarball.sh def      busybox init instead
+#   build-tarball.sh openrc   OpenRC wired up as init instead
+#   build-tarball.sh wayland  busybox init, SDDM + a Wayland compositor
+#                             lineup bundled directly (dwl, labwc, tinywl,
+#                             wio, niri - pick one at the SDDM login screen)
 #
 # No ISO, no guided installer - see the main site's install guide.
 # Bundled raw: glibc, toybox, busybox, zsh, doas, e2fsprogs, util-linux,
@@ -17,7 +19,7 @@
 
 set -eu
 
-FLAVOR=${1:-def}
+FLAVOR=${1:-s66}
 B=${SCRAPLINUX_BUILD:-/home/apiwo/scraplinux-build}
 SRCTREE=${SCRAPLINUX_TREE:-/home/apiwo/scraplinux}
 REPO=$B/repo
@@ -27,10 +29,11 @@ OUT=$B/tarball-out
 ARCH=x86_64
 
 case "$FLAVOR" in
+s66)     TARNAME="scraplinux-s66-tarball.tar.xz" ;;
 def)     TARNAME="scraplinux-def-tarball.tar.xz" ;;
 openrc)  TARNAME="scraplinux-openrc-tarball.tar.xz" ;;
 wayland) TARNAME="scraplinux-wayland-tarball.tar.xz" ;;
-*) echo "build-tarball.sh: unknown flavor '$FLAVOR' (def, openrc or wayland)" >&2; exit 1 ;;
+*) echo "build-tarball.sh: unknown flavor '$FLAVOR' (s66, def, openrc or wayland)" >&2; exit 1 ;;
 esac
 
 step() { printf '\n\033[1;36m:: %s\033[0m\n' "$*"; }
@@ -353,6 +356,27 @@ ok "scraps, scraps-strap, scraplinux-chroot in place"
 # ---------------------------------------------------------------- 3. init
 step "wiring up init ($FLAVOR)"
 case "$FLAVOR" in
+s66)
+	# 66's own PID1 entry point is not a standalone binary the way
+	# s6-linux-init or openrc-init are - it is `66 boot` (a subcommand;
+	# see 66-scandir(8), which 66 boot calls internally with -b and
+	# explicitly documents as "not meant to be used directly even with
+	# root"). /sbin/init has to be something the kernel can exec directly
+	# with no arguments, so wire it as a one-line wrapper rather than a
+	# symlink - /bin/sh is available this early the same way it already
+	# has to be for busybox init's own applets.
+	mkdir -p "$S/sbin"
+	if [ -f "$S/usr/bin/66" ]; then
+		cat >"$S/sbin/init" <<-'EOF'
+			#!/bin/sh
+			exec /usr/bin/66 boot
+			EOF
+		chmod 755 "$S/sbin/init"
+		ok "66 boot wired as /sbin/init - boot-test before trusting this"
+	else
+		printf '   warning: 66 binary not found in the unpacked package\n' >&2
+	fi
+	;;
 def|wayland)
 	# busybox's own init, already unpacked as usr/bin/init above via the
 	# busybox package's applet symlinks - nothing further to do. wayland
