@@ -106,6 +106,18 @@ without signify on it.
 `docs/STATUS.md` tracks what is built, what is known-broken, and what is
 still source-only.
 
+## License
+
+ScrapLinux's own code — `scraps`, the base system, the build tooling, the
+ports/recipe infrastructure, the site and docs — is licensed under the
+[GNU General Public License v3.0 or later](LICENSE). Anyone can use, study,
+modify and redistribute it; a distributed modified version has to stay
+under the same license and keep attribution intact, so it can't be taken
+proprietary or stripped of credit downstream.
+
+Packaged third-party software keeps whatever license its own upstream
+project uses — each recipe's `license=` field says which.
+
 ## Mirrors
 
 [github.com/apiwo](https://github.com/apiwo/scraplinux) ·

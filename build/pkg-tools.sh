@@ -79,7 +79,7 @@ install -Dm755 "$SRCTREE/scraps/scraps-repo"  "$pd/usr/bin/scraps-repo"
 install -Dm644 "$SRCTREE/scraps/libscraps.sh" "$pd/usr/lib/scraps/libscraps.sh"
 install -Dm644 "$SRCTREE/skel/etc/scraps/scraps.conf" "$pd/etc/scraps/scraps.conf"
 cp -f "$SRCTREE/skel/etc/scraps/repos.d/"*.repo "$pd/etc/scraps/repos.d/"
-emit "$pd" scraps "$VERSION" main "ScrapLinux Package Manager" "BSD-2-Clause" \
+emit "$pd" scraps "$VERSION" main "ScrapLinux Package Manager" "GPL-3.0-or-later" \
 	"https://github.com/apiwo/scraplinux" "busybox"
 
 step "packaging scraplinux-base $VERSION"
@@ -94,7 +94,7 @@ for f in "$SRCTREE"/branding/ascii/*; do
 	[ -f "$f" ] && install -Dm644 "$f" "$pd/usr/share/scraplinux/ascii/$(basename "$f")"
 done
 emit "$pd" scraplinux-base "$VERSION" main \
-	"ScrapLinux base configuration, init scripts and branding" "BSD-2-Clause" \
+	"ScrapLinux base configuration, init scripts and branding" "GPL-3.0-or-later" \
 	"https://github.com/apiwo/scraplinux" "busybox iw wpa_supplicant" \
 	"etc/passwd etc/group etc/shadow etc/gshadow etc/inittab etc/profile etc/zsh/zshrc etc/doas.conf etc/scraps/scraps.conf" \
 	"arctic-base"
