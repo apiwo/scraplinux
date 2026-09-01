@@ -91,6 +91,28 @@ if [ "${SCRAPLINUX_SANDBOX:-0}" != "1" ] && [ ! -e "$SCRAPS_SYSROOT/usr/include"
 	mkdir -p "$SCRAPS_SYSROOT/usr"
 	ln -s /usr/include "$SCRAPS_SYSROOT/usr/include"
 fi
+# ScrapLinux is merged-/usr - /bin, /sbin, /lib are symlinks into usr/, and
+# /lib64 -> usr/lib (glibc has no separate lib64 here). glibc's own packaged
+# libc.so is a linker script that hardcodes GROUP ( /lib64/libc.so.6 ... ) -
+# an absolute path, not one relative to --sysroot - so a sysroot lacking
+# these top-level symlinks fails the very first thing any build does:
+# "ld.lld: error: .../usr/lib/libc.so:5: cannot find /lib64/libc.so.6 inside
+# <sysroot>", reported as "C compiler cannot create executables" by whatever
+# configure script hit it first. A real ScrapLinux install always has these
+# (scraps-strap sets them up before the first `scraps add`); a scraps-build
+# sysroot accumulates purely from package payloads and has nothing until a
+# package's own payload happens to ship them - which none obviously will
+# on their own since they are root-level structure, not part of any single
+# package's files. Set up unconditionally, same as scraplinux-shell does for
+# its own scratch roots, and regardless of SCRAPLINUX_SANDBOX - this is
+# ScrapLinux's own on-disk shape, not a host-contamination shortcut.
+if [ ! -e "$SCRAPS_SYSROOT/lib64" ]; then
+	mkdir -p "$SCRAPS_SYSROOT/usr/bin" "$SCRAPS_SYSROOT/usr/lib"
+	for _l in bin sbin lib; do
+		[ -e "$SCRAPS_SYSROOT/$_l" ] || ln -s "usr/$_l" "$SCRAPS_SYSROOT/$_l"
+	done
+	ln -s usr/lib "$SCRAPS_SYSROOT/lib64"
+fi
 # Same reasoning, for pkg-config: a dependency installed normally with
 # `scraps add` (cairo, glib, pango, ...) is real, present, and correct on a
 # real system - but PKG_CONFIG_PATH below only ever points inside
