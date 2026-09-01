@@ -3,7 +3,7 @@
 # POSIX sh only. Must run under busybox ash with no GNU utilities present.
 # shellcheck shell=sh disable=SC2039
 
-SCRAPS_VERSION="1.4.24"
+SCRAPS_VERSION="1.4.30"
 SCRAPS_FORMAT="2"
 
 : "${SCRAPS_ROOT:=/}"
