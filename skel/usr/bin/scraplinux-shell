@@ -1,9 +1,9 @@
 #!/bin/sh
 # scraplinux-shell - an ephemeral, reproducible package environment
 #
-#   scraplinux-shell [--network] [--keep] <pkg>...
-#   scraplinux-shell [--network] [--keep] <pkg>... -- <cmd>...
-#   scraplinux-shell [--network] [--keep] <pkg>... -  <cmd>...
+#   scraplinux-shell [--network] [--keep] [--fresh] <pkg>...
+#   scraplinux-shell [--network] [--keep] [--fresh] <pkg>... -- <cmd>...
+#   scraplinux-shell [--network] [--keep] [--fresh] <pkg>... -  <cmd>...
 #
 # Builds a scratch root with exactly the named packages installed (plus the
 # same minimal glibc/busybox/toybox base every ScrapLinux root needs to have a
@@ -20,7 +20,15 @@
 # environment cannot reach the network at all (a separate network namespace,
 # same as `unshare --net` on its own gives you). --keep leaves the built root
 # on disk afterward instead of deleting it - `scraplinux gc` is what cleans up
-# anything left over that has gone unused for a while.
+# anything left over that has gone unused for a while. --fresh forces a kept
+# environment to be rebuilt now instead of reused, even if its package set
+# already has one on disk.
+#
+# A kept environment is cached by package set *and* by what the repo indexes
+# looked like when it was built - `scraps fetch` pulling in new versions
+# after that gives the same package set a new cache key automatically, so
+# "reproducible" does not silently mean "stuck on whatever was current the
+# day it was first built."
 #
 # The prompt inside looks like: [scraplinux-shell@user|dir=/home/projects]
 # shellcheck shell=sh disable=SC2039
@@ -40,12 +48,13 @@ die()  { printf '%serror:%s %s\n' "$RED" "$R" "$*" >&2; exit 1; }
 shquote() { printf '%s' "$1" | sed "s/'/'\\\\''/g" | sed "1s/^/'/;\$s/\$/'/"; }
 
 case "${1:-}" in
--h|--help|help) sed -n '2,25p' "$0" | sed 's/^# \?//'; exit 0 ;;
+-h|--help|help) sed -n '2,33p' "$0" | sed 's/^# \?//'; exit 0 ;;
 esac
 need_root
 
 NETWORK=0
 KEEP=0
+FRESH=0
 pkgs=""
 mode=""    # "" | "exec" (--) | "keepopen" (-)
 cmd=""
@@ -54,6 +63,7 @@ while [ $# -gt 0 ]; do
 	case "$1" in
 	--network) NETWORK=1; shift ;;
 	--keep)    KEEP=1; shift ;;
+	--fresh)   FRESH=1; shift ;;
 	--)        shift; mode=exec; break ;;
 	-)         shift; mode=keepopen; break ;;
 	*)         pkgs="$pkgs $1"; shift ;;
@@ -69,10 +79,23 @@ pkgs=$(printf '%s\n' $pkgs | sort -u | tr '\n' ' ')
 pkgs=${pkgs% }
 [ -n "$pkgs" ] || die "usage: scraplinux-shell [--network] [--keep] <pkg>... [-- cmd | - cmd]"
 
-hash=$(printf '%s' "$pkgs" | { sha256sum 2>/dev/null || cksum; } | cut -d' ' -f1 | cut -c1-16)
+# Hashing the package names alone made a --keep'd environment reusable
+# forever, even after `scraps fetch` pulled in newer versions of the exact
+# same names - the environment stayed pinned to whatever was current the day
+# it was first built, silently, with no way to tell short of noticing a tool
+# inside it was out of date. Folding in a fingerprint of the sync index too
+# means a repo update gives the same package set a new cache key on its own,
+# same as asking for a different package set always has.
+_idx_fp=$(find /var/lib/scraps/sync -type f 2>/dev/null | sort \
+	| xargs -r cat 2>/dev/null | { sha256sum 2>/dev/null || cksum; } | cut -d' ' -f1)
+hash=$(printf '%s\n%s\n' "$pkgs" "$_idx_fp" | { sha256sum 2>/dev/null || cksum; } | cut -d' ' -f1 | cut -c1-16)
 BASE=${SCRAPLINUX_SHELL_BASE:-/var/cache/scraplinux-shell}
 ENVROOT="$BASE/$hash"
 mkdir -p "$BASE"
+if [ "$FRESH" = 1 ] && [ -d "$ENVROOT" ]; then
+	note "rebuilding: --fresh"
+	rm -rf "$ENVROOT"
+fi
 
 # A session that is killed outright (SIGKILL, a host crash) takes /dev,
 # /proc and /sys down with it - trap cleanup below only runs on a normal
@@ -108,7 +131,19 @@ reap_orphans() {
 reap_orphans
 
 note "environment $hash ($pkgs)"
-if [ ! -d "$ENVROOT/usr" ]; then
+# .scraplinux-shell-pkgs is only ever written after `scraps add` below has
+# already succeeded - checking for $ENVROOT/usr instead used to mean a
+# build that failed partway (network hiccup, an unresolved package) left
+# the skeleton mkdir -p had already created, which was enough on its own
+# to make the *next* invocation say "reusing the environment already built
+# for this package set" and hand back a chroot with no shell in it at all:
+# "chroot: execvp /bin/sh: No such file or directory". Only a directory
+# that actually finished counts as built.
+if [ ! -f "$ENVROOT/.scraplinux-shell-pkgs" ]; then
+	if [ -d "$ENVROOT/usr" ]; then
+		note "previous build here never finished - starting over"
+		rm -rf "$ENVROOT"
+	fi
 	note "building it - this only happens once per package set"
 	mkdir -p "$ENVROOT/var/lib/scraps/sync"
 	# SCRAPS_DB follows SCRAPS_ROOT, so a scratch root starts with no sync index
@@ -137,9 +172,16 @@ if [ ! -d "$ENVROOT/usr" ]; then
 	# the shell dropped into it could not run any of the ordinary commands
 	# needed to use them: "error while loading shared libraries:
 	# libcrypt.so.2: cannot open shared object file".
+	# -b: SCRAPS_BUILD_MODE can default to source now, but an ephemeral
+	# environment is supposed to be fast and disposable - "this only
+	# happens once per package set" stops being true if the first request
+	# for, say, rust means compiling rust from source before there is even
+	# a shell to use it from. Binary here, same as before that default
+	# changed; `scraps add -s <pkg>` still works from inside the shell for
+	# anyone who actually wants a source build of something.
 	# shellcheck disable=SC2086
-	SCRAPS_ROOT="$ENVROOT" SCRAPS_YES=1 scraps add glibc busybox toybox libxcrypt $pkgs \
-		|| die "could not build the environment - see above"
+	SCRAPS_ROOT="$ENVROOT" SCRAPS_YES=1 scraps add -b glibc busybox toybox libxcrypt $pkgs \
+		|| { rm -rf "$ENVROOT"; die "could not build the environment - see above"; }
 	printf '%s\n' "$pkgs" >"$ENVROOT/.scraplinux-shell-pkgs"
 else
 	note "reusing the environment already built for this package set"

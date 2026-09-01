@@ -46,7 +46,12 @@ trap 'scraps_cleanup; exit 143' TERM
 
 ARCH=${SCRAPS_ARCH:-x86_64}
 NOMOD=0
-SOURCE=0
+# ScrapLinux installs from source by default - a binary is the opt-out, not
+# the other way around. SCRAPS_BUILD_MODE (scraps.conf) picks the default;
+# -s/-b on the command line always win over it either way.
+SOURCE=1
+[ "${SCRAPS_BUILD_MODE:-source}" = "binary" ] && SOURCE=0
+RAW=0
 # run_hooks reads this, and every command that reaches it has to have set it
 # first. "scraps commit" did not, so with set -u it died on "HOOK_KERNEL:
 # unbound variable" *after* activating the package - the work was done and the
@@ -128,12 +133,18 @@ ${A_ICE}────${C_R} ${C_B}looking after it${C_R}
   log                       what has been done
   build <recipe>            build an .spz from a port recipe
   get <pkg>...              unpack a package here without installing it
+  get -r <pkg>...           fetch the raw .spz here instead, unpacked
   get -s <pkg>...           fetch its upstream source here
+  offline <dir> <pkg>...    fetch <pkg> and its full dependency closure as
+                             raw .spz into <dir>, indexed and ready to serve
+                             as an offline repo
   version                   print the version
 
 ${A_ICE}────${C_R} ${C_B}anywhere${C_R}
   -y, --yes                 answer every prompt with yes
-  -s, --source              build from source rather than install a binary
+  -s, --source              build from source (the default - see scraps.conf)
+  -b, --binary              install a binary instead of building from source
+  -r, --raw                 with get: keep the raw .spz instead of unpacking
   --root=<dir>              work on another root instead of /
 
 ${A_GREY}Anything that changes the system needs root.${C_R}
@@ -149,6 +160,16 @@ scraps_build_path() {
 }
 
 scraps_build_tool() { sh "$(scraps_build_path)" "$@"; }
+
+# scraps-repo, found the same way: beside this script first, then the
+# installed location, then PATH.
+scraps_repo_path() {
+	if [ -x "$SCRAPS_SELFDIR/scraps-repo" ]; then printf '%s\n' "$SCRAPS_SELFDIR/scraps-repo"
+	elif [ -x /usr/bin/scraps-repo ]; then printf '%s\n' /usr/bin/scraps-repo
+	else printf 'scraps-repo\n'; fi
+}
+
+scraps_repo_tool() { sh "$(scraps_repo_path)" "$@"; }
 
 # ------------------------------------------------------------- dependency logic
 
@@ -1239,6 +1260,12 @@ cmd_get() {
 	for p in "$@"; do
 		msg "Fetching $p"
 		fetch_pkg "$p" package
+		if [ "$RAW" = "1" ]; then
+			out="./$(basename "$FETCH_FILE")"
+			cp -f "$FETCH_FILE" "$out"
+			ok "$p saved as $out (nothing was installed)"
+			continue
+		fi
 		e=$(idx_lookup "$p"); v=$(printf '%s' "$e" | cut -f3)
 		d="$p-$v"
 		rm -rf "$d"; mkdir -p "$d"
@@ -1246,6 +1273,64 @@ cmd_get() {
 		ok "contents of $p unpacked into ./$d (nothing was installed)"
 		printf '  %s%s files, %s%s\n' "$A_GREY" \
 			"$(find "$d" -type f | wc -l)" "$(du -sh "$d" | cut -f1)" "$C_R"
+	done
+}
+
+# Fetches <pkg>... and everything they depend on - the same closure `add`
+# would install - as raw, checksum-verified .spz files laid out under
+# <dir>/ALL/<repo>/<arch>/ and reindexed, so the result is a repo `scraps-repo
+# add` or a plain repos.d entry can point at directly. `get -r` fetches one
+# package; this is the "build a whole offline mirror" version of the same
+# idea, using the identical resolver `add` uses so nothing needed at install
+# time is left out. Named `offline`, not `mirror` - `mirror <repo>` already
+# means picking the fastest of a repo's several mirror URLs, a different
+# thing entirely.
+cmd_offline() {
+	scraps_init_db
+	dir=${1:-}
+	[ -n "$dir" ] || die "usage: scraps offline <dir> <package>..."
+	shift
+	[ $# -gt 0 ] || die "usage: scraps offline <dir> <package>..."
+	mkdir -p "$dir" || die "cannot create $dir"
+
+	msg "resolving dependency closure for: $*"
+	resolve_targets "$@"
+	if [ -s "$RES_DIR/missing" ]; then
+		die "unresolved: $(tr '\n' ' ' <"$RES_DIR/missing")"
+	fi
+
+	_mirror_touched=""
+	while read -r p; do
+		[ -n "$p" ] || continue
+		msg "Fetching $p"
+		fetch_pkg "$p" dependency
+		e=$(idx_lookup "$p") || die "package not found: $p"
+		repo=$(printf '%s' "$e" | cut -f1)
+		arch=$(printf '%s' "$e" | cut -f5)
+		safe_component "$repo" || die "unsafe repo name for $p: $repo"
+		safe_component "$arch" || die "unsafe arch for $p: $arch"
+		d="$dir/ALL/$repo/$arch"
+		mkdir -p "$d"
+		cp -f "$FETCH_FILE" "$d/$(basename "$FETCH_FILE")"
+		case " $_mirror_touched " in
+		*" $repo/$arch "*) ;;
+		*) _mirror_touched="$_mirror_touched $repo/$arch" ;;
+		esac
+	done <"$RES_DIR/order"
+
+	for ra in $_mirror_touched; do
+		repo=${ra%/*}; arch=${ra#*/}
+		scraps_repo_tool gen "$dir/ALL/$repo" "$arch" >/dev/null \
+			|| warn "could not reindex $repo/$arch"
+		ok "reindexed $repo/$arch"
+	done
+
+	printf '\n  %s::%s offline mirror ready at %s\n' "$A_TEAL" "$C_R" "$dir/ALL"
+	printf '  serve it over plain HTTPS, then per repo:\n'
+	for ra in $_mirror_touched; do
+		repo=${ra%/*}
+		printf '\n  # /etc/scraps/repos.d/%s.repo\n  name = %s\n  url = https://your-host/ALL/%s\n  enabled = yes\n  priority = 50\n  sig = optional\n' \
+			"$repo" "$repo" "$repo"
 	done
 }
 
@@ -2266,6 +2351,32 @@ cmd_rollback() {
 			[ -n "$f" ] || continue
 			rm -f "$SCRAPS_ROOT$f" 2>/dev/null || :
 		done <"$d/added"
+		# A file's directory can be empty once it and its siblings are gone,
+		# and nothing above removed those - a rollback deleted every file a
+		# transaction added but left every directory it created behind,
+		# forever, empty. The immediate parent is not the only one that can
+		# end up empty - .../locale/de/LC_MESSAGES emptying out does not by
+		# itself make .../locale/de disappear too - so every ancestor up to
+		# SCRAPS_ROOT is a candidate, not just the one directly holding the
+		# file. Longest path first so a child directory is always tried
+		# before the parent that contained it: by the time a parent is
+		# reached here it is already empty if it is going to become empty at
+		# all. rmdir is a no-op on anything still occupied, so this can never
+		# remove a directory something else still needs.
+		while read -r f; do
+			[ -n "$f" ] || continue
+			p=$(dirname "$SCRAPS_ROOT$f")
+			while :; do
+				case "$p" in "$SCRAPS_ROOT"|/|.) break ;; esac
+				printf '%s\n' "$p"
+				np=$(dirname "$p")
+				[ "$np" = "$p" ] && break
+				p=$np
+			done
+		done <"$d/added" | sort -u | awk '{ print length, $0 }' | sort -rn | cut -d' ' -f2- | \
+		while read -r dd; do
+			[ -n "$dd" ] && rmdir "$dd" 2>/dev/null || :
+		done
 	fi
 	if [ -d "$d/replaced" ]; then
 		( cd "$d/replaced" && find . -type f -o -type l ) | while read -r rf; do
@@ -2341,6 +2452,8 @@ args=""
 for a in "$@"; do
 	case "$a" in
 	-s|--source)  SOURCE=1 ;;
+	-b|--binary)  SOURCE=0 ;;
+	-r|--raw)     RAW=1 ;;
 	-nomod|--nomod|--no-modify) NOMOD=1 ;;
 	-y|--yes|--noconfirm)
 		# Answer every prompt with yes: the install confirmation, the removal
@@ -2383,6 +2496,7 @@ del+deps+junk|del+junk+deps)
 	do_remove 1 1 "$@" ;;
 autoremove)         cmd_autoremove ;;
 get)                cmd_get "$@" ;;
+offline)            cmd_offline "$@" ;;
 fetch|sync)         cmd_fetch "$@" ;;
 update|upgrade|up)  cmd_update "$@" ;;
 system|sys)         cmd_system "$@" ;;

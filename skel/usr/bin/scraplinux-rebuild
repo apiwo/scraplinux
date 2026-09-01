@@ -430,8 +430,13 @@ if [ -n "$wifi_change" ] && service status wifi >/dev/null 2>&1; then
 fi
 
 if [ -n "$hw_to_install" ]; then
+	# -b: this is automatic hardware-driver reconciliation, not a request a
+	# human typed - it has to stay fast and non-interactive every time
+	# scraplinux-rebuild runs, not silently start source-compiling whatever
+	# driver package hardware.conf named just because SCRAPS_BUILD_MODE
+	# happens to default to source now.
 	# shellcheck disable=SC2086
-	SCRAPS_YES=1 scraps add $hw_to_install || rc=1
+	SCRAPS_YES=1 scraps add -b $hw_to_install || rc=1
 fi
 
 for p in $to_activate; do
