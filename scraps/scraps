@@ -109,6 +109,8 @@ ${A_ICE}────${C_R} ${C_B}the system${C_R}
                             new tarball needed
   system upgrade <what>     the same, but only one area or level of fix
   system fix, system update  same as upgrade - here for the name
+  system boot limine-efi <partition>  install Limine (UEFI) to a partition
+  system boot grub-bios <partition>   install GRUB (BIOS) to that partition's disk
 
 ${A_ICE}────${C_R} ${C_B}asking${C_R}
   list [-e]                 what is installed (-e: only what you asked for)
@@ -1835,6 +1837,7 @@ cmd_system() {
 	case "${1:-}" in
 	get)     shift; cmd_system_get "$@" ;;
 	check)   shift; cmd_system_check "$@" ;;
+	boot)    shift; cmd_system_boot "$@" ;;
 	# fix/update: not separate behavior, just names people reach for out of
 	# habit from other package managers - both do exactly what upgrade does.
 	# "fix" specifically used to be a real, different command here (see
@@ -1844,8 +1847,78 @@ cmd_system() {
 	# that bug: it's not a separate code path, it's the same one check/
 	# upgrade already agree on.
 	upgrade|up|fix|update) shift; cmd_system_upgrade "$@" ;;
-	"")      die "usage: scraps system <get|check|upgrade>" ;;
-	*)       die "unknown system command: $1 (try get, check or upgrade)" ;;
+	"")      die "usage: scraps system <get|check|upgrade|boot>" ;;
+	*)       die "unknown system command: $1 (try get, check, upgrade or boot)" ;;
+	esac
+}
+
+# Whole disk from a partition device name - nvme/mmcblk/loop use a "pN"
+# suffix after a digit (nvme0n1p5 -> nvme0n1), sd/vd/hd don't (sda5 -> sda).
+# BIOS GRUB installs to a disk's MBR, never a partition, so grub-bios needs
+# this even though the user hands both boot targets the same partition -
+# the one they'd naturally point at the boot filesystem either way.
+_whole_disk() {
+	case "$1" in
+	*[0-9]p[0-9]*) printf '%s\n' "$1" | sed 's/p[0-9]*$//' ;;
+	*[a-z][0-9]*)  printf '%s\n' "$1" | sed 's/[0-9]*$//' ;;
+	*)             printf '%s\n' "$1" ;;
+	esac
+}
+
+# scraps system boot limine-efi <partition>   Limine, UEFI, onto the ESP at <partition>
+# scraps system boot grub-bios <partition>    GRUB, legacy BIOS, onto the disk <partition> is on
+#
+# Formalizes what was previously a hand-run sequence during install (copy
+# Limine's EFI stub in twice, register an efibootmgr entry; grub-install for
+# BIOS) into one command, and always regenerates fstab from genfstab first -
+# a bootloader pointed at a filesystem that changed since the last fstab
+# write is a worse failure mode than a slow install step.
+cmd_system_boot() {
+	need_root
+	target=${1:-} part=${2:-}
+	case "$target" in
+	limine-efi|grub-bios) ;;
+	*) die "usage: scraps system boot <limine-efi|grub-bios> <partition>" ;;
+	esac
+	[ -n "$part" ] || die "usage: scraps system boot <limine-efi|grub-bios> <partition>"
+	[ -b "$part" ] || die "not a block device: $part"
+
+	if have genfstab && [ -d "$SCRAPS_ROOT/etc" ]; then
+		msg "regenerating fstab"
+		genfstab "$SCRAPS_ROOT" >"$SCRAPS_ROOT/etc/fstab.new" \
+			&& mv "$SCRAPS_ROOT/etc/fstab.new" "$SCRAPS_ROOT/etc/fstab" \
+			&& ok "fstab written"
+	else
+		warn "genfstab not installed (scraps add genfstab) - fstab left as-is"
+	fi
+
+	case "$target" in
+	limine-efi)
+		have limine || die "limine is not installed (scraps add limine)"
+		efi="$SCRAPS_ROOT/usr/share/limine/BOOTX64.EFI"
+		[ -f "$efi" ] || die "no $efi - is the limine package actually installed under \$SCRAPS_ROOT?"
+		bootdir="$SCRAPS_ROOT/boot"
+		mkdir -p "$bootdir/EFI/BOOT" "$bootdir/EFI/scraplinux"
+		cp -f "$efi" "$bootdir/EFI/BOOT/BOOTX64.EFI"
+		cp -f "$efi" "$bootdir/EFI/scraplinux/scraplinuxx64.efi"
+		disk=$(_whole_disk "$part")
+		partnum=$(printf '%s' "$part" | sed 's/^.*[^0-9]//')
+		if have efibootmgr; then
+			efibootmgr --create --disk "$disk" --part "$partnum" \
+				--loader '\EFI\scraplinux\scraplinuxx64.efi' --label 'ScrapLinux' \
+				|| warn "efibootmgr failed - the ESP has the right files, but no NVRAM boot entry was created"
+		else
+			warn "efibootmgr not installed - files are in place on the ESP, but no NVRAM boot entry was created"
+		fi
+		ok "limine-efi installed to $part"
+		;;
+	grub-bios)
+		have grub-install || die "grub is not installed (scraps add grub)"
+		disk=$(_whole_disk "$part")
+		grub-install --target=i386-pc --boot-directory="$SCRAPS_ROOT/boot" "$disk" \
+			|| die "grub-install failed"
+		ok "grub-bios installed to $disk"
+		;;
 	esac
 }
 

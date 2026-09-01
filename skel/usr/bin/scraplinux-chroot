@@ -112,12 +112,23 @@ printf '\033[38;5;44m::\033[0m entering %s (exit or ctrl-d to leave)\n' "$TARGET
 # cursor forward instead of deleting: the terminal sends ^?, the editor was
 # expecting ^H, and neither end had a description to agree on. Setting the
 # erase character explicitly does not need terminfo at all.
+#
+# "^?" caret-notation for the erase character is a GNU/BSD stty convenience,
+# not something every stty parses - toybox's and busybox's stty both expect
+# a literal character, not the two-byte string "^?". Written as caret
+# notation, a toybox/busybox stty either silently no-ops on the erase= part
+# (sane alone leaves erase at its compiled-in default, which does not
+# necessarily match what this terminal actually sends) or rejects the whole
+# argument - either way the fix never actually applied, silently, because
+# stty's own stderr is intentionally thrown away right after it. A real DEL
+# byte from printf works with any stty that implements erase= at all.
+_del=$(printf '\177')
 env -i \
 	HOME=/root \
 	TERM="${TERM:-linux}" \
 	PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
 	SCRAPLINUX_CHROOT=1 \
-	chroot "$TARGET" /bin/sh -c 'stty sane erase ^? 2>/dev/null; exec '"$SHELL_IN"' -l' 
+	chroot "$TARGET" /bin/sh -c 'stty sane erase '"$_del"' 2>/dev/null; exec '"$SHELL_IN"' -l'
 rc=$?
 printf '\033[38;5;44m::\033[0m left %s\n' "$TARGET"
 exit $rc
