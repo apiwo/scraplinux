@@ -1,0 +1,115 @@
+#!/bin/sh
+# scraps-mkrepo - scaffold your own scraps repository, binary or source
+#
+#   scraps-mkrepo binary <dir> <name> [arch]   an ALL/<name>/<arch>/ tree,
+#                                               ready for `scraps-repo add`
+#   scraps-mkrepo source <dir> <name>          an ALL/<name>/ tree laid out
+#                                               the way scraps-ports's
+#                                               manifest.tsv expects a repo
+#                                               name's recipes to live
+#
+# Either way this only creates the skeleton and a starter .repo file to
+# hand out - it does not host anything itself. Serve <dir> over plain
+# HTTPS (any static file server; this is exactly how pkg-scraplinux.apiwow.net
+# and ports-scraplinux.apiwow.net are served) and point people at the
+# printed repos.d snippet.
+#
+# shellcheck shell=sh disable=SC2039
+
+set -eu
+
+for p in /usr/lib/scraps/libscraps.sh ./libscraps.sh "$(dirname "$0")/libscraps.sh"; do
+	[ -f "$p" ] && { . "$p"; break; }
+done
+[ -n "${SCRAPS_VERSION:-}" ] || { echo "scraps-mkrepo: cannot locate libscraps.sh" >&2; exit 1; }
+
+usage() {
+	sed -n '2,11p' "$0" | sed 's/^# \?//'
+	exit "${1:-0}"
+}
+
+# A repo is trusted by URL alone - nothing here signs anything for you.
+# `scraps-repo`'s own INDEX carries a sha256 per package (tampering with a
+# package after it's indexed is caught), but an unsigned INDEX itself can
+# still be replaced wholesale by anyone who can write to wherever this is
+# served from. `signify -G` (a repo key) plus `sig = required` in the
+# .repo file this prints is what closes that gap - see the docs for the
+# real signing flow. Printed once, here, rather than silently assumed.
+warn_unsigned() {
+	printf '\n%s::%s no signing set up - this index is not signed.\n' "$A_TEAL" "$C_R"
+	printf '  %sfine for a private/local mirror. For anything public: signify -G,\n' "$A_GREY"
+	printf '  keep the secret key off the served directory, and set sig = required\n'
+	printf '  in the .repo file below once you sign INDEX with it.%s\n' "$C_R"
+}
+
+repo_snippet() {
+	# $1 = name, $2 = url
+	cat <<EOF
+
+  # /etc/scraps/repos.d/$1.repo
+  name = $1
+  url = $2
+  enabled = yes
+  priority = 50
+  sig = optional
+EOF
+}
+
+cmd_binary() {
+	dir=${1:?usage: scraps-mkrepo binary <dir> <name> [arch]}
+	name=${2:?usage: scraps-mkrepo binary <dir> <name> [arch]}
+	arch=${3:-x86_64}
+	[ -e "$dir" ] && [ ! -d "$dir" ] && die "$dir exists and is not a directory"
+
+	d="$dir/ALL/$name/$arch"
+	mkdir -p "$d"
+	# scraps-repo gen refuses an empty INDEX for a directory with no packages
+	# in it yet, and that's correct once packages exist - but a brand new
+	# repo has none, and "no packages here yet" isn't a fatal error for a
+	# skeleton that's about to have some added to it.
+	if ! "$(dirname "$0")/scraps-repo" gen "$dir/ALL/$name" "$arch" 2>/dev/null; then
+		{
+			printf '# ScrapLinux repository index\n'
+			printf '# format\t%s\n' "$SCRAPS_FORMAT"
+			printf '# generated\t%s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+			printf '# fields\tname version release arch dlsize isize sha256 deps desc\n'
+		} >"$d/INDEX"
+	fi
+
+	ok "binary repo skeleton at $d"
+	msg "add packages with:  scraps-repo add $dir/ALL/$name <pkg.spz>..."
+	msg "reindex any time with:  scraps-repo gen $dir/ALL/$name $arch"
+	repo_snippet "$name" "https://your-host/ALL/$name"
+	warn_unsigned
+}
+
+cmd_source() {
+	dir=${1:?usage: scraps-mkrepo source <dir> <name>}
+	name=${2:?usage: scraps-mkrepo source <dir> <name>}
+	[ -e "$dir" ] && [ ! -d "$dir" ] && die "$dir exists and is not a directory"
+
+	d="$dir/ALL/$name"
+	mkdir -p "$d"
+	if [ ! -f "$dir/manifest.tsv" ]; then
+		{
+			printf '# name\tversion\tbuild\tlicense\tdepend\tmakedepend\thome\tsource\tdesc\n'
+			printf '# one line per port. See scraplinux-ports/manifest.tsv for the real\n'
+			printf '# format this is generated from - gen-ports.py turns this into the\n'
+			printf '# recipe/ directory a `scraps add -s` build actually reads.\n'
+		} >"$dir/manifest.tsv"
+	fi
+
+	ok "source repo skeleton at $d"
+	msg "add a line per port to $dir/manifest.tsv, then run gen-ports.py"
+	msg "against it to generate $d/<pkg>/recipe files"
+	repo_snippet "$name" "https://your-host/ALL/$name"
+	printf '\n%s::%s this is a ports (recipe) repo, not a binary one - point\n' "$A_TEAL" "$C_R"
+	printf '  %sSCRAPS_PORTS%s at it, not repos.d - see the packaging docs.\n' "$C_B" "$C_R"
+}
+
+case "${1:-}" in
+-h|--help|'') usage ;;
+binary) shift; cmd_binary "$@" ;;
+source) shift; cmd_source "$@" ;;
+*) usage 1 ;;
+esac

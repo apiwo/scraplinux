@@ -1,7 +1,7 @@
 #!/bin/sh
-# scraps-build - turn an ScrapLinux port recipe into an .scrapsz binary package
+# scraps-build - turn an ScrapLinux port recipe into an .spz binary package
 #
-# .scrapsz is the ScrapLinux Package Management Zip: a tar.xz archive.
+# .spz is the Scraps Package Zip: a tar.xz archive.
 #
 # A recipe is a POSIX sh fragment. Required: name version release desc.
 # Optional: url license arch depend makedepend source sha256 options
@@ -650,8 +650,8 @@ fi
 	grep -v '^/\.\(PKGINFO\|INSTALL\|FILES\)$' | sort >"$pkgdir/.FILES"
 
 # ---------------------------------------------------------------------- archive
-msg2 "creating $pkgbase.scrapsz"
-tarball="$OUT/$pkgbase.scrapsz"
+msg2 "creating $pkgbase.spz"
+tarball="$OUT/$pkgbase.spz"
 rm -f "$tarball"
 if have bsdtar; then
 	( cd "$pkgdir" && bsdtar --xz -cf "$tarball" .PKGINFO .FILES \
@@ -685,7 +685,7 @@ done
 
 dsize=$(wc -c <"$tarball")
 printf '\n'
-ok "$pkgbase.scrapsz"
+ok "$pkgbase.spz"
 printf '  %sdownload %-12s installed %-12s files %s%s\n\n' \
 	"$A_GREY" "$(human "$dsize")" "$(human "$isize")" \
 	"$(wc -l <"$pkgdir/.FILES" | tr -d ' ')" "$C_R"

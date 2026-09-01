@@ -177,7 +177,7 @@ fi
 # compiling it a second time.
 step "staging expat (dbus's only real dependency)"
 if [ ! -f "$DEPS/usr/lib/libexpat.so" ]; then
-	pkg=$(ls -t "$B"/repo/*/x86_64/expat-*.scrapsz 2>/dev/null | head -1)
+	pkg=$(ls -t "$B"/repo/*/x86_64/expat-*.spz 2>/dev/null | head -1)
 	[ -n "$pkg" ] && { tar -xf "$pkg" -C "$DEPS" usr 2>/dev/null; tar -xf "$pkg" -C "$R" usr 2>/dev/null; }
 	# The .pc file it ships has prefix=/usr baked in from its own build - real
 	# for the target, wrong here, since that makes pkg-config report its libdir
@@ -289,7 +289,7 @@ fi
 # so the live image actually has a matching libcrypto/libssl to run against,
 # same idea as the libnl copy above.
 if [ ! -f "$R/usr/lib/libcrypto.so.3" ]; then
-	opensslpkg=$(ls -t "$B"/repo/main/x86_64/openssl-*.scrapsz 2>/dev/null | head -1)
+	opensslpkg=$(ls -t "$B"/repo/main/x86_64/openssl-*.spz 2>/dev/null | head -1)
 	if [ -n "$opensslpkg" ]; then
 		mkdir -p "$W/openssl-extract"
 		tar -xf "$opensslpkg" -C "$W/openssl-extract" usr/lib 2>/dev/null || :

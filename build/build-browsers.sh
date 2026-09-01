@@ -1,5 +1,5 @@
 #!/bin/sh
-# Repackage upstream browser binaries into .scrapsz.
+# Repackage upstream browser binaries into .spz.
 #
 # Firefox and Chrome from source are hours of compute each and need a Rust and
 # Node toolchain on top. Mozilla and Google both publish working x86_64 builds,
@@ -42,14 +42,14 @@ emit() {
 	} >"$pd/.PKGINFO"
 	( cd "$pd" && find . -type f -o -type l ) | sed 's|^\.||' \
 		| grep -v '^/\.\(PKGINFO\|FILES\|INSTALL\)$' | sort >"$pd/.FILES"
-	out="$R/$repo/$ARCH/$name-$ver-1.$ARCH.scrapsz"
+	out="$R/$repo/$ARCH/$name-$ver-1.$ARCH.spz"
 	( cd "$pd" && tar -cf - . | xz -T0 -3 >"$out" ) || { bad "$name: tar failed"; return 1; }
 	ok "$(basename "$out") ($(du -h "$out" | cut -f1), $(wc -l <"$pd/.FILES") files)"
 }
 
 # ------------------------------------------------------------------- firefox
 step "packaging Firefox from Mozilla's official build"
-if ! ls "$R/base/$ARCH"/firefox-*.scrapsz >/dev/null 2>&1; then
+if ! ls "$R/base/$ARCH"/firefox-*.spz >/dev/null 2>&1; then
 	FF=$SRC/firefox-latest.tar.xz
 	[ -s "$FF" ] || curl -fL --retry 3 -o "$FF" \
 		'https://download.mozilla.org/?product=firefox-latest-ssl&os=linux64&lang=en-US' \
@@ -98,7 +98,7 @@ fi
 
 # -------------------------------------------------------------------- chrome
 step "packaging Google Chrome from Google's official build"
-if ! ls "$R/base/$ARCH"/google-chrome-*.scrapsz >/dev/null 2>&1; then
+if ! ls "$R/base/$ARCH"/google-chrome-*.spz >/dev/null 2>&1; then
 	CH=$SRC/google-chrome-stable.deb
 	[ -s "$CH" ] || curl -fL --retry 3 -o "$CH" \
 		'https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb' \
@@ -139,4 +139,4 @@ fi
 
 sh "$TREE/scraps/scraps-repo" gen "$R/base" "$ARCH" >/dev/null 2>&1 || :
 printf '\n  base now has %s binaries\n' \
-	"$(ls -1 "$R/base/$ARCH"/*.scrapsz 2>/dev/null | wc -l | tr -d ' ')"
+	"$(ls -1 "$R/base/$ARCH"/*.spz 2>/dev/null | wc -l | tr -d ' ')"

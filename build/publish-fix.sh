@@ -6,7 +6,7 @@
 # The fix repository is an ordinary binary repository with one extra file in
 # it. Every package the manifest names is copied in from the build repository
 # at the version the manifest asks for, so "scraps system fix" installs a real
-# .scrapsz and the system stays binary - there is no patch format and nothing is
+# .spz and the system stays binary - there is no patch format and nothing is
 # compiled on the machine taking the fix.
 #
 # Publishing is a copy, never a build: if the manifest names a version that
@@ -70,7 +70,7 @@ for pv in $want; do
 	# the lowest instead - and would have taken -10 over -2 - so a fix could
 	# be published as a package that predated it.
 	for r in main extra base kernels profile nonfree alt-nonfree multilib; do
-		for f in "$B/repo/$r/$ARCH/$name-$ver-"*.scrapsz; do
+		for f in "$B/repo/$r/$ARCH/$name-$ver-"*.spz; do
 			[ -f "$f" ] || continue
 			rel=${f##*-}
 			rel=${rel%%.*}
@@ -89,7 +89,7 @@ for pv in $want; do
 	# Drop any other release of the same package first, so the fix repository
 	# never offers two versions of one package and the index cannot pick the
 	# older of them.
-	rm -f "$DEST/$name-"*.scrapsz
+	rm -f "$DEST/$name-"*.spz
 	cp -f "$found" "$DEST/"
 	copied=$((copied + 1))
 	ok "$(basename "$found")"

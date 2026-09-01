@@ -1,7 +1,7 @@
 #!/bin/sh
 # scraps - ScrapLinux Package Manager
 #
-# Binary packages are .scrapsz - ScrapLinux Package Management Zip - which is a
+# Binary packages are .spz - Scraps Package Zip - which is a
 # tar.xz holding .PKGINFO, .FILES, an optional .INSTALL, and the payload rooted
 # at /. No GNU utilities are required at runtime.
 # shellcheck shell=sh disable=SC2039,SC2044,SC2086
@@ -100,8 +100,10 @@ ${A_ICE}────${C_R} ${C_B}the system${C_R}
                             one level (major, minor, change, bugfix)
   system upgrade            sync, upgrade packages and kernel, update the
                             bootloader, apply pending fixes, reconcile
-                            system.conf
+                            system.conf - in place, nothing removed, no
+                            new tarball needed
   system upgrade <what>     the same, but only one area or level of fix
+  system fix, system update  same as upgrade - here for the name
 
 ${A_ICE}────${C_R} ${C_B}asking${C_R}
   list [-e]                 what is installed (-e: only what you asked for)
@@ -124,7 +126,7 @@ ${A_ICE}────${C_R} ${C_B}looking after it${C_R}
   snapshot [name]           save the package state
   rollback [id]             undo a transaction, restoring what it replaced
   log                       what has been done
-  build <recipe>            build an .scrapsz from a port recipe
+  build <recipe>            build an .spz from a port recipe
   get <pkg>...              unpack a package here without installing it
   get -s <pkg>...           fetch its upstream source here
   version                   print the version
@@ -393,7 +395,7 @@ fetch_pkg() {
 	for _c in "$pkg" "$ver" "$rel" "$arch"; do
 		safe_component "$_c" || die "package index entry for $pkg has an unsafe field ('$_c') - refusing to fetch"
 	done
-	file="$pkg-$ver-$rel.$arch.scrapsz"
+	file="$pkg-$ver-$rel.$arch.spz"
 	dest="$SCRAPS_CACHE/pkg/$file"
 	url=$(scraps_repo_url "$repo")
 	pkgbase=$(scraps_repo_pkgurl "$repo")
@@ -437,7 +439,7 @@ install_one() {
 	tmp="$SCRAPS_CACHE/build/.unpack.$$"
 	rm -rf "$tmp"; mkdir -p "$tmp"
 	untar "$archive" "$tmp" || die "cannot unpack $archive"
-	[ -f "$tmp/.PKGINFO" ] || die "$archive is not a valid .scrapsz (no .PKGINFO)"
+	[ -f "$tmp/.PKGINFO" ] || die "$archive is not a valid .spz (no .PKGINFO)"
 
 	name=$(meta "$tmp/.PKGINFO" name)
 	ver=$(meta "$tmp/.PKGINFO" version)
@@ -447,7 +449,7 @@ install_one() {
 
 	# name becomes $SCRAPS_DB/local/$name below - a .PKGINFO is part of the
 	# package payload itself, not something scraps generated, so a hostile
-	# .scrapsz could otherwise put "../" in its own name and write its database
+	# .spz could otherwise put "../" in its own name and write its database
 	# entry (and everything install_one files under $db) outside SCRAPS_DB.
 	safe_component "$name" || die "$archive has an unsafe package name in .PKGINFO ('$name')"
 
@@ -1003,9 +1005,9 @@ cmd_ins_source() {
 		# The same directory scraps-build writes to. Hardcoding
 		# $SCRAPS_CACHE/build/out meant that whenever SCRAPS_BUILDROOT pointed
 		# anywhere else - which is exactly what the batch builds and any
-		# scratch root do - the build succeeded, wrote its .scrapsz, and then
+		# scratch root do - the build succeeded, wrote its .spz, and then
 		# `scraps ins -s` said "build produced no package" and threw it away.
-		out=$(ls -t "${SCRAPS_BUILDROOT:-$SCRAPS_CACHE/build}/out/$p"-*.scrapsz 2>/dev/null | head -1)
+		out=$(ls -t "${SCRAPS_BUILDROOT:-$SCRAPS_CACHE/build}/out/$p"-*.spz 2>/dev/null | head -1)
 		[ -n "$out" ] || die "build produced no package for $p"
 		tx_begin; HOOK_KERNEL=""; REASON=explicit
 		install_one "$out"
@@ -1084,7 +1086,7 @@ purge_junk() {
 	# .scrapsnew / .scrapssave files left by config merges.
 	find "$SCRAPS_ROOT/etc" -name "*.scrapsnew" -o -name "*.scrapssave" 2>/dev/null | \
 		while read -r _pj_f; do rm -f "$_pj_f"; done
-	rm -f "$SCRAPS_CACHE/pkg/$name"-*.scrapsz
+	rm -f "$SCRAPS_CACHE/pkg/$name"-*.spz
 }
 
 find_orphans() {
@@ -1484,7 +1486,7 @@ cmd_update() {
 # rebuilding it from a newer image.
 #
 # The fix repository is where those corrections live. It is an ordinary binary
-# repository - the packages in it are .scrapsz files like any other, so applying
+# repository - the packages in it are .spz files like any other, so applying
 # a fix is still an install and the system stays binary - with one extra file,
 # FIXES, that says which package carries which correction, how much it matters
 # and what part of the system it touches:
@@ -1748,7 +1750,15 @@ cmd_system() {
 	case "${1:-}" in
 	get)     shift; cmd_system_get "$@" ;;
 	check)   shift; cmd_system_check "$@" ;;
-	upgrade|up) shift; cmd_system_upgrade "$@" ;;
+	# fix/update: not separate behavior, just names people reach for out of
+	# habit from other package managers - both do exactly what upgrade does.
+	# "fix" specifically used to be a real, different command here (see
+	# docs/STATUS.md - it conflated "what's pending" with "apply it", which
+	# is exactly why it was split into check/upgrade in the first place).
+	# Bringing the *word* back as an alias for upgrade doesn't reintroduce
+	# that bug: it's not a separate code path, it's the same one check/
+	# upgrade already agree on.
+	upgrade|up|fix|update) shift; cmd_system_upgrade "$@" ;;
 	"")      die "usage: scraps system <get|check|upgrade>" ;;
 	*)       die "unknown system command: $1 (try get, check or upgrade)" ;;
 	esac
@@ -2176,7 +2186,7 @@ cmd_clean() {
 	sz=$(du -sk "$SCRAPS_CACHE/pkg" 2>/dev/null | cut -f1)
 	msg "Cache holds $(human $(( ${sz:-0} * 1024 )))"
 	confirm "Delete cached packages?" || return 1
-	rm -f "$SCRAPS_CACHE"/pkg/*.scrapsz
+	rm -f "$SCRAPS_CACHE"/pkg/*.spz
 	rm -rf "$SCRAPS_CACHE"/build/*
 	ok "cache cleared"
 }

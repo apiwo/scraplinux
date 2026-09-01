@@ -74,7 +74,7 @@ scan_one() {
 total=0
 for d in $DIRS; do
 	[ -d "$d" ] || continue
-	for a in "$d"/*.scrapsz; do
+	for a in "$d"/*.spz; do
 		[ -f "$a" ] || continue
 		total=$((total + 1))
 		printf '\r  scanned %s packages' "$total" >&2

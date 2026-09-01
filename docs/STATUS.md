@@ -87,7 +87,7 @@ releases); the version lives in the release tag and in
 
 Binaries and recipes are on separate hosts and never mix:
 
-- **raw.githubusercontent.com/apiwo/scraplinux-pkgs** serves `.scrapsz`
+- **raw.githubusercontent.com/apiwo/scraplinux-pkgs** serves `.spz`
   binaries only - main, extra, base, kernels, profile, nonfree, alt-nonfree,
   multilib, fix, big. This is what `/etc/scraps/repos.d` points at. It is
   deliberately *not* pkg-scraplinux.apiwow.net: that domain sits behind a CDN
@@ -285,7 +285,7 @@ paths point into the sysroot rather than at `/usr` on the build host.
   since uses `WLR_BACKENDS=headless` (fully offscreen, no display/session
   involved) instead. Second, separately: the fixed build was never
   actually published - `scraps add -s dwl` installs straight into the
-  chroot doing the build, and the built `.scrapsz` was never copied from
+  chroot doing the build, and the built `.spz` was never copied from
   there into the shared package repo, so the repo kept serving the old,
   wlroots-0.19-linked binary the whole time despite the recipe fix being
   correct and committed. A completely fresh `scraps add dwl` against the
@@ -917,7 +917,7 @@ paths point into the sysroot rather than at `/usr` on the build host.
 - **Kernel packages could not be installed by the name everything documented.**
   They were built as `ScrapLinux-base-kernel` while `install.conf`, the docs and
   every other package used lowercase. Standardised on lowercase, including
-  rewriting the name inside the already-built `.scrapsz` files - renaming the
+  rewriting the name inside the already-built `.spz` files - renaming the
   file is not enough, `install_one` takes the name from `.PKGINFO`.
 - **Installing a kernel re-fetched glibc on a system that already had it.**
   Resolution skipped already-satisfied packages silently, so a re-fetch and a
@@ -935,7 +935,7 @@ paths point into the sysroot rather than at `/usr` on the build host.
   the flag being passed at all. Both trees are wiped now - the tarballs are
   cached separately, so re-extracting costs nothing.
 - **`build-batch.sh` skipped packages it had never built.** It tested
-  `<name>-*.scrapsz`, so `wayland-protocols-1.48-1.x86_64.scrapsz` answered for
+  `<name>-*.spz`, so `wayland-protocols-1.48-1.x86_64.spz` answered for
   `wayland`: wayland was reported "already built" on every run while nothing
   provided it. Matched on the decoded package name now.
 - **`--cap-drop ALL` in the sandbox broke every source build.** Dropping
