@@ -4,13 +4,16 @@ set -u
 [ "${SCRAPLINUX_SANDBOX:-0}" = "1" ] || { echo "run through scraplinux-sandbox" >&2; exit 1; }
 B=/home/apiwo/scraplinux-build
 TREE=/home/apiwo/scraplinux
+# Same fix as build-batch.sh: $TREE/ports is an empty leftover from before
+# the ports tree moved into its own scraplinux-ports repo.
+PORTS=${SCRAPLINUX_PORTS:-/home/apiwo/scraplinux-build/arctic-build/src-extra/arctic-linux-ports/ALL}
 export SCRAPS_CACHE="$B/profile-cache"
 export SCRAPS_BUILDROOT="$B/profile-build"
 export SCRAPS_COLOR=never
 mkdir -p "$B/repo/profile/x86_64"
 
 ok=0; bad=0
-for d in "$TREE"/ports/profile/*/; do
+for d in "$PORTS"/profile/*/; do
 	[ -f "$d/recipe" ] || continue
 	n=$(basename "$d")
 	if sh "$TREE/scraps/scraps-build" "$d/recipe" >"$B/logs/profile-$n.log" 2>&1; then

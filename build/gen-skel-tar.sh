@@ -15,7 +15,10 @@
 set -eu
 
 TREE=${SCRAPLINUX_TREE:-/home/apiwo/scraplinux}
-DEST=${1:-$TREE/ports/main/scraplinux-base}
+# $TREE/ports is an empty leftover from before the ports tree moved into
+# its own scraplinux-ports repo - point at where it actually lives now.
+PORTS=${SCRAPLINUX_PORTS:-/home/apiwo/scraplinux-build/arctic-build/src-extra/arctic-linux-ports/ALL}
+DEST=${1:-$PORTS/main/scraplinux-base}
 
 mkdir -p "$DEST"
 ( cd "$TREE/skel" && tar -cf "$DEST/skel.tar" . )

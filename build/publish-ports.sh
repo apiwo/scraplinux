@@ -8,12 +8,21 @@
 # ever fetches from (scraps's SCRAPS_PORTS), and the binary mirror carries no
 # recipes at all. The layout it serves is ALL/<repo>/<name>/recipe, which is
 # what scraps's ports_repo_of() looks a package up in manifest.tsv to build.
+#
+# Written for a ports tree that lived inside this repo and got pushed out to
+# a separate checkout; the ports tree has since become its own
+# independently-cloned-and-pushed repo (scraplinux-ports) with no second
+# copy anywhere, so SRC and SITE below usually resolve to the same
+# checkout - this still runs, it is just a same-directory no-op sync rather
+# than the two-tree publish step the comment above describes. Left as-is
+# rather than redesigned; not on the critical path for building packages.
 # shellcheck shell=sh disable=SC2039
 
 set -eu
 
 B=${SCRAPLINUX_BUILD:-/home/apiwo/scraplinux-build}
 TREE=${SCRAPLINUX_TREE:-/home/apiwo/scraplinux}
+SRC=${SCRAPLINUX_PORTS:-/home/apiwo/scraplinux-build/arctic-build/src-extra/arctic-linux-ports/ALL}
 SITE=${1:-$B/src-extra/scraplinux-ports}
 
 REPOS="main extra base kernels profile nonfree alt-nonfree multilib"
@@ -24,14 +33,14 @@ step() { printf '\n:: %s\n' "$*"; }
 note() { printf '   %s\n' "$*"; }
 
 step "regenerating recipes from the manifest"
-python3 "$TREE/ports/gen-ports.py" >/dev/null
-note "$(grep -vc '^#' "$TREE/ports/manifest.tsv") packages in the manifest"
+python3 "$SRC/gen-ports.py" >/dev/null
+note "$(grep -vc '^#' "$SRC/manifest.tsv") packages in the manifest"
 
 step "syncing the ports tree"
-cp -f "$TREE/ports/manifest.tsv" "$SITE/ALL/manifest.tsv"
-cp -f "$TREE/ports/gen-ports.py" "$SITE/ALL/gen-ports.py"
+cp -f "$SRC/manifest.tsv" "$SITE/ALL/manifest.tsv"
+cp -f "$SRC/gen-ports.py" "$SITE/ALL/gen-ports.py"
 for r in $REPOS; do
-	src="$TREE/ports/$r"
+	src="$SRC/$r"
 	dst="$SITE/ALL/$r"
 	if [ ! -d "$src" ]; then
 		# A category that no longer exists in the manifest must not stay

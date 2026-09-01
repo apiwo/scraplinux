@@ -17,7 +17,9 @@
 set -u
 
 TREE=${SCRAPLINUX_TREE:-/home/apiwo/scraplinux}
-PORTS=$TREE/ports
+# $TREE/ports is an empty leftover from before the ports tree moved into
+# its own scraplinux-ports repo - point at where it actually lives now.
+PORTS=${SCRAPLINUX_PORTS:-/home/apiwo/scraplinux-build/arctic-build/src-extra/arctic-linux-ports/ALL}
 
 if [ $# -gt 0 ]; then
 	RECIPES=$*
