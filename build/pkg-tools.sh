@@ -89,13 +89,14 @@ cp -a "$SRCTREE/skel/etc" "$pd/etc"
 cp -a "$SRCTREE/skel/usr/." "$pd/usr/"
 rm -rf "$pd/etc/scraps"          # scraps owns those files
 rm -f "$pd/etc/busybox.conf"   # busybox owns that file
+rm -f "$pd/usr/bin/wifi-connect" # wifi-connect-cli owns that file now
 chmod +x "$pd/etc/rc.boot" "$pd/etc/rc.shutdown" "$pd/etc/rc.d"/* "$pd/usr/bin"/*
 for f in "$SRCTREE"/branding/ascii/*; do
 	[ -f "$f" ] && install -Dm644 "$f" "$pd/usr/share/scraplinux/ascii/$(basename "$f")"
 done
 emit "$pd" scraplinux-base "$VERSION" main \
 	"ScrapLinux base configuration, init scripts and branding" "GPL-3.0-or-later" \
-	"https://github.com/apiwo/scraplinux" "busybox iw wpa_supplicant" \
+	"https://github.com/apiwo/scraplinux" "busybox wpa_supplicant" \
 	"etc/passwd etc/group etc/shadow etc/gshadow etc/inittab etc/profile etc/zsh/zshrc etc/doas.conf etc/scraps/scraps.conf" \
 	"arctic-base"
 
