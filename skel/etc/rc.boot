@@ -23,7 +23,7 @@ esac
 # No banner. It printed the release out of /etc/scraplinux-release above the
 # boot, which is a version string nobody needs at the top of every boot and
 # which was wrong for a long time anyway - the installer stamped every machine
-# "Alpha 1.1" whatever image it came from. `scraplinuxfetch` answers the question
+# "Alpha 1.1" whatever image it came from. `fastfetch` answers the question
 # when it is actually being asked.
 
 # --------------------------------------------------------------- pseudo filesystems

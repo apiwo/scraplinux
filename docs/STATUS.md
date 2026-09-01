@@ -28,7 +28,7 @@ This round moved to tarball-only distribution - no ISO, no guided
 installer, manual partitioning/format/chroot instead. Tarball filenames
 carry no version (`scraplinux-def-tarball.tar.xz`, stable across
 releases); the version lives in the release tag and in
-`/etc/scraplinux-release`, which `scraplinuxfetch` reads.
+`/etc/scraplinux-release`, which `fastfetch`/`neofetch` read.
 
 ## Core system
 
