@@ -65,7 +65,7 @@ SCRAPS_FORMAT="2"
 # it runs as whoever runs scraps, and lives under /etc like the rest of scraps's
 # configuration.
 scraps_theme_defaults() {
-	: "${T_ACCENT:=44}" ; : "${T_OK:=49}"  ; : "${T_WARN:=215}"
+	: "${T_ACCENT:=178}" ; : "${T_OK:=49}"  ; : "${T_WARN:=215}"
 	: "${T_ERR:=203}"   ; : "${T_DIM:=245}"; : "${T_TEXT:=231}"
 	: "${T_MARK_INFO:=*}"  ; : "${T_MARK_OK:=✓}" ; : "${T_MARK_FETCH:=◈}"
 	: "${T_MARK_ADD:=+}"   ; : "${T_MARK_HELD:==}"
@@ -106,7 +106,10 @@ scraps_load_theme() {
 
 # ---------------------------------------------------------------- presentation
 
-# ScrapLinux palette, lifted from the logo gradient: violet -> ice -> teal.
+# ScrapLinux palette. T_ACCENT is the brand's gray/yellow accent (matches the
+# site's #e8b923); the named colors below (A_ICE/A_TEAL/etc.) are still named
+# after the old violet -> ice -> teal logo gradient, they just all read
+# T_ACCENT now rather than looking literally icy/teal.
 #
 # A function, not a straight-line block: SCRAPS_STYLE (and any theme it names)
 # is only known after scraps.conf has been read, which happens well after this

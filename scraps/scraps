@@ -46,11 +46,13 @@ trap 'scraps_cleanup; exit 143' TERM
 
 ARCH=${SCRAPS_ARCH:-x86_64}
 NOMOD=0
-# ScrapLinux installs from source by default - a binary is the opt-out, not
-# the other way around. SCRAPS_BUILD_MODE (scraps.conf) picks the default;
-# -s/-b on the command line always win over it either way.
-SOURCE=1
-[ "${SCRAPS_BUILD_MODE:-source}" = "binary" ] && SOURCE=0
+# Binary is the default install path - source is the opt-in (-s), not the
+# other way around: a source-first default meant `scraps add <pkg>` failed
+# outright for anything without a source recipe, even when a perfectly good
+# binary was one flag away. SCRAPS_BUILD_MODE (scraps.conf) picks the
+# default; -s/-b on the command line always win over it either way.
+SOURCE=0
+[ "${SCRAPS_BUILD_MODE:-binary}" = "source" ] && SOURCE=1
 RAW=0
 # run_hooks reads this, and every command that reaches it has to have set it
 # first. "scraps commit" did not, so with set -u it died on "HOOK_KERNEL:
