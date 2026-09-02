@@ -353,7 +353,31 @@ setup_s6() {
 	for s in $(each_service); do
 		cmd=$(svc_field "$RCD/$s" CMD)
 		args=$(svc_field "$RCD/$s" ARGS)
-		[ -n "$cmd" ] || continue
+		if [ -z "$cmd" ]; then
+			# No daemon to supervise (network/wifi: the rc.d script defines
+			# start()/stop() itself and returns, same case setup_openrc()
+			# handles by calling back into it directly). That shape is a
+			# one-shot action, not a process to keep alive - 66's oneshot
+			# type is the correct fit; s6-rc has no equivalent "longrun"
+			# for it, so only the 66 frontend is written, not an
+			# /etc/s6/sv/$s directory. Skipping this case entirely (the
+			# previous behavior) left the service out of the tree while
+			# still listing it in scraplinux-default's bundle contents
+			# below - 66 boot/s6-rc-compile would fail on a bundle member
+			# that was never actually created.
+			{
+				printf '[main]\n'
+				printf '@type = oneshot\n'
+				printf '@version = 0.0.1\n'
+				printf '@description = "%s"\n' "$s"
+				printf '@user = ( root )\n\n'
+				printf '[start]\n'
+				printf '@execute = ( /etc/rc.d/%s start )\n' "$s"
+				printf '[stop]\n'
+				printf '@execute = ( /etc/rc.d/%s stop )\n' "$s"
+			} >"$ROOT/etc/66/service/$s"
+			continue
+		fi
 
 		# s6-rc longrun: a service directory with a run script.
 		mkdir -p "$ROOT/etc/s6/sv/$s"
@@ -442,6 +466,7 @@ setup_systemd() {
 
 case "$INIT" in
 busybox)                setup_busybox ;;
+s66|s6)                 setup_s6 ;;
 openrc)                 setup_openrc ;;
 sysvinit)               setup_sysvinit ;;
 runit)                  setup_runit ;;

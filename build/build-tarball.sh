@@ -250,6 +250,31 @@ if [ "$FLAVOR" = openrc ]; then
 	done
 fi
 
+if [ "$FLAVOR" = s66 ]; then
+	step "adding s6 + 66"
+	# 66 boot (wired up below as /sbin/init) needs both s6 itself, the
+	# supervisor it drives, and oblibs, 66's own base library - neither
+	# was ever actually staged into the tarball before this, only the
+	# init-wiring step further down that looks for the binary afterward.
+	# Without this the wiring step always warned "66 binary not found"
+	# and fell through with no PID1 at all.
+	# libxcrypt/pam: close_libs() below is a last-resort catch-all for
+	# whatever a package's metadata didn't declare, not a substitute for
+	# real deps - it failed to map libcrypt.so.2/libpam.so.0 back to the
+	# packages that provide them (libxcrypt, pam), so 66/s6/oblibs need
+	# them listed explicitly the same way openrc/wayland's sets do above.
+	S66_SET=$(pkg_deps s6 66 oblibs libxcrypt pam)
+	if printf '%s\n' $BASE_SET | grep -qx util-linux && \
+	   printf '%s\n' $S66_SET | grep -qx util-linux-libs; then
+		S66_SET=$(printf '%s\n' $S66_SET | grep -vx util-linux-libs)
+	fi
+	for p in $S66_SET; do
+		reason=dep
+		case " s6 66 " in *" $p "*) reason=explicit ;; esac
+		unpack_pkg "$p" "$reason" && ok "$p"
+	done
+fi
+
 if [ "$FLAVOR" = wayland ]; then
 	step "adding SDDM + the Wayland compositor lineup (dwl/labwc/tinywl/wio/niri)"
 	# Every compositor's own -dms profile package pulls in that compositor
