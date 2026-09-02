@@ -21,6 +21,9 @@ ports/
 # Rust build output
 scraps-rs/target/
 
+# Local tooling output - never published here
+graphify-out/
+
 # Editor and OS noise
 *.swp
 *~
