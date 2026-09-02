@@ -202,7 +202,14 @@ unpack_pkg() {
 # autotools recipe - the large majority of the ports tree - failed at the
 # first `gmake -j"$JOBS"` on a fresh install with "gmake: not found", not
 # from any actual problem with the package being built.
-BASE_EXPLICIT="glibc toybox busybox zsh doas e2fsprogs util-linux dosfstools onetrueawk xz libarchive eudev iw wpa_supplicant ca-certificates curl bmake byacc mandoc gmake"
+# libxcrypt/pam: close_libs() below is a last-resort catch-all for whatever a
+# package's metadata didn't declare, not a substitute for real deps - it
+# cannot map libcrypt.so.2/libpam.so.0 back to the packages that provide
+# them (libxcrypt, pam), and doas (every flavor bundles it) needs libcrypt
+# for its own password checks against /etc/shadow. s6/66's own explicit set
+# happened to need them too and masked this for the s66 flavor only - def
+# and openrc built "clean" every time except for silently missing both.
+BASE_EXPLICIT="glibc toybox busybox zsh doas e2fsprogs util-linux dosfstools onetrueawk xz libarchive eudev iw wpa_supplicant ca-certificates curl bmake byacc mandoc gmake libxcrypt pam"
 BASE_SET=$(pkg_deps $BASE_EXPLICIT)
 # e2fsprogs depends on util-linux-libs, which BASE_EXPLICIT's own util-linux
 # already replaces (same libmount/libblkid/libuuid, see its recipe) - this
