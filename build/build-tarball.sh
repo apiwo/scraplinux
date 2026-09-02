@@ -410,12 +410,20 @@ s66)
 	fi
 	;;
 def|wayland)
-	# busybox's own init, already unpacked as usr/bin/init above via the
-	# busybox package's applet symlinks - nothing further to do. wayland
-	# bundles a desktop on top, but stays busybox init throughout - sddm
-	# itself is what actually starts the graphical session, from a
-	# regular getty-driven login same as any other busybox-init service.
-	ok "busybox init"
+	# busybox's own package no longer claims /usr/bin/init unconditionally
+	# (that conflicted with 66 on s66 systems, which install busybox too for
+	# its other applets) - wire the symlink here instead, same as every other
+	# flavor wires its own PID1. wayland bundles a desktop on top, but stays
+	# busybox init throughout - sddm itself is what actually starts the
+	# graphical session, from a regular getty-driven login same as any other
+	# busybox-init service.
+	mkdir -p "$S/sbin"
+	if [ -f "$S/usr/bin/busybox" ]; then
+		ln -sf ../usr/bin/busybox "$S/sbin/init"
+		ok "busybox init wired as /sbin/init"
+	else
+		printf '   warning: busybox binary not found in the unpacked package\n' >&2
+	fi
 	;;
 openrc)
 	# openrc-init is OpenRC's own PID1, not a script busybox init runs -
