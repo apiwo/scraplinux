@@ -366,15 +366,15 @@ setup_s6() {
 			# below - 66 boot/s6-rc-compile would fail on a bundle member
 			# that was never actually created.
 			{
-				printf '[main]\n'
-				printf '@type = oneshot\n'
-				printf '@version = 0.0.1\n'
-				printf '@description = "%s"\n' "$s"
-				printf '@user = ( root )\n\n'
-				printf '[start]\n'
-				printf '@execute = ( /etc/rc.d/%s start )\n' "$s"
-				printf '[stop]\n'
-				printf '@execute = ( /etc/rc.d/%s stop )\n' "$s"
+				printf '[Main]\n'
+				printf 'Type = oneshot\n'
+				printf 'Version = 0.0.1\n'
+				printf 'Description = "%s"\n' "$s"
+				printf 'User = ( root )\n\n'
+				printf '[Start]\n'
+				printf 'Execute = ( /etc/rc.d/%s start )\n\n' "$s"
+				printf '[Stop]\n'
+				printf 'Execute = ( /etc/rc.d/%s stop )\n' "$s"
 			} >"$ROOT/etc/66/service/$s"
 			continue
 		fi
@@ -401,13 +401,13 @@ setup_s6() {
 
 		# The 66 frontend description for the same service.
 		{
-			printf '[main]\n'
-			printf '@type = classic\n'
-			printf '@version = 0.0.1\n'
-			printf '@description = "%s"\n' "$s"
-			printf '@user = ( root )\n\n'
-			printf '[start]\n'
-			printf '@execute = ( %s %s )\n' "$cmd" "$args"
+			printf '[Main]\n'
+			printf 'Type = classic\n'
+			printf 'Version = 0.0.1\n'
+			printf 'Description = "%s"\n' "$s"
+			printf 'User = ( root )\n\n'
+			printf '[Start]\n'
+			printf 'Execute = ( %s %s )\n' "$cmd" "$args"
 		} >"$ROOT/etc/66/service/$s"
 	done
 
@@ -418,8 +418,32 @@ setup_s6() {
 	for s in $(each_service); do
 		is_enabled "$s" && printf '%s\n' "$s" >>"$ROOT/etc/s6/sv/scraplinux-default/contents"
 	done
+
+	# 66 does not run any of the above: it never reads /etc/s6/sv or an
+	# s6-rc-compiled database (that stays here only in case anything else
+	# in the tree still expects it) - it has its own tree/enable model.
+	# `66 boot` only ever starts trees in the `boot` *group*, and a tree
+	# starts with zero services until each one is individually `66
+	# enable`d into it - writing frontend files under /etc/66/service
+	# alone leaves the tree empty, so a real boot would come up to PID1
+	# and then start nothing at all: no network, no login, nothing.
+	# A tree in the `boot` group cannot be `66 tree enable`d itself (that
+	# subcommand refuses it - see `66 tree` docs) because it is *always*
+	# brought up by `boot`, unconditionally - so creating it with
+	# groups=boot is enough at the tree level; only the services still
+	# need the explicit per-service enable.
+	if [ -x "$ROOT/usr/bin/66" ]; then
+		chroot "$ROOT" 66 tree create -o groups=boot scraplinux-default 2>/dev/null || :
+		for s in $(each_service); do
+			is_enabled "$s" || continue
+			chroot "$ROOT" 66 -t scraplinux-default enable "$s" \
+				|| msg "s6-66: WARNING - could not enable $s in scraplinux-default"
+		done
+		msg "s6-66: scraplinux-default tree created (boot group) and services enabled"
+	else
+		msg "s6-66: WARNING - /usr/bin/66 not present in $ROOT - services written but never enabled; run the 66 tree create/enable steps above by hand once 66 is installed"
+	fi
 	msg "s6-66: service dirs in /etc/s6/sv, 66 frontends in /etc/66/service"
-	msg "s6-66: compile the database on the target with: s6-rc-compile /etc/s6/rc/compiled /etc/s6/sv"
 }
 
 # ------------------------------------------------------------------- systemd
