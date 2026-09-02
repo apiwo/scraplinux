@@ -219,6 +219,17 @@ fi
 # build machine's paths into the binary that ships.
 if [ -d "$SCRAPS_SYSROOT/usr" ]; then
 	export PKG_CONFIG_PATH="$SCRAPS_SYSROOT/usr/lib/pkgconfig:$SCRAPS_SYSROOT/usr/share/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+	# A .pc file's own libdir/includedir are absolute host paths as written
+	# ("/usr/lib", from whatever --prefix built it) - finding the right .pc
+	# file above does nothing for that, since PKG_CONFIG_PATH only says where
+	# to *look*, not how to *rewrite what it finds*. Without this, pkg-config
+	# hands the linker a literal "/usr/lib", which resolves inside the
+	# sandbox's read-only bind mount to the *host's* real library - openrc
+	# linking against the host's libpam.so ("incompatible with elf64-x86-64",
+	# a 32-bit copy on this multilib host) is exactly that, not a real openrc
+	# bug. PKG_CONFIG_SYSROOT_DIR is pkg-config's own mechanism for this: it
+	# prefixes any path variable a .pc file defines with this directory.
+	export PKG_CONFIG_SYSROOT_DIR="$SCRAPS_SYSROOT"
 	# cmake does not read PKG_CONFIG_PATH for find_package, so without this a
 	# cmake build cannot see anything ScrapLinux has built and either fails or -
 	# worse, and quietly - vendors its own copy. openexr shipped a second
