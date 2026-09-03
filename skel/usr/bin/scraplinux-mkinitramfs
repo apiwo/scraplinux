@@ -126,7 +126,7 @@ mount -t proc proc /proc
 mount -t sysfs sys /sys
 mount -t devtmpfs dev /dev 2>/dev/null || mount -t tmpfs dev /dev
 
-R=\$(printf '\033[0m'); TEAL=\$(printf '\033[38;5;44m'); RED=\$(printf '\033[38;5;203m')
+R=\$(printf '\033[0m'); TEAL=\$(printf '\033[38;5;178m'); RED=\$(printf '\033[38;5;203m')
 say()  { printf '%s::%s %s\n' "\$TEAL" "\$R" "\$*"; }
 oops() {
 	printf '\n%s!!%s %s\n\n' "\$RED" "\$R" "\$*"
@@ -140,6 +140,7 @@ for a in \$(cat /proc/cmdline); do
 	root=*)       ROOT=\${a#root=} ;;
 	rootfstype=*) ROOTFSTYPE=\${a#rootfstype=} ;;
 	rootflags=*)  ROOTFLAGS=\${a#rootflags=} ;;
+	rw|ro)        ROOTFLAGS=\$a ;;
 	rd.luks.uuid=*|cryptdevice=*) LUKSSPEC=\$a ;;
 	esac
 done
@@ -205,10 +206,10 @@ while [ "\$n" -lt 20 ] && [ ! -e "\$ROOT" ]; do sleep 1; n=\$((n+1)); done
 mount \${ROOTFSTYPE:+-t "\$ROOTFSTYPE"} -o "\$ROOTFLAGS" "\$ROOT" /newroot \\
 	|| oops "could not mount \$ROOT"
 
-mkdir -p /newroot/dev
+mkdir -p /newroot/dev /newroot/proc /newroot/sys
 mount --move /dev /newroot/dev 2>/dev/null || :
-umount /sys 2>/dev/null || :
-umount /proc 2>/dev/null || :
+mount --move /proc /newroot/proc 2>/dev/null || umount /proc 2>/dev/null || :
+mount --move /sys /newroot/sys 2>/dev/null || umount /sys 2>/dev/null || :
 exec switch_root /newroot /sbin/init
 INIT
 chmod 755 "$WORK/init"

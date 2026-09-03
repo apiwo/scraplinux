@@ -65,7 +65,10 @@ CONF="$BOOTDIR/limine.conf"
 # drift apart from whatever scraplinux-rebuild decided.
 kpath=$(awk '/^[[:space:]]*kernel_path:/{sub(/^[^:]*:[[:space:]]*/,""); print; exit}' "$CONF")
 kcmd=$(awk '/^[[:space:]]*kernel_cmdline:/{sub(/^[^:]*:[[:space:]]*/,""); print; exit}' "$CONF")
-mods=$(awk '/^[[:space:]]*module_path:/{print}' "$CONF")
+# Only the FIRST entry's module_path line(s) - not a bare pattern scan of the
+# whole file, which would also match lines already written into the
+# generations block below and re-multiply them every time this runs.
+mods=$(awk '/^\//{if(e)exit;e=1;next} e&&/^$/{exit} e&&/^[[:space:]]*module_path:/{print}' "$CONF")
 
 [ -n "$kpath" ] || { echo "scraplinux-boot-generations: could not read kernel_path from $CONF" >&2; exit 1; }
 
