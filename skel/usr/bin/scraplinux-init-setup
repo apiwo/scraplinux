@@ -411,10 +411,32 @@ setup_s6() {
 		} >"$ROOT/etc/66/service/$s"
 	done
 
+	# A console login prompt, always wanted, never listed among the rc.d-driven
+	# services above: it is not a daemon, and it is a reactor rather than a
+	# plain oneshot/classic Start - `boot.done` fires only once 66 boot has
+	# every enabled tree up, which is exactly when a login prompt should
+	# appear rather than racing the rest of boot. Without this, `66 boot`
+	# completes and raises boot.done to no one - the machine boots clean and
+	# then just sits there with no way to log in at the console.
+	{
+		printf '[Main]\n'
+		printf 'Type = classic\n'
+		printf 'Version = 0.0.1\n'
+		printf 'Description = "getty on tty1"\n'
+		printf 'User = ( root )\n\n'
+		printf '[Start]\n'
+		printf 'Execute = ( /sbin/getty 38400 tty1 linux )\n\n'
+		printf '[Event]\n'
+		printf 'EventType = user\n'
+		printf 'On = ( boot.done )\n'
+		printf 'Do = start\n'
+	} >"$ROOT/etc/66/service/tty1"
+
 	# The bundle s6-rc brings up at boot.
 	mkdir -p "$ROOT/etc/s6/sv/scraplinux-default"
 	printf 'bundle\n' >"$ROOT/etc/s6/sv/scraplinux-default/type"
 	: >"$ROOT/etc/s6/sv/scraplinux-default/contents"
+	printf 'tty1\n' >>"$ROOT/etc/s6/sv/scraplinux-default/contents"
 	for s in $(each_service); do
 		is_enabled "$s" && printf '%s\n' "$s" >>"$ROOT/etc/s6/sv/scraplinux-default/contents"
 	done
@@ -441,6 +463,8 @@ setup_s6() {
 		else _66() { 66 "$@"; }
 		fi
 		_66 tree create -o groups=boot scraplinux-default 2>/dev/null || :
+		_66 -t scraplinux-default enable tty1 \
+			|| msg "s6-66: WARNING - could not enable tty1 in scraplinux-default"
 		for s in $(each_service); do
 			is_enabled "$s" || continue
 			_66 -t scraplinux-default enable "$s" \
