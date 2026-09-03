@@ -206,6 +206,18 @@ while [ "\$n" -lt 20 ] && [ ! -e "\$ROOT" ]; do sleep 1; n=\$((n+1)); done
 mount \${ROOTFSTYPE:+-t "\$ROOTFSTYPE"} -o "\$ROOTFLAGS" "\$ROOT" /newroot \\
 	|| oops "could not mount \$ROOT"
 
+# Every boot path this distro ships wants root writable - there is no
+# read-only mode any rc.d script or limine entry actually relies on. This is
+# normally a no-op, since \$ROOTFLAGS already carries "rw" whenever the
+# kernel cmdline has it, but it is the one place in the whole boot chain
+# common to every init flavor, run before any of them exist yet - cheaper to
+# force it here, unconditionally, than to trust each flavor's own setup
+# script to remount root itself: runit's and nitro's generated stage-1
+# scripts do (setup_runit/setup_nitro in scraplinux-init-setup), s6/66's
+# does not, and a stale/misgenerated ROOTFLAGS should not be able to leave
+# root mounted ro under any of them.
+mount -o remount,rw /newroot 2>/dev/null || :
+
 mkdir -p /newroot/dev /newroot/proc /newroot/sys
 mount --move /dev /newroot/dev 2>/dev/null || :
 mount --move /proc /newroot/proc 2>/dev/null || umount /proc 2>/dev/null || :
