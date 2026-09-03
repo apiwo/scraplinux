@@ -411,6 +411,27 @@ setup_s6() {
 		} >"$ROOT/etc/66/service/$s"
 	done
 
+	# Every other setup_*() here forces root read-write as an early step of
+	# its own generated stage-1 (setup_runit, setup_nitro both do a literal
+	# "mount -o remount,rw /") - 66 has no equivalent single early-boot
+	# script to add that line to, since it drives everything through
+	# individually-enabled services instead. scraplinux-mkinitramfs now
+	# does the same remount itself, unconditionally, right before
+	# switch_root - which already covers every init flavor including this
+	# one and runs before 66 even starts. This oneshot is only the same
+	# belt-and-suspenders redundancy the other flavors get for free: a
+	# stale initramfs built before that fix landed would otherwise leave
+	# root ro under s6/66 with no other flavor-level safety net to catch it.
+	{
+		printf '[Main]\n'
+		printf 'Type = oneshot\n'
+		printf 'Version = 0.0.1\n'
+		printf 'Description = "root read-write"\n'
+		printf 'User = ( root )\n\n'
+		printf '[Start]\n'
+		printf 'Execute = ( mount -o remount,rw / )\n'
+	} >"$ROOT/etc/66/service/root-rw"
+
 	# A console login prompt, always wanted, never listed among the rc.d-driven
 	# services above: it is not a daemon, and it is a reactor rather than a
 	# plain oneshot/classic Start - `boot.done` fires only once 66 boot has
@@ -436,6 +457,7 @@ setup_s6() {
 	mkdir -p "$ROOT/etc/s6/sv/scraplinux-default"
 	printf 'bundle\n' >"$ROOT/etc/s6/sv/scraplinux-default/type"
 	: >"$ROOT/etc/s6/sv/scraplinux-default/contents"
+	printf 'root-rw\n' >>"$ROOT/etc/s6/sv/scraplinux-default/contents"
 	printf 'tty1\n' >>"$ROOT/etc/s6/sv/scraplinux-default/contents"
 	for s in $(each_service); do
 		is_enabled "$s" && printf '%s\n' "$s" >>"$ROOT/etc/s6/sv/scraplinux-default/contents"
@@ -463,6 +485,8 @@ setup_s6() {
 		else _66() { 66 "$@"; }
 		fi
 		_66 tree create -o groups=boot scraplinux-default 2>/dev/null || :
+		_66 -t scraplinux-default enable root-rw \
+			|| msg "s6-66: WARNING - could not enable root-rw in scraplinux-default"
 		_66 -t scraplinux-default enable tty1 \
 			|| msg "s6-66: WARNING - could not enable tty1 in scraplinux-default"
 		for s in $(each_service); do
