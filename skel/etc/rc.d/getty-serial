@@ -1,0 +1,10 @@
+#!/bin/sh
+# A login prompt on the serial console (ttyS0), matching the kernel
+# cmdline's console=ttyS0,115200. See rc.d/getty for why CMD wraps getty in
+# s6-setsid instead of calling it directly.
+NAME=getty-serial
+CMD=/usr/bin/s6-setsid
+ARGS="/sbin/getty -L 115200 ttyS0"
+BACKGROUND=no
+. /etc/scraplinux/svc.lib
+svc_main "$@"
