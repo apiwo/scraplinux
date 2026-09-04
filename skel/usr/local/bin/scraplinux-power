@@ -47,6 +47,7 @@ init_kind() {
 	openrc-init|rc)   echo openrc ;;
 	runit|runit-init) echo runit ;;
 	nitro)            echo nitro ;;
+	66)               echo s66 ;;
 	*)                echo busybox ;;
 	esac
 }
@@ -84,6 +85,17 @@ nitro)
 	case "$action" in
 	halt|poweroff) nitroctl Shutdown ;;
 	reboot)        nitroctl Reboot ;;
+	esac ;;
+s66)
+	# 66-hpr is 66's own halt/poweroff/reboot: it tells 66 to bring every
+	# supervised service down cleanly through the scandir before acting,
+	# the same job busybox init's SIGUSR1/SIGUSR2/SIGTERM handling does
+	# above - 66 has no signal-based equivalent, this binary is how you
+	# ask it.
+	case "$action" in
+	halt)     66-hpr -h ;;
+	poweroff) 66-hpr -p ;;
+	reboot)   66-hpr -r ;;
 	esac ;;
 esac
 
