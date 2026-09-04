@@ -352,6 +352,17 @@ install -Dm644 "$SRCTREE/skel/etc/scraplinux/svc.lib" "$S/etc/scraplinux/svc.lib
 
 install -Dm755 "$SRCTREE/skel/usr/bin/scraplinux-chroot" "$S/usr/bin/scraplinux-chroot"
 
+# Both belong here for the same reason scraplinux-chroot does: neither is
+# part of any real package payload (scraplinux-base is a meta package with
+# no files of its own), yet a kernel install's own post-install hook calls
+# scraplinux-mkinitramfs directly, and scraplinux-init-setup is what a real
+# installer runs once to wire /etc/rc.d into whatever init this flavor
+# uses. Without them physically here, a from-tarball install has no way to
+# ever get a working initramfs or service tree, regardless of which
+# package versions later land in a repo.
+install -Dm755 "$SRCTREE/skel/usr/bin/scraplinux-mkinitramfs" "$S/usr/bin/scraplinux-mkinitramfs"
+install -Dm755 "$SRCTREE/skel/usr/bin/scraplinux-init-setup" "$S/usr/bin/scraplinux-init-setup"
+
 # Minimal accounts and NSS config - not part of scraplinux-base, because
 # nothing glibc-based works at all without them, chroot included: with
 # no /etc/passwd, getpwuid(0) fails and even `id` inside the chroot says
