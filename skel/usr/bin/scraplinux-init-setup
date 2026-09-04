@@ -432,33 +432,26 @@ setup_s6() {
 		printf 'Execute = ( mount -o remount,rw / )\n'
 	} >"$ROOT/etc/66/service/root-rw"
 
-	# A console login prompt, always wanted, never listed among the rc.d-driven
-	# services above: it is not a daemon, and it is a reactor rather than a
-	# plain oneshot/classic Start - `boot.done` fires only once 66 boot has
-	# every enabled tree up, which is exactly when a login prompt should
-	# appear rather than racing the rest of boot. Without this, `66 boot`
-	# completes and raises boot.done to no one - the machine boots clean and
-	# then just sits there with no way to log in at the console.
-	{
-		printf '[Main]\n'
-		printf 'Type = classic\n'
-		printf 'Version = 0.0.1\n'
-		printf 'Description = "getty on tty1"\n'
-		printf 'User = ( root )\n\n'
-		printf '[Start]\n'
-		printf 'Execute = ( /sbin/getty 38400 tty1 linux )\n\n'
-		printf '[Event]\n'
-		printf 'EventType = user\n'
-		printf 'On = ( boot.done )\n'
-		printf 'Do = start\n'
-	} >"$ROOT/etc/66/service/tty1"
+	# A console login prompt used to be written here as its own hardcoded
+	# "tty1" service, reacting to the `boot.done` user event (66 boot
+	# reaches every enabled tree, then raises boot.done to whatever is
+	# listening - without a listener the machine boots clean and then just
+	# sits there with no way to log in). That predates /etc/rc.d/getty,
+	# which now does the same job as a normal enabled service instead: it
+	# starts as part of the boot tree like network or dbus, no event needed,
+	# and - critically - wraps getty in s6-setsid the way a bare `Execute =
+	# ( /sbin/getty ... )` here never did (see rc.d/getty's own comment for
+	# why busybox getty crash-loops silently without that wrapper under s6
+	# supervision). Keeping both meant two getty processes racing for the
+	# same tty1 - each_service() below already turns rc.d/getty into its own
+	# 66 entry, so this hardcoded one is now pure duplication, removed
+	# rather than fixed in place.
 
 	# The bundle s6-rc brings up at boot.
 	mkdir -p "$ROOT/etc/s6/sv/scraplinux-default"
 	printf 'bundle\n' >"$ROOT/etc/s6/sv/scraplinux-default/type"
 	: >"$ROOT/etc/s6/sv/scraplinux-default/contents"
 	printf 'root-rw\n' >>"$ROOT/etc/s6/sv/scraplinux-default/contents"
-	printf 'tty1\n' >>"$ROOT/etc/s6/sv/scraplinux-default/contents"
 	for s in $(each_service); do
 		is_enabled "$s" && printf '%s\n' "$s" >>"$ROOT/etc/s6/sv/scraplinux-default/contents"
 	done
@@ -487,8 +480,6 @@ setup_s6() {
 		_66 tree create -o groups=boot scraplinux-default 2>/dev/null || :
 		_66 -t scraplinux-default enable root-rw \
 			|| msg "s6-66: WARNING - could not enable root-rw in scraplinux-default"
-		_66 -t scraplinux-default enable tty1 \
-			|| msg "s6-66: WARNING - could not enable tty1 in scraplinux-default"
 		for s in $(each_service); do
 			is_enabled "$s" || continue
 			_66 -t scraplinux-default enable "$s" \
