@@ -1,0 +1,36 @@
+#!/bin/sh
+# ScrapLinux - coldplug: load drivers for hardware already present at boot.
+#
+# udevd only reacts to *new* uevents. Everything already plugged in when the
+# daemon starts - the wifi card, the GPU, the disks - announced itself before
+# there was anything listening, so without replaying those events no driver
+# for existing hardware is ever loaded. That replay is the coldplug pass.
+#
+# /etc/rc.boot has always done this, but rc.boot is the busybox-init boot
+# script: under s6/66 it never runs, so an s66 system did the whole boot
+# without a single coldplug. The visible symptom was wifi - iwlwifi.ko and
+# its firmware both present and correct on disk, but never inserted, so
+# /sys/class/net held nothing but lo and wifi-connect reported "no wireless
+# interface found - is the driver loaded?" - which was exactly the right
+# question.
+#
+# A oneshot, not a supervised daemon: it replays the events, they get
+# handled, it is done. Ordered after udevd because there has to be a daemon
+# listening for the replay to reach.
+NAME=udev-trigger
+
+start() {
+	command -v udevadm >/dev/null 2>&1 || return 0
+	udevadm trigger --action=add --type=subsystems 2>/dev/null
+	udevadm trigger --action=add --type=devices 2>/dev/null
+	# Bounded: a device that never settles must not hold the boot open.
+	udevadm settle --timeout=30 2>/dev/null
+	return 0
+}
+
+stop() {
+	return 0
+}
+
+. /etc/scraplinux/svc.lib
+svc_main "$@"
