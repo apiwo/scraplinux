@@ -3,8 +3,9 @@
 #
 #   build-tarball.sh          s6 + 66 wired up as init (default)
 #   build-tarball.sh s66      same, named explicitly
-#   build-tarball.sh def      busybox init instead
+#   build-tarball.sh busybox  busybox init instead ("def" still accepted)
 #   build-tarball.sh openrc   OpenRC wired up as init instead
+#   build-tarball.sh i3wl     s6 + 66, with i3wl bundled as the session
 #   build-tarball.sh wayland  busybox init, SDDM + a Wayland compositor
 #                             lineup bundled directly (dwl, labwc, tinywl,
 #                             wio, niri - pick one at the SDDM login screen)
@@ -20,6 +21,10 @@
 set -eu
 
 FLAVOR=${1:-s66}
+# "def" was never a description of anything - it meant busybox init, which is
+# what the flavor has always actually been. Renamed to say so; the old name
+# still works so nothing that calls this by hand breaks.
+[ "$FLAVOR" = def ] && FLAVOR=busybox
 B=${SCRAPLINUX_BUILD:-/home/apiwo/scraplinux-build}
 SRCTREE=${SCRAPLINUX_TREE:-/home/apiwo/scraplinux}
 REPO=$B/repo
@@ -28,12 +33,16 @@ SCRATCH=$B/tarball/.scratch-$FLAVOR
 OUT=$B/tarball-out
 ARCH=x86_64
 
+# INITKIND is which init actually gets wired up as PID1; FLAVOR is only what
+# the artifact is called. They differ for i3wl, which is an s66 system with a
+# desktop session on top rather than an init of its own.
 case "$FLAVOR" in
-s66)     TARNAME="scraplinux-s66-tarball.tar.xz" ;;
-def)     TARNAME="scraplinux-def-tarball.tar.xz" ;;
-openrc)  TARNAME="scraplinux-openrc-tarball.tar.xz" ;;
-wayland) TARNAME="scraplinux-wayland-tarball.tar.xz" ;;
-*) echo "build-tarball.sh: unknown flavor '$FLAVOR' (s66, def, openrc or wayland)" >&2; exit 1 ;;
+s66)     TARNAME="scraplinux-s66-tarball.tar.xz";     INITKIND=s66 ;;
+busybox) TARNAME="scraplinux-busybox-tarball.tar.xz"; INITKIND=busybox ;;
+openrc)  TARNAME="scraplinux-openrc-tarball.tar.xz";  INITKIND=openrc ;;
+i3wl)    TARNAME="scraplinux-i3wl-tarball.tar.xz";    INITKIND=s66 ;;
+wayland) TARNAME="scraplinux-wayland-tarball.tar.xz"; INITKIND=busybox ;;
+*) echo "build-tarball.sh: unknown flavor '$FLAVOR' (s66, busybox, openrc, i3wl or wayland)" >&2; exit 1 ;;
 esac
 
 step() { printf '\n\033[1;36m:: %s\033[0m\n' "$*"; }
@@ -251,7 +260,7 @@ mkdir -p "$S/etc/scraplinux/services"
 : >"$S/etc/scraplinux/services/udev-trigger"
 ok "eudev enabled at boot (+ coldplug)"
 
-if [ "$FLAVOR" = openrc ]; then
+if [ "$INITKIND" = openrc ]; then
 	step "adding openrc"
 	OPENRC_SET=$(pkg_deps openrc)
 	# openrc depends on util-linux-libs too - same fix as BASE_SET above,
@@ -268,7 +277,7 @@ if [ "$FLAVOR" = openrc ]; then
 	done
 fi
 
-if [ "$FLAVOR" = s66 ]; then
+if [ "$INITKIND" = s66 ]; then
 	step "adding s6 + 66"
 	# 66 boot (wired up below as /sbin/init) needs both s6 itself, the
 	# supervisor it drives, and oblibs, 66's own base library - neither
@@ -289,6 +298,26 @@ if [ "$FLAVOR" = s66 ]; then
 	for p in $S66_SET; do
 		reason=dep
 		case " s6 66 " in *" $p "*) reason=explicit ;; esac
+		unpack_pkg "$p" "$reason" && ok "$p"
+	done
+fi
+
+if [ "$FLAVOR" = i3wl ]; then
+	step "adding i3wl (dwl fork: i3-style binary-tree tiling, tray, bar)"
+	# An s66 system with a session on top, not a separate init: INITKIND is
+	# s66 above, so everything 66 needs is already staged and this only adds
+	# the compositor and whatever it links against. i3wl installs its
+	# compositor as /usr/bin/i3wl-bin with a dbus-run-session wrapper at
+	# /usr/bin/i3wl, and drops a wayland-sessions entry, so a display
+	# manager or a plain `i3wl` from the console both work.
+	I3WL_SET=$(pkg_deps i3wl)
+	if printf '%s\n' $BASE_SET | grep -qx util-linux && \
+	   printf '%s\n' $I3WL_SET | grep -qx util-linux-libs; then
+		I3WL_SET=$(printf '%s\n' $I3WL_SET | grep -vx util-linux-libs)
+	fi
+	for p in $I3WL_SET; do
+		reason=dep
+		[ "$p" = i3wl ] && reason=explicit
 		unpack_pkg "$p" "$reason" && ok "$p"
 	done
 fi
@@ -408,8 +437,8 @@ mkdir -p "$S/root"
 ok "scraps, scraps-strap, scraplinux-chroot in place"
 
 # ---------------------------------------------------------------- 3. init
-step "wiring up init ($FLAVOR)"
-case "$FLAVOR" in
+step "wiring up init ($INITKIND, flavor $FLAVOR)"
+case "$INITKIND" in
 s66)
 	# 66's own PID1 entry point is not a standalone binary the way
 	# s6-linux-init or openrc-init are - it is `66 boot` (a subcommand;
@@ -431,7 +460,7 @@ s66)
 		printf '   warning: 66 binary not found in the unpacked package\n' >&2
 	fi
 	;;
-def|wayland)
+busybox)
 	# busybox's own package no longer claims /usr/bin/init unconditionally
 	# (that conflicted with 66 on s66 systems, which install busybox too for
 	# its other applets) - wire the symlink here instead, same as every other
@@ -551,7 +580,7 @@ LIBC=glibc
 LIBC_VERSION=2.44
 TOOLCHAIN=llvm
 USERLAND=bsd
-INIT=$FLAVOR
+INIT=$INITKIND
 SHELL=zsh
 PACKAGE_MANAGER=scraps
 HOME_URL="https://github.com/apiwo/scraplinux"
