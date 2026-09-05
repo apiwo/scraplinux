@@ -238,7 +238,18 @@ done
 # with eudev's binary sitting right there unused.
 mkdir -p "$S/etc/scraplinux/services"
 : >"$S/etc/scraplinux/services/udev"
-ok "eudev enabled at boot"
+# rc.boot looks for the marker named "udev"; scraplinux-init-setup looks for
+# one named after the rc.d script, which is "udevd". Only the first was ever
+# written, so every non-busybox flavor generated its service files with udevd
+# treated as disabled - the daemon was staged and then never enabled.
+: >"$S/etc/scraplinux/services/udevd"
+# Coldplug. rc.boot does its own `udevadm trigger` inline, so busybox systems
+# were always covered; nothing replayed those events under s6/66 or OpenRC,
+# which is why an s66 install came up with no wifi driver loaded despite
+# having both the module and its firmware on disk. rc.d/udev-trigger is that
+# same pass as a real service, so every flavor gets it.
+: >"$S/etc/scraplinux/services/udev-trigger"
+ok "eudev enabled at boot (+ coldplug)"
 
 if [ "$FLAVOR" = openrc ]; then
 	step "adding openrc"
