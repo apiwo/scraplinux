@@ -408,6 +408,34 @@ setup_s6() {
 			printf 'User = ( root )\n\n'
 			printf '[Start]\n'
 			printf 'Execute = ( %s %s )\n' "$cmd" "$args"
+			# A login prompt is the one service that must not start as
+			# soon as it can. 66 keeps logging its own progress to the
+			# console while the rest of the trees come up, and with
+			# CATCHLOG=0 (see ports/main/66/recipe for why it cannot be
+			# turned on) the console is this very tty - so a getty
+			# started early gets its prompt written over by "Starting
+			# enabled trees" and friends, mid-command, seconds after
+			# somebody has already logged in and started typing.
+			#
+			# boot.done is raised once every enabled tree is up, which is
+			# exactly the right moment. Arming a reactor on it also
+			# retires the "66-eventd: warning: no reactor armed for user
+			# event: boot.done" that had been printed on every single
+			# boot since nothing was listening for it.
+			#
+			# Still Type=classic, so it is supervised and respawns after
+			# each logout - the event decides when it first starts, not
+			# whether it is kept alive. (An earlier revision made this a
+			# bare reactor with unwrapped getty, which crash-looped
+			# invisibly; the s6-setsid wrapper in rc.d/getty is what
+			# fixed that, and it is still in $cmd here.)
+			case "$s" in
+			getty|getty-serial)
+				printf '\n[Event]\n'
+				printf 'EventType = user\n'
+				printf 'On = ( boot.done )\n'
+				printf 'Do = start\n' ;;
+			esac
 		} >"$ROOT/etc/66/service/$s"
 	done
 

@@ -47,7 +47,14 @@ init_kind() {
 	openrc-init|rc)   echo openrc ;;
 	runit|runit-init) echo runit ;;
 	nitro)            echo nitro ;;
-	66)               echo s66 ;;
+	# /sbin/init execs "66 boot", but 66 boot does not stay as pid 1 - it
+	# execs into the scandir supervisor, so /proc/1/exe reads
+	# /usr/bin/66-scandir on a running system and never /usr/bin/66.
+	# Matching only "66" here meant every s66 machine fell through to the
+	# busybox branch below and got SIGUSR2 sent to a process that treats it
+	# as something else entirely. Both names, because which one is pid 1
+	# depends on how far through boot the system got.
+	66|66-scandir)    echo s66 ;;
 	*)                echo busybox ;;
 	esac
 }
@@ -87,15 +94,31 @@ nitro)
 	reboot)        nitroctl Reboot ;;
 	esac ;;
 s66)
-	# 66-hpr is 66's own halt/poweroff/reboot: it tells 66 to bring every
-	# supervised service down cleanly through the scandir before acting,
-	# the same job busybox init's SIGUSR1/SIGUSR2/SIGTERM handling does
-	# above - 66 has no signal-based equivalent, this binary is how you
-	# ask it.
+	# -f, every time. Without it 66-hpr only *requests* the transition: it
+	# writes to 66-shutdownd's fifo, prints "The system is going down NOW!"
+	# and exits, and on this system nothing ever finishes the job. Measured,
+	# booting the real image under qemu: `66-hpr -p` printed the warning and
+	# returned to a shell prompt with the machine still up; `66 poweroff -a
+	# -- now` exited 0 and did nothing at all; `66-hpr -p -f` powered the
+	# machine off immediately. The delegated path expects a real init to run
+	# a final stage, and pid 1 here is the scandir supervisor, which has
+	# none - so the request is accepted and then nobody acts on it.
+	#
+	# Going through the scandir's own signal handlers is the same trap from
+	# the other side: SIGUSR2 runs `66 halt -a -- now`, which does get as far
+	# as stopping services, so the console fills with "Successfully stopped
+	# service: ..." and then hangs forever with everything down. Worse, one
+	# of the services it stops is the getty this script is running under, so
+	# the fallback further down never gets to run either.
+	#
+	# -f is not a hard reset: 66-hpr syncs before acting unless -n says
+	# otherwise, which is the same guarantee busybox's own poweroff gives.
+	# It is also what 66 itself falls back to - see the scandir's finish and
+	# crash scripts, both of which run `66-hpr -r -f`.
 	case "$action" in
-	halt)     66-hpr -h ;;
-	poweroff) 66-hpr -p ;;
-	reboot)   66-hpr -r ;;
+	halt)     66-hpr -h -f -l /run/66/ ;;
+	poweroff) 66-hpr -p -f -l /run/66/ ;;
+	reboot)   66-hpr -r -f -l /run/66/ ;;
 	esac ;;
 esac
 
