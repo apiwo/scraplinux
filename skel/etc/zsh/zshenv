@@ -1,0 +1,27 @@
+# /etc/zsh/zshenv - read by every zsh, login shell or not.
+#
+# zsh does not read /etc/profile. Nothing else does either on a machine whose
+# login shell is zsh, so the PATH set there - the one with /usr/local/bin
+# ahead of /usr/bin - never reached a real session. What a login actually got
+# was busybox login's own compiled-in default:
+#
+#     PATH=/sbin:/usr/sbin:/bin:/usr/bin
+#
+# with /usr/local/bin absent entirely.
+#
+# That quietly disabled every wrapper in /usr/local/bin. The important ones
+# are poweroff, reboot, halt and shutdown: they are scraplinux-power, which
+# brings the machine down *through the running init* instead of calling
+# reboot(2) behind its back. With /usr/local/bin off PATH, `poweroff` found
+# busybox's applet at /sbin/poweroff instead, which only signals pid 1 - and
+# under 66 that lands on the scandir's SIGUSR2 handler, which stops every
+# service and then leaves the machine sitting there forever with nothing left
+# running to finish the job. "poweroff and reboot don't work" was this.
+#
+# zshenv rather than zprofile so it applies to non-login shells too, and
+# idempotent so a nested zsh does not keep prepending to its own PATH.
+case ":$PATH:" in
+*:/usr/local/bin:*) ;;
+*) PATH=/usr/local/sbin:/usr/local/bin:$PATH ;;
+esac
+export PATH
