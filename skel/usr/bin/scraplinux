@@ -28,7 +28,7 @@ for d in /usr/lib/scraps "$(dirname "$0")/../scraps" ./scraps; do
 done
 
 if [ -t 1 ]; then
-	R=$(printf '\033[0m'); TEAL=$(printf '\033[38;5;44m'); GREY=$(printf '\033[38;5;245m')
+	R=$(printf '\033[0m'); TEAL=$(printf '\033[38;5;178m'); GREY=$(printf '\033[38;5;245m')
 else
 	R= ; TEAL= ; GREY=
 fi

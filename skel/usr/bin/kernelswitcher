@@ -32,7 +32,7 @@ END="### kernelswitcher end"
 
 TEAL='' MINT='' RED='' GREY='' R=''
 if [ -t 1 ]; then
-	TEAL=$(printf '\033[38;5;44m'); MINT=$(printf '\033[38;5;49m')
+	TEAL=$(printf '\033[38;5;178m'); MINT=$(printf '\033[38;5;49m')
 	RED=$(printf '\033[38;5;203m'); GREY=$(printf '\033[38;5;245m')
 	R=$(printf '\033[0m')
 fi

@@ -56,7 +56,7 @@ SCRAPS_FORMAT="2"
 # escape sequences, and has no way to choose a typeface.
 #
 #   colours   T_ACCENT T_OK T_WARN T_ERR T_DIM T_TEXT   (bare SGR numbers,
-#             e.g. T_ACCENT=44, or an empty string for no colour)
+#             e.g. T_ACCENT=178, or an empty string for no colour)
 #   glyphs    T_MARK_INFO T_MARK_OK T_MARK_FETCH T_MARK_ADD T_MARK_HELD
 #   wording   T_READING T_CALC T_CALC_DONE T_CONFIRM T_FETCHING T_INSTALLING
 #             T_MET T_DONE T_SYNCING
@@ -107,9 +107,10 @@ scraps_load_theme() {
 # ---------------------------------------------------------------- presentation
 
 # ScrapLinux palette. T_ACCENT is the brand's gray/yellow accent (matches the
-# site's #e8b923); the named colors below (A_ICE/A_TEAL/etc.) are still named
-# after the old violet -> ice -> teal logo gradient, they just all read
-# T_ACCENT now rather than looking literally icy/teal.
+# site's #e8b923). The A_* names below still carry the old violet -> ice ->
+# teal logo gradient's vocabulary, but none of them are those colours any
+# more: every one resolves to a theme token, so the whole palette is the
+# brand's gray/yellow/white/black rather than the icy blues it started as.
 #
 # A function, not a straight-line block: SCRAPS_STYLE (and any theme it names)
 # is only known after scraps.conf has been read, which happens well after this
@@ -117,15 +118,18 @@ scraps_load_theme() {
 # never load a config, and again by scraps_load_conf once a theme has had its
 # say.
 scraps_palette() {
-	# ScrapLinux palette, lifted from the logo gradient: violet -> ice -> teal.
 	if [ -t 1 ] && [ "${SCRAPS_COLOR:-auto}" != "never" ]; then
 		C_R=$(printf '\033[0m')      ; C_B=$(printf '\033[1m')
 		C_DIM=$(printf '\033[2m')    ; C_IT=$(printf '\033[3m')
-		# A theme sets the numbers; these are the ScrapLinux palette by default,
-		# lifted from the logo gradient: violet -> ice -> teal.
+		# A theme sets the numbers; these are the ScrapLinux palette by default.
 		_sgr() { [ -n "$1" ] && printf '\033[38;5;%sm' "$1" || printf ''; }
-		A_VIO=$(_sgr 99)          ; A_IND=$(_sgr 69)
-		A_ICE=$(_sgr 81)          ; A_TEAL=$(_sgr "$T_ACCENT")
+		# A_VIO/A_IND/A_ICE were the literal 99/69/81 of the old violet ->
+		# ice -> teal gradient, and stayed hardcoded when A_TEAL moved to
+		# T_ACCENT - so scraps still printed violet and cyan next to a gold
+		# accent. They are theme tokens now like everything else: white for
+		# the emphasis A_ICE carried, dim for the two decorative shades.
+		A_VIO=$(_sgr "$T_DIM")    ; A_IND=$(_sgr "$T_DIM")
+		A_ICE=$(_sgr "$T_TEXT")   ; A_TEAL=$(_sgr "$T_ACCENT")
 		A_MINT=$(_sgr "$T_OK")    ; A_SNOW=$(_sgr "$T_TEXT")
 		A_GREY=$(_sgr "$T_DIM")   ; A_RED=$(_sgr "$T_ERR")
 		A_AMB=$(_sgr "$T_WARN")

@@ -105,7 +105,7 @@ if [ $# -gt 0 ]; then
 	exit $?
 fi
 
-printf '\033[38;5;44m::\033[0m entering %s (exit or ctrl-d to leave)\n' "$TARGET"
+printf '\033[38;5;178m::\033[0m entering %s (exit or ctrl-d to leave)\n' "$TARGET"
 # stty before the shell, because the target may have no terminfo database yet
 # - it is a system that is still being installed. Without one the line editor
 # does not know what the terminal sends for erase, and backspace moved the
@@ -130,5 +130,5 @@ env -i \
 	SCRAPLINUX_CHROOT=1 \
 	chroot "$TARGET" /bin/sh -c 'stty sane erase '"$_del"' 2>/dev/null; exec '"$SHELL_IN"' -l'
 rc=$?
-printf '\033[38;5;44m::\033[0m left %s\n' "$TARGET"
+printf '\033[38;5;178m::\033[0m left %s\n' "$TARGET"
 exit $rc
