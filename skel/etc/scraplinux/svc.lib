@@ -28,7 +28,21 @@ svc_running() {
 	return 1
 }
 
+# network, wifi and udev-trigger set no CMD at all - they define their own
+# start()/stop() and return, doing whatever one-off work they need directly
+# (see each script's own comment). Every one of svc_start's CMD-based checks
+# below is meaningless for that shape and actively wrong: svc_running's
+# /proc scan for an empty $CMD path matches nothing, so it always reports
+# "not running", and the [ -x "$CMD" ] check below always fails with
+# "$NAME:  is not installed" - the custom start() was defined but never
+# actually reachable through this path. Confirmed with a from-scratch QEMU
+# NVMe boot: udev-trigger's own coldplug logic never ran at all, on any
+# init flavor that goes through svc_main, until this delegation existed.
 svc_start() {
+	if [ -z "$CMD" ] && command -v start >/dev/null 2>&1; then
+		start
+		return
+	fi
 	svc_running && { echo "$NAME is already running"; return 0; }
 	[ -x "$CMD" ] || { echo "$NAME: $CMD is not installed" >&2; return 1; }
 	[ -n "${PRESTART:-}" ] && eval "$PRESTART"
@@ -45,6 +59,10 @@ svc_start() {
 }
 
 svc_stop() {
+	if [ -z "$CMD" ] && command -v stop >/dev/null 2>&1; then
+		stop
+		return
+	fi
 	svc_running || { echo "$NAME is not running"; return 0; }
 	if [ -f "$PIDFILE" ]; then
 		start-stop-daemon --stop --quiet --pidfile "$PIDFILE" --retry 10 2>/dev/null \

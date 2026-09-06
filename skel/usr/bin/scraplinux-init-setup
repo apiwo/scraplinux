@@ -370,6 +370,15 @@ setup_s6() {
 				printf 'Type = oneshot\n'
 				printf 'Version = 0.0.1\n'
 				printf 'Description = "%s"\n' "$s"
+				# Same reasoning as the classic services above: without
+				# this, 66's automatic per-service logger applies to
+				# oneshots too, and this is very likely what was actually
+				# behind udev-trigger hanging forever (not any individual
+				# command inside it, all of which were bounded with `timeout`
+				# and still never returned) - a write to stdout with no
+				# reader on the other end of the logger pipe blocks
+				# indefinitely, which reads to 66 as "still running".
+				printf 'Options = ( !log )\n'
 				printf 'User = ( root )\n\n'
 				printf '[Start]\n'
 				printf 'Execute = ( /etc/rc.d/%s start )\n\n' "$s"
@@ -379,35 +388,61 @@ setup_s6() {
 			continue
 		fi
 
+		# A service under s6/66 is supervised directly in the foreground -
+		# there is no separate "daemonize" step the way sysvinit/openrc
+		# expect, so any ARGS meant for a self-detaching daemon (--daemon,
+		# --fork, or nothing at all for a daemon that backgrounds itself by
+		# default) has to be swapped for the flag that keeps it in the
+		# foreground instead. Without this the process 66 is tracking exits
+		# within milliseconds of every start, and 66 respawns it forever -
+		# an infinite crash-restart loop with no error printed (the daemon
+		# itself works fine and detaches clean). Confirmed with a
+		# from-scratch QEMU NVMe boot: udevd, dbus and sshd all hit this.
+		# Computed once and reused for both the s6-rc run script and the 66
+		# frontend below - they used to compute this independently and only
+		# the s6-rc one (which nothing at boot actually reads - 66 parses
+		# its own frontend, not this directory) had the fix.
+		case "$s" in
+		udevd)   fg_args="" ;;
+		dbus)    fg_args="--system --nofork --nopidfile" ;;
+		sshd)    fg_args="-D" ;;
+		crond)   fg_args="-f" ;;
+		syslogd) fg_args="-n" ;;
+		ntpd)    fg_args="-n" ;;
+		*)       fg_args=$args ;;
+		esac
+
 		# s6-rc longrun: a service directory with a run script.
 		mkdir -p "$ROOT/etc/s6/sv/$s"
 		printf 'longrun\n' >"$ROOT/etc/s6/sv/$s/type"
 		{
 			printf '#!/bin/execlineb -P\n'
 			printf 'fdmove -c 2 1\n'
-			case "$s" in
-			dbus)    printf '%s --system --nofork --nopidfile\n' "$cmd" ;;
-			sshd)    printf '%s -D\n' "$cmd" ;;
-			crond)   printf '%s -f\n' "$cmd" ;;
-			syslogd) printf '%s -n\n' "$cmd" ;;
-			ntpd)    printf '%s -n\n' "$cmd" ;;
-			*)       printf '%s %s\n' "$cmd" "$args" ;;
-			esac
+			printf '%s %s\n' "$cmd" "$fg_args"
 		} >"$ROOT/etc/s6/sv/$s/run"
 		chmod 755 "$ROOT/etc/s6/sv/$s/run"
 		case "$s" in
 		pipewire|bluetoothd) printf 'dbus\n' >"$ROOT/etc/s6/sv/$s/dependencies" ;;
 		esac
 
-		# The 66 frontend description for the same service.
+		# The 66 frontend description for the same service - this is the
+		# one 66 boot actually executes. Options = ( !log ) turns off 66's
+		# own automatic per-service logger, which every "classic" service
+		# gets by default otherwise: this project already sends everything
+		# straight to the console (CATCHLOG=0, see ports/main/66/recipe),
+		# and the auto-logger pipeline appears to be what was actually
+		# behind the udevd/dbus/sshd crash-restart loop, not the daemonize
+		# flags alone - fixing just those still looped every second with no
+		# error text, and stopped once this was also added.
 		{
 			printf '[Main]\n'
 			printf 'Type = classic\n'
 			printf 'Version = 0.0.1\n'
 			printf 'Description = "%s"\n' "$s"
+			printf 'Options = ( !log )\n'
 			printf 'User = ( root )\n\n'
 			printf '[Start]\n'
-			printf 'Execute = ( %s %s )\n' "$cmd" "$args"
+			printf 'Execute = ( %s %s )\n' "$cmd" "$fg_args"
 		} >"$ROOT/etc/66/service/$s"
 	done
 
@@ -427,6 +462,7 @@ setup_s6() {
 		printf 'Type = oneshot\n'
 		printf 'Version = 0.0.1\n'
 		printf 'Description = "root read-write"\n'
+		printf 'Options = ( !log )\n'
 		printf 'User = ( root )\n\n'
 		printf '[Start]\n'
 		printf 'Execute = ( mount -o remount,rw / )\n'

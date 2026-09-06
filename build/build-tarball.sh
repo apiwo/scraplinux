@@ -409,7 +409,15 @@ install -Dm755 "$SRCTREE/skel/usr/bin/scraplinux-init-setup" "$S/usr/bin/scrapli
 # "bad uid 0" before a single real command has run.
 cp -f "$SRCTREE/skel/etc/nsswitch.conf" "$S/etc/nsswitch.conf"
 printf 'root:x:0:0:root:/root:/bin/sh\n' >"$S/etc/passwd"
-printf 'root:x:0:\nwheel:x:10:\n' >"$S/etc/group"
+# eudev's own compiled-in rules.d assign device nodes to these groups by
+# name (GROUP="tty", GROUP="disk", ...) - none existed before this, so
+# every udevd invocation logged "specified group '<name>' unknown" for each
+# one and exited, s6/66 respawned it a second later, and it crash-looped
+# forever: real hardware never got past this because nothing after udevd
+# in the boot tree ever ran. Not an init-system bug - reproduced and
+# confirmed with a from-scratch QEMU NVMe boot, s66 tarball, before this fix
+# existed.
+printf 'root:x:0:\nwheel:x:10:\ntty:x:5:\ndisk:x:6:\nlp:x:7:\nkmem:x:9:\ndialout:x:20:\naudio:x:63:\nvideo:x:44:\ninput:x:97:\ncdrom:x:24:\ntape:x:26:\nkvm:x:78:\nsgx:x:100:\n' >"$S/etc/group"
 printf 'root:!:20000:0:99999:7:::\n' >"$S/etc/shadow"
 chmod 600 "$S/etc/shadow"
 # login.defs: UID/GID ranges and ENCRYPT_METHOD - without it here, chpasswd/
