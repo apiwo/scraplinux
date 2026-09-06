@@ -22,6 +22,14 @@ SCRAPS_SELFDIR=$(cd "$(dirname "$0")" 2>/dev/null && pwd) || SCRAPS_SELFDIR=/usr
 # actually lives in usr/lib/scraps, a sibling of usr/bin, not the same
 # directory as the scraps binary) ever matched - only ./libscraps.sh did, and
 # only by accident of whatever the caller's cwd happened to be.
+#
+# Recorded before libscraps.sh runs, because it is about to give all three a
+# default derived from SCRAPS_ROOT and there is no way to tell afterwards
+# whether a value came from the caller or from that default. --root= is parsed
+# much further down, long after this, and has to re-derive them - but only the
+# ones the caller did not set deliberately. See the re-derivation after the
+# argument loop.
+_env_db=${SCRAPS_DB+set} _env_cache=${SCRAPS_CACHE+set} _env_log=${SCRAPS_LOG+set}
 for p in /usr/lib/scraps/libscraps.sh ./libscraps.sh \
 	"$SCRAPS_SELFDIR/libscraps.sh" "$SCRAPS_SELFDIR/../lib/scraps/libscraps.sh"; do
 	[ -f "$p" ] && { . "$p"; break; }
@@ -382,10 +390,28 @@ run_hooks() {
 
 pkg_script() {
 	pkgdir=$1 phase=$2 name=$3
-	[ -f "$pkgdir/.INSTALL" ] || return 0
+	# Two different directory shapes reach this function, and the hook is
+	# named differently in each. An unpacked package still has its metadata
+	# dotfiles, so it is "$tmp/.INSTALL" (pre_install/pre_upgrade, called
+	# before the payload is committed). The installed-package database keeps
+	# the same script as "$db/INSTALL", without the dot, alongside FILES and
+	# PKGINFO - that is what post_install/post_upgrade/pre_remove/post_remove
+	# are handed.
+	#
+	# Only the dotted name was ever checked, so every hook invoked from the
+	# database - which is all of them except the two pre_* phases - silently
+	# returned here and did nothing. Nothing in the tree shipped an install
+	# hook, so nothing noticed: the first package to actually use one
+	# (nvidia-drivers, whose whole configuration step is a post_install) would
+	# have installed to a completely unconfigured system with no error to
+	# explain why.
+	_ps_f=""
+	[ -f "$pkgdir/.INSTALL" ] && _ps_f="$pkgdir/.INSTALL"
+	[ -z "$_ps_f" ] && [ -f "$pkgdir/INSTALL" ] && _ps_f="$pkgdir/INSTALL"
+	[ -n "$_ps_f" ] || return 0
 	[ "$NOMOD" = "1" ] && return 0
 	# The script is sourced in a subshell so a bad hook cannot poison scraps.
-	( . "$pkgdir/.INSTALL"
+	( . "$_ps_f"
 	  if command -v "$phase" >/dev/null 2>&1; then
 		msg2 "$name: $phase"
 		"$phase" || warn "$name: $phase failed"
@@ -2542,6 +2568,29 @@ for a in "$@"; do
 		;;
 	esac
 done
+
+# --root= is parsed above, but SCRAPS_DB/SCRAPS_CACHE/SCRAPS_LOG were already
+# derived from SCRAPS_ROOT when libscraps.sh was sourced - at which point
+# SCRAPS_ROOT was still "/". libscraps' own comment explains why these three
+# follow the root ("what is installed there, what is cached there") and warns
+# that getting it wrong records every install into the caller's own
+# /var/lib/scraps instead of the target's. That was true for the environment
+# form, `SCRAPS_ROOT=$TARGET scraps add ...`, which is set before this script
+# starts - and untrue for the --root= flag, which lands far too late to affect
+# them. `scraps --root=/mnt add foo` therefore unpacked the payload into /mnt
+# correctly and then wrote the database entry to the *host*, leaving the target
+# with a complete filesystem and an empty package database, and the host with a
+# record of a package it does not have.
+#
+# Re-derived here, after the flag is known, and only for the values the caller
+# did not set explicitly - an explicit SCRAPS_DB= in the environment still wins,
+# which is what scraps-strap and the installer rely on.
+if [ "${SCRAPS_ROOT%/}" != "" ]; then
+	[ -n "$_env_db" ]    || SCRAPS_DB="${SCRAPS_ROOT%/}/var/lib/scraps"
+	[ -n "$_env_cache" ] || SCRAPS_CACHE="${SCRAPS_ROOT%/}/var/cache/scraps"
+	[ -n "$_env_log" ]   || SCRAPS_LOG="${SCRAPS_ROOT%/}/var/log/scraps.log"
+fi
+
 # shellcheck disable=SC2086
 set -- $args
 
