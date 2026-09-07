@@ -116,7 +116,6 @@ listing() {
   <a href="https://ports-scraplinux.apiwow.net">ports</a>
   <a href="https://scraplinux-releases.apiwow.net">releases</a>
   <a href="https://github.com/apiwo/scraplinux">github</a>
-  <a href="https://codeberg.org/apiwo/scraplinux">codeberg</a>
 </nav>
 <div class="wrap">
   <header class="hero" style="padding:28px 0 8px;">

@@ -128,15 +128,13 @@ name-version-release with different bytes. scraps was rebuilt twice as 1.2.5-1,
 a machine fetched the newer package against the older index, and the install
 died on a checksum mismatch part way through the base system.
 
-Every repository is meant to be mirrored to Codeberg as well as GitHub, and
-`build/mirror-codeberg.sh` pushes all six in one command - but the Codeberg
-mirror is **behind and cannot currently be updated**. The storage quota there
-is per account and the binary package repository has filled it, so every
-push, including the small ones, is rejected with "Quota exceeded";
-`scraplinux-ports` was never created there and Codeberg has push-to-create
-disabled. GitHub is the only mirror that is current. Either the quota goes
-up or the binaries stop being mirrored - they are served from GitHub in
-either case, which is what `/etc/scraps/repos.d` points at.
+Codeberg mirroring was dropped: the storage quota there is per account, the
+binary package repository filled it, every push (including the small ones)
+was rejected with "Quota exceeded", and `scraplinux-ports` had never even
+been created there because Codeberg has push-to-create disabled. GitHub is
+the only remote for every repository now - `build/mirror-codeberg.sh` and
+the `codeberg` git remotes are gone, along with the Codeberg link in the
+generated ports/pkgs site pages.
 
 ## Install
 

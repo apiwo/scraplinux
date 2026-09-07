@@ -118,11 +118,6 @@ proprietary or stripped of credit downstream.
 Packaged third-party software keeps whatever license its own upstream
 project uses — each recipe's `license=` field says which.
 
-## Mirrors
+## Repository
 
-[github.com/apiwo](https://github.com/apiwo/scraplinux) ·
-[codeberg.org/apiwo](https://codeberg.org/apiwo/scraplinux)
-
-The Codeberg mirror is behind: the storage quota there is per account, the
-binary package repository filled it, and every push is rejected until that
-changes. GitHub is current.
+[github.com/apiwo/scraplinux](https://github.com/apiwo/scraplinux)

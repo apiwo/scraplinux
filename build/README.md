@@ -29,7 +29,6 @@ build/scraplinux-sandbox build/publish-fix.sh    # assemble the fix repository
 build/scraplinux-sandbox build/publish-pkgs.sh   # binaries into the pkgs checkout
 build/scraplinux-sandbox build/publish-ports.sh  # recipes into the ports checkout
 build/publish-big.sh                         # anything over 100 MB, as a release asset
-build/mirror-codeberg.sh                     # the same commits to Codeberg
 ```
 
 `build/check-recipes.sh` reads every recipe and refuses the mistakes that only
