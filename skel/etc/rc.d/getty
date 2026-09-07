@@ -1,26 +1,22 @@
 #!/bin/sh
 # A login prompt on tty1.
 #
-# busybox init and OpenRC both spawn getty their own way - busybox init via
-# /etc/inittab respawn entries, OpenRC via its own agetty runlevel service -
-# neither goes through this rc.d/services.conf mechanism at all. s6/66 has
-# no such built-in concept: every respawning process it supervises has to be
-# a real service definition here, the same as dbus or pipewire. Without
-# this, an s6-66 boot reaches "Starting services of trees in group: boot"
-# and then never shows a login prompt at all - the boot isn't stuck, there
-# is just nothing left to spawn one.
+# This is a respawn entry, not a one-shot service - see
+# /etc/scraplinux/respawn/getty and scinit itself (skel/sbin/scinit), which
+# runs `/etc/rc.d/getty start` in a forever-loop, restarting it the instant
+# it exits (a logout, a crash, whatever). rc.boot's own one-shot service
+# loop never touches this script at all.
 #
-# CMD is s6-setsid, not getty itself: busybox getty calls setsid() on
-# startup and treats EPERM as fatal, silently exiting over and over. Under
-# s6 supervision the run script's process is already its own process-group
-# leader, so that setsid() call always fails that way - with no controlling
-# tty yet attached, getty's own error message has nowhere visible to go, so
-# it just vanishes and the service crash-loops forever with no sign onscreen.
-# s6-setsid forks first and setsid()s *before* exec'ing getty, so getty's own
-# internal call is never reached in the state that fails.
+# CMD is plain getty here, not wrapped in s6-setsid the way this script
+# used to need under 66: that wrapper existed only because s6's own
+# process-group setup made busybox getty's internal setsid() call fail with
+# EPERM, silently, forever. scinit forks a plain subshell for each respawn
+# loop with no such supervision-imposed session, so getty's own setsid()
+# succeeds the same way it always has under busybox init or a bare shell -
+# there is nothing here for a wrapper to work around.
 NAME=getty
-CMD=/usr/bin/s6-setsid
-ARGS="/sbin/getty -L 0 tty1"
+CMD=/sbin/getty
+ARGS="-L 0 tty1"
 BACKGROUND=no
 . /etc/scraplinux/svc.lib
 svc_main "$@"

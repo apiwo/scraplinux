@@ -27,9 +27,20 @@ start() {
 	# settle alone), so the actual hang is in one of the trigger calls
 	# talking to a live udevd, not in settle. This is a oneshot the whole
 	# rest of the boot tree waits on - it must always return.
-	timeout 10 udevadm trigger --action=add --type=subsystems 2>/dev/null
-	timeout 10 udevadm trigger --action=add --type=devices 2>/dev/null
-	timeout 15 udevadm settle --timeout=10 2>/dev/null
+	#
+	# `-k 5`: toybox's timeout only sends SIGTERM when the clock runs out,
+	# and udevadm stuck in an uninterruptible wait on a wedged udevd's
+	# netlink socket never processes that signal - without a follow-up
+	# SIGKILL, `timeout` itself just blocks forever waiting for a child
+	# that will not die, which is the exact hang this exists to prevent.
+	# This was never actually proven to work: svc_start had no delegation
+	# to a script's own start() until a separate fix landed, so this
+	# start() itself never ran during the s6/66 verification that first
+	# added these timeouts - only now, under scinit, does it actually
+	# execute at boot.
+	timeout -k 5 10 udevadm trigger --action=add --type=subsystems 2>/dev/null
+	timeout -k 5 10 udevadm trigger --action=add --type=devices 2>/dev/null
+	timeout -k 5 15 udevadm settle --timeout=10 2>/dev/null
 	return 0
 }
 

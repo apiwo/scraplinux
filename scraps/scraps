@@ -1932,9 +1932,35 @@ cmd_system_boot() {
 		disk=$(_whole_disk "$part")
 		partnum=$(printf '%s' "$part" | sed 's/^.*[^0-9]//')
 		if have efibootmgr; then
-			efibootmgr --create --disk "$disk" --part "$partnum" \
-				--loader '\EFI\scraplinux\scraplinuxx64.efi' --label 'ScrapLinux' \
-				|| warn "efibootmgr failed - the ESP has the right files, but no NVRAM boot entry was created"
+			_before=$(efibootmgr | sed -n 's/^BootOrder: //p')
+			if efibootmgr --create --disk "$disk" --part "$partnum" \
+				--loader '\EFI\scraplinux\scraplinuxx64.efi' --label 'ScrapLinux' >/dev/null; then
+				# efibootmgr --create prepends the new entry to BootOrder by
+				# default - on any machine that dual-boots something else,
+				# that silently makes a fresh ScrapLinux install the very
+				# next thing that boots, ahead of whatever was already
+				# there, with a firmware timeout usually far too short to
+				# notice and pick something else before it happens. Put the
+				# order back the way it was and append the one entry that
+				# is new (whatever is in the after-list but was not in the
+				# before-list) at the end instead: reachable from the
+				# firmware's own boot menu, never the default on its own.
+				_after=$(efibootmgr | sed -n 's/^BootOrder: //p')
+				_new="" _oldcomma=",$_before,"
+				for _e in $(printf '%s' "$_after" | tr ',' ' '); do
+					case "$_oldcomma" in
+					*",$_e,"*) ;;
+					*) _new=$_e ;;
+					esac
+				done
+				if [ -n "$_new" ] && [ -n "$_before" ]; then
+					efibootmgr -o "${_before},${_new}" >/dev/null \
+						&& ok "ScrapLinux added to the UEFI boot menu (Boot$_new), placed last - it will not become the default on its own" \
+						|| warn "efibootmgr -o failed - ScrapLinux's boot entry may rank ahead of your other OSes; check 'efibootmgr -v' and reorder by hand"
+				fi
+			else
+				warn "efibootmgr failed - the ESP has the right files, but no NVRAM boot entry was created"
+			fi
 		else
 			warn "efibootmgr not installed - files are in place on the ESP, but no NVRAM boot entry was created"
 		fi

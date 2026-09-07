@@ -1,14 +1,21 @@
 #!/bin/sh
 # build-tarball.sh - build an ScrapLinux base tarball.
 #
-#   build-tarball.sh          s6 + 66 wired up as init (default)
-#   build-tarball.sh s66      same, named explicitly
-#   build-tarball.sh busybox  busybox init instead ("def" still accepted)
-#   build-tarball.sh openrc   OpenRC wired up as init instead
-#   build-tarball.sh i3wl     s6 + 66, with i3wl bundled as the session
-#   build-tarball.sh wayland  busybox init, SDDM + a Wayland compositor
-#                             lineup bundled directly (dwl, labwc, tinywl,
-#                             wio, niri - pick one at the SDDM login screen)
+#   build-tarball.sh          the base flavor (default)
+#   build-tarball.sh base     same, named explicitly
+#   build-tarball.sh i3wl     the base flavor, with i3wl bundled as the session
+#   build-tarball.sh wayland  SDDM + a Wayland compositor lineup bundled
+#                             directly (dwl, labwc, tinywl, wio, niri - pick
+#                             one at the SDDM login screen)
+#
+# Every flavor uses scinit (skel/sbin/scinit) as pid 1 - ScrapLinux's own
+# init and service manager, a single POSIX sh file. s6/66, OpenRC and
+# busybox init are gone from every tarball this script produces; scinit
+# reuses /etc/rc.d/*, svc.lib and /etc/scraplinux/services/* completely
+# unchanged (they already worked, and needed no init-specific translation
+# step the way s6/66/OpenRC each did) and adds what none of the rc.d
+# scripts can do for themselves: being pid 1, respawning getty forever,
+# reaping zombies, and handling shutdown.
 #
 # No ISO, no guided installer - see the main site's install guide.
 # Bundled raw: glibc, toybox, busybox, zsh, doas, e2fsprogs, util-linux,
@@ -20,11 +27,11 @@
 
 set -eu
 
-FLAVOR=${1:-s66}
-# "def" was never a description of anything - it meant busybox init, which is
-# what the flavor has always actually been. Renamed to say so; the old name
-# still works so nothing that calls this by hand breaks.
-[ "$FLAVOR" = def ] && FLAVOR=busybox
+FLAVOR=${1:-base}
+# Old flavor names that used to each mean a different init: every one of
+# them is the same base flavor now, since the init is always scinit
+# regardless of which of these was asked for.
+case "$FLAVOR" in def|s66|busybox|openrc) FLAVOR=base ;; esac
 B=${SCRAPLINUX_BUILD:-/home/apiwo/scraplinux-build}
 SRCTREE=${SCRAPLINUX_TREE:-/home/apiwo/scraplinux}
 REPO=$B/repo
@@ -33,16 +40,15 @@ SCRATCH=$B/tarball/.scratch-$FLAVOR
 OUT=$B/tarball-out
 ARCH=x86_64
 
-# INITKIND is which init actually gets wired up as PID1; FLAVOR is only what
-# the artifact is called. They differ for i3wl, which is an s66 system with a
-# desktop session on top rather than an init of its own.
+# scinit is the only init any flavor ever wires up now - FLAVOR only
+# distinguishes what else is bundled on top of it (a desktop session, for
+# i3wl/wayland), never which init.
+INITKIND=scinit
 case "$FLAVOR" in
-s66)     TARNAME="scraplinux-s66-tarball.tar.xz";     INITKIND=s66 ;;
-busybox) TARNAME="scraplinux-busybox-tarball.tar.xz"; INITKIND=busybox ;;
-openrc)  TARNAME="scraplinux-openrc-tarball.tar.xz";  INITKIND=openrc ;;
-i3wl)    TARNAME="scraplinux-i3wl-tarball.tar.xz";    INITKIND=s66 ;;
-wayland) TARNAME="scraplinux-wayland-tarball.tar.xz"; INITKIND=busybox ;;
-*) echo "build-tarball.sh: unknown flavor '$FLAVOR' (s66, busybox, openrc, i3wl or wayland)" >&2; exit 1 ;;
+base)    TARNAME="scraplinux-base-tarball.tar.xz" ;;
+i3wl)    TARNAME="scraplinux-i3wl-tarball.tar.xz" ;;
+wayland) TARNAME="scraplinux-wayland-tarball.tar.xz" ;;
+*) echo "build-tarball.sh: unknown flavor '$FLAVOR' (base, i3wl or wayland)" >&2; exit 1 ;;
 esac
 
 step() { printf '\n\033[1;36m:: %s\033[0m\n' "$*"; }
@@ -252,61 +258,32 @@ mkdir -p "$S/etc/scraplinux/services"
 # written, so every non-busybox flavor generated its service files with udevd
 # treated as disabled - the daemon was staged and then never enabled.
 : >"$S/etc/scraplinux/services/udevd"
-# Coldplug. rc.boot does its own `udevadm trigger` inline, so busybox systems
-# were always covered; nothing replayed those events under s6/66 or OpenRC,
-# which is why an s66 install came up with no wifi driver loaded despite
-# having both the module and its firmware on disk. rc.d/udev-trigger is that
-# same pass as a real service, so every flavor gets it.
+# Coldplug. rc.boot does its own `udevadm trigger` inline, so this was
+# always covered when rc.boot ran the whole boot - it is also staged as a
+# real rc.d service, unchanged, since scinit's own boot sequence still
+# runs rc.boot to start everything in /etc/scraplinux/services.
 : >"$S/etc/scraplinux/services/udev-trigger"
 ok "eudev enabled at boot (+ coldplug)"
 
-if [ "$INITKIND" = openrc ]; then
-	step "adding openrc"
-	OPENRC_SET=$(pkg_deps openrc)
-	# openrc depends on util-linux-libs too - same fix as BASE_SET above,
-	# same reason: util-linux (already bundled via BASE_EXPLICIT) replaces
-	# it, and this walk still has no idea what replaces= means.
-	if printf '%s\n' $BASE_SET | grep -qx util-linux && \
-	   printf '%s\n' $OPENRC_SET | grep -qx util-linux-libs; then
-		OPENRC_SET=$(printf '%s\n' $OPENRC_SET | grep -vx util-linux-libs)
-	fi
-	for p in $OPENRC_SET; do
-		reason=dep
-		[ "$p" = openrc ] && reason=explicit
-		unpack_pkg "$p" "$reason" && ok "$p"
-	done
-fi
-
-if [ "$INITKIND" = s66 ]; then
-	step "adding s6 + 66"
-	# 66 boot (wired up below as /sbin/init) needs both s6 itself, the
-	# supervisor it drives, and oblibs, 66's own base library - neither
-	# was ever actually staged into the tarball before this, only the
-	# init-wiring step further down that looks for the binary afterward.
-	# Without this the wiring step always warned "66 binary not found"
-	# and fell through with no PID1 at all.
-	# libxcrypt/pam: close_libs() below is a last-resort catch-all for
-	# whatever a package's metadata didn't declare, not a substitute for
-	# real deps - it failed to map libcrypt.so.2/libpam.so.0 back to the
-	# packages that provide them (libxcrypt, pam), so 66/s6/oblibs need
-	# them listed explicitly the same way openrc/wayland's sets do above.
-	S66_SET=$(pkg_deps s6 66 oblibs libxcrypt pam)
-	if printf '%s\n' $BASE_SET | grep -qx util-linux && \
-	   printf '%s\n' $S66_SET | grep -qx util-linux-libs; then
-		S66_SET=$(printf '%s\n' $S66_SET | grep -vx util-linux-libs)
-	fi
-	for p in $S66_SET; do
-		reason=dep
-		case " s6 66 " in *" $p "*) reason=explicit ;; esac
-		unpack_pkg "$p" "$reason" && ok "$p"
-	done
-fi
+# getty belongs under respawn, not services: rc.boot's service loop starts
+# each enabled service once and moves on, backgrounding or waiting briefly
+# for it to self-daemonize - a real login prompt is a foreground process
+# that runs until someone logs out and has to come back the instant it
+# does, forever, which is what scinit's own respawn loop (not rc.boot) is
+# for. Enabling getty here in services instead would make rc.boot's own
+# `wait` on it block forever, since `/etc/rc.d/getty start` never returns
+# on its own - this is not hypothetical, it is exactly the class of bug
+# tonight's from-scratch QEMU boot testing found under 66's own translation
+# of this same rc.d script.
+mkdir -p "$S/etc/scraplinux/respawn"
+: >"$S/etc/scraplinux/respawn/getty"
+: >"$S/etc/scraplinux/respawn/getty-serial"
+ok "getty enabled to respawn forever (not a one-shot service)"
 
 if [ "$FLAVOR" = i3wl ]; then
 	step "adding i3wl (dwl fork: i3-style binary-tree tiling, tray, bar)"
-	# An s66 system with a session on top, not a separate init: INITKIND is
-	# s66 above, so everything 66 needs is already staged and this only adds
-	# the compositor and whatever it links against. i3wl installs its
+	# A scinit system with a session on top, not a separate init: this only
+	# adds the compositor and whatever it links against. i3wl installs its
 	# compositor as /usr/bin/i3wl-bin with a dbus-run-session wrapper at
 	# /usr/bin/i3wl, and drops a wayland-sessions entry, so a display
 	# manager or a plain `i3wl` from the console both work.
@@ -336,7 +313,7 @@ if [ "$FLAVOR" = wayland ]; then
 	# compositor and was dropped. labwc/tinywl/wio/niri is a complete,
 	# working four-compositor lineup without either.
 	WAYLAND_SET=$(pkg_deps labwc-dms tinywl-dms wio-dms niri-dms sddm sddm-scraplinux-theme)
-	# Same util-linux/util-linux-libs collision as openrc above.
+	# Same util-linux/util-linux-libs collision as BASE_SET above.
 	if printf '%s\n' $BASE_SET | grep -qx util-linux && \
 	   printf '%s\n' $WAYLAND_SET | grep -qx util-linux-libs; then
 		WAYLAND_SET=$(printf '%s\n' $WAYLAND_SET | grep -vx util-linux-libs)
@@ -446,60 +423,21 @@ ok "scraps, scraps-strap, scraplinux-chroot in place"
 
 # ---------------------------------------------------------------- 3. init
 step "wiring up init ($INITKIND, flavor $FLAVOR)"
-case "$INITKIND" in
-s66)
-	# 66's own PID1 entry point is not a standalone binary the way
-	# s6-linux-init or openrc-init are - it is `66 boot` (a subcommand;
-	# see 66-scandir(8), which 66 boot calls internally with -b and
-	# explicitly documents as "not meant to be used directly even with
-	# root"). /sbin/init has to be something the kernel can exec directly
-	# with no arguments, so wire it as a one-line wrapper rather than a
-	# symlink - /bin/sh is available this early the same way it already
-	# has to be for busybox init's own applets.
-	mkdir -p "$S/sbin"
-	if [ -f "$S/usr/bin/66" ]; then
-		cat >"$S/sbin/init" <<-'EOF'
-			#!/bin/sh
-			exec /usr/bin/66 boot
-			EOF
-		chmod 755 "$S/sbin/init"
-		ok "66 boot wired as /sbin/init - boot-test before trusting this"
-	else
-		printf '   warning: 66 binary not found in the unpacked package\n' >&2
-	fi
-	;;
-busybox)
-	# busybox's own package no longer claims /usr/bin/init unconditionally
-	# (that conflicted with 66 on s66 systems, which install busybox too for
-	# its other applets) - wire the symlink here instead, same as every other
-	# flavor wires its own PID1. wayland bundles a desktop on top, but stays
-	# busybox init throughout - sddm itself is what actually starts the
-	# graphical session, from a regular getty-driven login same as any other
-	# busybox-init service.
-	mkdir -p "$S/sbin"
-	if [ -f "$S/usr/bin/busybox" ]; then
-		ln -sf ../usr/bin/busybox "$S/sbin/init"
-		ok "busybox init wired as /sbin/init"
-	else
-		printf '   warning: busybox binary not found in the unpacked package\n' >&2
-	fi
-	;;
-openrc)
-	# openrc-init is OpenRC's own PID1, not a script busybox init runs -
-	# it replaces /sbin/init outright. scraplinux-init-setup's setup_openrc()
-	# translates /etc/rc.d into /etc/init.d once scraplinux-base is installed
-	# from inside chroot; this only points PID1 at the right binary.
-	mkdir -p "$S/sbin"
-	if [ -f "$S/usr/sbin/openrc-init" ]; then
-		ln -sf ../usr/sbin/openrc-init "$S/sbin/init"
-	elif [ -f "$S/sbin/openrc-init" ]; then
-		ln -sf openrc-init "$S/sbin/init"
-	else
-		printf '   warning: openrc-init not found in the unpacked package\n' >&2
-	fi
-	ok "openrc-init wired as /sbin/init - boot-test before trusting this"
-	;;
-esac
+# scinit is a single POSIX sh file, not a package - install it straight
+# from the source tree the same way scraps/scraplinux-chroot are above, and
+# point /sbin/init at it directly. The kernel execs whatever /sbin/init is
+# with no arguments; scinit itself tells its own pid-1 mode apart from a
+# later CLI invocation by checking "$$" = 1, so a plain symlink is enough,
+# no wrapper script needed the way 66 boot used to require.
+mkdir -p "$S/sbin" "$S/etc/scraplinux"
+install -Dm755 "$SRCTREE/skel/sbin/scinit" "$S/sbin/scinit"
+ln -sf scinit "$S/sbin/init"
+# scraplinux-power's init_kind() reads this file first, before ever trying
+# to guess from /proc/1/exe - which would be unreliable for any shell-script
+# init anyway, since the kernel actually execs $(readlink /bin/sh) with the
+# script as an argument, not a binary named "scinit".
+printf 'scinit\n' >"$S/etc/scraplinux/init"
+ok "scinit wired as /sbin/init - boot-test before trusting this"
 
 # ------------------------------------------------------- 4. shared libraries
 # Same ELF-driven closure the ISO builder used: read what is actually

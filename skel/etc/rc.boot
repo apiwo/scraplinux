@@ -47,6 +47,12 @@ good
 RC_LOG=/run/scraplinux/boot.log
 export RC_LOG
 mkdir -p /run/scraplinux 2>/dev/null || :
+# Nothing before this point ever created /var/log - the only thing that did
+# was a `mkdir -p` tucked inside the boot.log-copying step at the very end
+# of this script, which is *after* both dmesg snapshots below try to write
+# there. Every fresh install hit "can't create /var/log/dmesg-early.log:
+# nonexistent directory" on its very first boot for exactly that reason.
+mkdir -p /var/log 2>/dev/null || :
 : >"$RC_LOG" 2>/dev/null || RC_LOG=/dev/null
 rc_log() { printf '%s\n' "$*" >>"$RC_LOG" 2>/dev/null || :; }
 export -n RC_LOG 2>/dev/null || :
@@ -68,11 +74,43 @@ if [ -x /sbin/udevd ] && [ -f /etc/scraplinux/services/udev ]; then
 	# nothing to go on. Regenerating this every boot is cheap and correct
 	# regardless of whether any hwdb.d file actually changed since the last
 	# one.
-	udevadm hwdb --update 2>/dev/null
-	/sbin/udevd --daemon 2>/dev/null
-	udevadm trigger --action=add --type=subsystems 2>/dev/null
-	udevadm trigger --action=add --type=devices 2>/dev/null
-	udevadm settle --timeout=30 2>/dev/null
+	# Bounded, every step, not just settle - see /etc/rc.d/udev-trigger's own
+	# comment: a from-scratch QEMU NVMe boot hung indefinitely in one of the
+	# trigger calls talking to a live udevd, well past settle's own declared
+	# 30s --timeout. That fix only ever landed in rc.d/udev-trigger, the
+	# *coldplug replay* run later from the services loop - this block, which
+	# actually starts udevd and does the first trigger+settle, never ran at
+	# all under s6/66 (rc.boot is the busybox-init boot script; s6/66 started
+	# udevd itself as its own service) so the same bug sat here unexercised
+	# until scinit made rc.boot the boot path for the first time.
+	#
+	# `timeout N cmd` alone is not actually a bound: toybox's timeout (like
+	# every other minimal implementation) only sends SIGTERM when the clock
+	# runs out, and a udevadm stuck in an uninterruptible kernel wait on a
+	# wedged udevd's netlink socket never processes that signal - so
+	# `timeout` itself blocked forever waiting for a child that would not
+	# die, which is exactly the hang this was supposed to fix and, without
+	# `-k`, did not. `-k 5` tells it to follow up with SIGKILL 5s later if
+	# the first signal did not work.
+	timeout -k 5 10 udevadm hwdb --update 2>/dev/null
+	# --daemon self-daemonizes (fork, setsid, exit the parent once ready) -
+	# every other init flavor here runs this as a plain foreground call and
+	# it returns promptly. Under scinit specifically it does not: rc.boot's
+	# shell is PID 1's direct, session-less child (scinit does no setsid/
+	# controlling-tty setup of its own, unlike busybox init, which does for
+	# every child it starts) and udevd's own internal daemonizing fork never
+	# returns control in that tree - confirmed by swapping /sbin/init for a
+	# plain shell and comparing: the *identical* rc.boot, run the identical
+	# way except for who is PID 1, completes udev startup in well under a
+	# second under busybox init and hangs here indefinitely under scinit.
+	# Backgrounding the whole call is what actually matters here - it stops
+	# rc.boot's own shell waiting on udevd's parent at all, whatever that
+	# parent is stuck on - not a `timeout` on it, which would just be one
+	# more thing blocked waiting on the same child.
+	/sbin/udevd --daemon 2>/dev/null &
+	timeout -k 5 10 udevadm trigger --action=add --type=subsystems 2>/dev/null
+	timeout -k 5 10 udevadm trigger --action=add --type=devices 2>/dev/null
+	timeout -k 5 15 udevadm settle --timeout=10 2>/dev/null
 else
 	begin "Starting mdev"
 	# Only if the kernel actually exposes it. A kernel built without
@@ -208,6 +246,32 @@ fsck_all() {
 		*) _fa_real=$_fa_dev ;;
 		esac
 		[ -n "$_fa_real" ] || { _fa_real=$_fa_dev; }
+		# Root is not a hypothetical case here - it is *always* already
+		# mounted read-write by this point, on every single boot, on every
+		# init flavor: the initramfs's own /init mounts it and switch_root
+		# into it long before rc.boot, the very shell running this
+		# function, ever starts. `e2fsck -a` on an already-mounted
+		# filesystem does not skip gracefully - it prints "is mounted",
+		# refuses to check anything, and exits 8, which fsck_all's own
+		# exit-code handling below correctly reads as "needs a human" and
+		# sends the console to a repair shell. Confirmed: this fired on
+		# every single boot tested, with no actual filesystem problem
+		# anywhere - root or /boot - because the thing being scored as a
+		# failure was root simply already being in use, the one guaranteed
+		# state it is always in here. Checking a live, mounted filesystem
+		# from inside itself is not a safe thing to do anyway (that is why
+		# e2fsck itself refuses) - skip anything already mounted and trust
+		# the kernel's own mount-time journal replay for it instead, the
+		# same trust every other init flavor's boot path already places in
+		# it implicitly by never running this check on root at all.
+		#
+		# Not `mountpoint -q "$_fa_mnt"`: for "/" specifically, a minimal
+		# `mountpoint` has no parent inode to compare the path against and
+		# the check itself is unreliable there of all places - confirmed:
+		# it let this exact call through and root still got "fsck"ed while
+		# mounted. Reading /proc/mounts directly for the resolved device
+		# has no such special case for "/".
+		grep -qs "^$_fa_real " /proc/mounts && continue
 		# shellcheck disable=SC2086
 		fsck -t "$_fa_type" -a $_fa_extra "$_fa_real" 2>/dev/null
 		_fa_this=$?

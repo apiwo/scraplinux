@@ -93,6 +93,17 @@ nitro)
 	halt|poweroff) nitroctl Shutdown ;;
 	reboot)        nitroctl Reboot ;;
 	esac ;;
+scinit)
+	# scinit deliberately reuses busybox init's own three signals rather
+	# than inventing a fourth convention - see skel/sbin/scinit's own
+	# comment. It stops every service itself, unmounts, and calls
+	# reboot/poweroff/halt -f as its very last step, so there is
+	# nothing more for this script to do once the signal is sent.
+	case "$action" in
+	halt)     kill -USR1 1 ;;
+	poweroff) kill -USR2 1 ;;
+	reboot)   kill -TERM 1 ;;
+	esac ;;
 s66)
 	# -f, every time. Without it 66-hpr only *requests* the transition: it
 	# writes to 66-shutdownd's fifo, prints "The system is going down NOW!"

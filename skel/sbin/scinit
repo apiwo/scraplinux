@@ -1,0 +1,202 @@
+#!/bin/sh
+# scinit - ScrapLinux's own init and service manager. One POSIX sh file,
+# nothing else: it is PID 1 when the kernel execs it (kernel_cmdline names
+# it as init=, or /sbin/init is a symlink to it), and an ordinary command
+# line tool when anyone else runs it afterward.
+#
+# Design: scinit does NOT reinvent service definitions. /etc/rc.d/*,
+# /etc/scraplinux/svc.lib and /etc/scraplinux/services/* (what to start at
+# boot) already exist, are already battle-tested, and every existing
+# service script already knows how to start/stop/restart/report itself.
+# scinit's own job is everything a shell script full of service
+# definitions cannot do for itself:
+#   - be pid 1 (the kernel only execs one process as pid 1)
+#   - run the one-time boot sequence (mounts, hostname, coldplug, starting
+#     every enabled self-daemonizing service) - delegated to rc.boot,
+#     unchanged, since that already works
+#   - respawn: keep a small number of genuinely foreground, never-exiting
+#     services (getty) running forever, restarting them the instant they
+#     exit - this is the one thing rc.boot's own service loop cannot do,
+#     because it starts everything once and moves on
+#   - reap zombies: pid 1 inherits every orphaned process on the system
+#   - shutdown: catch the halt/poweroff/reboot signals scraplinux-power
+#     already sends to pid 1 (the same three it uses for busybox init -
+#     SIGUSR1/SIGUSR2/SIGTERM - so scraplinux-power needed only one new
+#     branch, not a new mechanism), stop services, unmount, then actually
+#     power the machine down or restart it
+#
+# shellcheck shell=sh disable=SC2039
+
+set -u
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+RCD=/etc/rc.d
+SERVICES=/etc/scraplinux/services
+RESPAWN=/etc/scraplinux/respawn
+RUNDIR=/run/scinit
+
+# ==========================================================================
+# Command-line mode: anyone that isn't pid 1 running this after boot.
+# ==========================================================================
+if [ "$$" != 1 ]; then
+	case "${1:-}" in
+	service)
+		verb=${2:-}
+		name=${3:-}
+		case "$verb" in
+		start|stop|restart|status)
+			[ -n "$name" ] || { echo "usage: scinit service $verb <name>" >&2; exit 2; }
+			[ -x "$RCD/$name" ] || { echo "scinit: no such service: $name" >&2; exit 1; }
+			exec "$RCD/$name" "$verb"
+			;;
+		list)
+			for s in "$SERVICES"/* "$RESPAWN"/*; do
+				[ -e "$s" ] || continue
+				n=$(basename "$s")
+				if [ -x "$RCD/$n" ] && "$RCD/$n" status >/dev/null 2>&1; then
+					printf '  %-16s up\n' "$n"
+				else
+					printf '  %-16s down\n' "$n"
+				fi
+			done
+			;;
+		*)
+			echo "usage: scinit service <start|stop|restart|status> <name>" >&2
+			echo "       scinit service list" >&2
+			exit 2
+			;;
+		esac
+		exit 0
+		;;
+	halt|poweroff|reboot)
+		# scraplinux-power already knows how to talk to every init this
+		# project has ever shipped, including now this one (see its
+		# init_kind() and the scinit branch there) - reuse it rather than
+		# keep a second copy of the shutdown sequence in sync with it.
+		exec scraplinux-power "$1"
+		;;
+	version|--version)
+		echo "scinit - ScrapLinux's init and service manager"
+		exit 0
+		;;
+	*)
+		echo "usage: scinit service <start|stop|restart|status|list> [name]" >&2
+		echo "       scinit halt|poweroff|reboot" >&2
+		exit 2
+		;;
+	esac
+fi
+
+# ==========================================================================
+# pid 1 mode: everything from here down only ever runs once, as pid 1,
+# for the entire life of the running system.
+# ==========================================================================
+
+mkdir -p "$RUNDIR"
+
+# ------------------------------------------------------------- one-time boot
+# rc.boot mounts pseudo-filesystems, sets the hostname and console, runs
+# coldplug, checks/mounts real filesystems, and starts every service listed
+# under /etc/scraplinux/services/ (backgrounding or self-daemonizing each
+# one and waiting only long enough to know it started, exactly the same as
+# it already does for the busybox-init tarball flavor - nothing about it
+# is s6/66/openrc-specific, so it needed no changes to be reused here).
+# getty is deliberately never in that directory - see RESPAWN below - so
+# this cannot block waiting on a foreground process that never exits.
+if [ -x /etc/rc.boot ]; then
+	/etc/rc.boot
+fi
+
+# ----------------------------------------------------------------- respawn
+# The one thing rc.boot's start-once loop cannot do: a real terminal login
+# prompt is a foreground process that runs until someone logs out, and it
+# has to come back the instant it does, forever, for as long as the system
+# is up - classic inittab "respawn" semantics. Each entry under
+# /etc/scraplinux/respawn/ (getty, getty-serial by default) gets its own
+# forever-loop: run it in the foreground, and the moment it exits for any
+# reason - a logout, a crash, a killed process - wait a second and run it
+# again. `/etc/rc.d/$name start` already blocks in the foreground for a
+# BACKGROUND=no service with a real CMD (svc.lib's own svc_start does
+# `$CMD $ARGS` with nothing backgrounding it), so this needs nothing new
+# from the service scripts themselves.
+_respawn_pids=""
+if [ -d "$RESPAWN" ]; then
+	for s in "$RESPAWN"/*; do
+		[ -e "$s" ] || continue
+		name=$(basename "$s")
+		[ -x "$RCD/$name" ] || continue
+		(
+			while :; do
+				"$RCD/$name" start >/dev/null 2>&1
+				sleep 1
+			done
+		) &
+		_respawn_pids="$_respawn_pids $!"
+	done
+fi
+
+# ----------------------------------------------------------------- shutdown
+# scraplinux-power already sends these three signals to pid 1 for busybox
+# init (SIGUSR1 halt, SIGUSR2 poweroff, SIGTERM reboot) - reusing the exact
+# same convention here means scraplinux-power needed one new case-branch,
+# not a new signalling mechanism, and anything else on the system that
+# might send these expecting "the standard init shutdown signals" keeps
+# working unchanged.
+_shutdown() {
+	action=$1
+	echo "scinit: $action requested - stopping services" >&2
+
+	# Stop the respawn loops first: a getty a stop script is trying to
+	# signal, or that outlives its own controlling loop mid-shutdown, is
+	# not something the loop above should immediately restart.
+	for p in $_respawn_pids; do
+		kill "$p" 2>/dev/null
+	done
+	for s in "$RESPAWN"/*; do
+		[ -e "$s" ] || continue
+		name=$(basename "$s")
+		[ -x "$RCD/$name" ] && "$RCD/$name" stop >/dev/null 2>&1
+	done
+
+	# Every enabled self-daemonizing service, best-effort, in the reverse
+	# of the order rc.boot's own service directory listing would produce -
+	# not perfect dependency-aware ordering, but better than none, and
+	# every stop() a real service defines already handles being called on
+	# something not actually running (svc_stop's own svc_running check).
+	if [ -d "$SERVICES" ]; then
+		for s in $(ls "$SERVICES" 2>/dev/null | sort -r); do
+			[ -x "$RCD/$s" ] && "$RCD/$s" stop >/dev/null 2>&1
+		done
+	fi
+
+	sync
+	# Unmount everything real that isn't the root filesystem or a
+	# pseudo-filesystem the kernel itself needs until the very last
+	# moment - mirrors what every other init's own shutdown path in this
+	# project already does before calling reboot/poweroff/halt.
+	umount -a -r 2>/dev/null || :
+	sync
+
+	case "$action" in
+	reboot)   exec reboot -f ;;
+	poweroff) exec poweroff -f ;;
+	halt)     exec halt -f ;;
+	esac
+}
+
+trap '_shutdown halt' USR1
+trap '_shutdown poweroff' USR2
+trap '_shutdown reboot' TERM
+
+# --------------------------------------------------------- reap forever
+# pid 1 inherits every process whose original parent has already exited -
+# without something continuously reaping them they pile up as zombies.
+# This blocking `wait` with no argument reaps whatever exits next,
+# whoever its parent was; the traps above still fire and interrupt it
+# immediately when a shutdown signal actually arrives, POSIX shells reap
+# is not skipped by anything.  This is the entire remaining lifetime of
+# pid 1 on a running system.
+while :; do
+	wait
+done
