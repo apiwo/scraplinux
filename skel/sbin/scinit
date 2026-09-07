@@ -178,10 +178,28 @@ _shutdown() {
 	umount -a -r 2>/dev/null || :
 	sync
 
+	# Absolute paths, not bare names through $PATH: /usr/local/bin/reboot,
+	# poweroff and halt are all symlinks to scraplinux-power itself (it is
+	# installed as all three), and /usr/local/bin comes first in PATH -
+	# exactly so a plain `reboot`/`poweroff`/`halt` typed at a shell prompt
+	# reaches scraplinux-power's own pid-1-aware dispatch instead of the
+	# raw syscall wrapper underneath it. From *inside* pid 1's own shutdown
+	# path that is backwards: `exec reboot -f` here re-execs into
+	# scraplinux-power, still as pid 1, with none of scinit's own traps
+	# installed any more (exec resets caught signal dispositions), and
+	# scraplinux-power's own scinit branch responds to being pid 1 by
+	# sending pid 1 a signal - the kernel drops a default-disposition
+	# signal aimed at the global init, so nothing happens until
+	# scraplinux-power's 5-second fallback times out and it finally execs
+	# the real binary by absolute path itself. Skipping straight to that
+	# real binary is what actually caused the panic this replaces: measured
+	# on real hardware, "Attempted to kill init! exitcode=0x00000000" -
+	# some path through that recursion let the process now sitting on pid 1
+	# reach a plain exit(0) instead of ever completing a reboot.
 	case "$action" in
-	reboot)   exec reboot -f ;;
-	poweroff) exec poweroff -f ;;
-	halt)     exec halt -f ;;
+	reboot)   exec /usr/bin/reboot -f ;;
+	poweroff) exec /usr/bin/poweroff -f ;;
+	halt)     exec /usr/bin/halt -f ;;
 	esac
 }
 
