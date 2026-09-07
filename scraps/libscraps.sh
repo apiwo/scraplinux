@@ -121,8 +121,37 @@ scraps_palette() {
 	if [ -t 1 ] && [ "${SCRAPS_COLOR:-auto}" != "never" ]; then
 		C_R=$(printf '\033[0m')      ; C_B=$(printf '\033[1m')
 		C_DIM=$(printf '\033[2m')    ; C_IT=$(printf '\033[3m')
-		# A theme sets the numbers; these are the ScrapLinux palette by default.
-		_sgr() { [ -n "$1" ] && printf '\033[38;5;%sm' "$1" || printf ''; }
+		# The bare Linux console (fbcon/vgacon, TERM=linux - every real-hardware
+		# boot before X/Wayland exists, and every screen this project's own
+		# install instructions tell someone to read scraps output on) only
+		# ever reliably renders the basic 16 ANSI colours. `\033[38;5;Nm`
+		# 256-colour SGR is an xterm-family extension the Linux console's own
+		# terminal emulation does not fully implement - a theme number that
+		# happens to map to something reasonable there is luck, not support,
+		# and reports of "the colours are wrong" traced back to exactly this:
+		# real hardware at a bare console, not a terminal emulator. Fall back
+		# to the closest basic colour, bolded for the emphasis 256-colour
+		# would otherwise carry, rather than trust the escape sequence itself.
+		case "${TERM:-linux}" in
+		linux|dumb|"")
+			_sgr() {
+				[ -n "${1:-}" ] || { printf ''; return; }
+				case "$1" in
+				"$T_ACCENT") printf '\033[1;33m' ;;  # gold/yellow -> bold yellow
+				"$T_OK")     printf '\033[1;32m' ;;  # green -> bold green
+				"$T_WARN")   printf '\033[1;33m' ;;  # orange -> bold yellow
+				"$T_ERR")    printf '\033[1;31m' ;;  # red -> bold red
+				"$T_TEXT")   printf '\033[1;37m' ;;  # near-white -> bold white
+				"$T_DIM")    printf '\033[2m'    ;;  # grey -> dim, no colour
+				*)           printf ''           ;;  # unknown theme token: none
+				esac
+			}
+			;;
+		*)
+			# A theme sets the numbers; these are the ScrapLinux palette by default.
+			_sgr() { [ -n "$1" ] && printf '\033[38;5;%sm' "$1" || printf ''; }
+			;;
+		esac
 		# A_VIO/A_IND/A_ICE were the literal 99/69/81 of the old violet ->
 		# ice -> teal gradient, and stayed hardcoded when A_TEAL moved to
 		# T_ACCENT - so scraps still printed violet and cyan next to a gold

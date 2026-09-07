@@ -366,6 +366,15 @@ install -Dm644 "$SRCTREE/skel/etc/scraplinux/conf.lib" "$S/etc/scraplinux/conf.l
 # have worked in any tarball flavor at all, pre-existing and unrelated
 # to any one flavor.
 install -Dm644 "$SRCTREE/skel/etc/scraplinux/svc.lib" "$S/etc/scraplinux/svc.lib"
+# rc.lib: rc.boot's begin/good/bad/rc_done output helpers, including the
+# fallback that fires when it is missing - which was silently true of
+# every tarball built here, since this file lived only in the published
+# scraplinux-base package (still Arctic-branded, /run/arctic paths, plain
+# 256-colour SGR the bare Linux console does not reliably render) and
+# never in this source tree at all. Installed straight from skel/ now,
+# not left to whatever a `scraps add scraplinux-base` happens to still
+# be shipping.
+install -Dm644 "$SRCTREE/skel/etc/scraplinux/rc.lib" "$S/etc/scraplinux/rc.lib"
 
 install -Dm755 "$SRCTREE/skel/usr/bin/scraplinux-chroot" "$S/usr/bin/scraplinux-chroot"
 
