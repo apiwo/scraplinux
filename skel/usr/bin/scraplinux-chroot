@@ -100,6 +100,33 @@ fi
 SHELL_IN=/bin/zsh
 [ -x "$TARGET$SHELL_IN" ] || SHELL_IN=/bin/sh
 
+# The terminal type has to be one the TARGET has a terminfo entry for, not
+# whatever the host happens to be running. zsh's line editor drives the
+# cursor entirely from terminfo; handed a $TERM it cannot look up inside the
+# chroot (foot, xterm-256color, wezterm - anything modern, none of which a
+# from-scratch target ships), it falls back to emitting the wrong cursor
+# movement and backspace walks the cursor *forward* by however much had been
+# typed instead of erasing. Setting the erase character alone never fixed
+# that: the erase byte was arriving correctly all along, it was the redraw
+# that was wrong. Probe for a real entry and downgrade to one that exists.
+_have_ti() {
+	[ -f "$TARGET/usr/share/terminfo/$(printf %.1s "$1")/$1" ] ||
+	[ -f "$TARGET/etc/terminfo/$(printf %.1s "$1")/$1" ] ||
+	[ -f "$TARGET/lib/terminfo/$(printf %.1s "$1")/$1" ]
+}
+TERM_IN=${TERM:-linux}
+if ! _have_ti "$TERM_IN"; then
+	for _t in linux vt100 ansi dumb; do
+		_have_ti "$_t" && { TERM_IN=$_t; break; }
+		_t=""
+	done
+	# No terminfo database in the target at all - every entry probed came up
+	# empty. TERM=linux is the least-wrong answer: it is what the console
+	# this is most likely being run from actually is, and zsh's own
+	# compiled-in defaults for it are closer than a lie about being an xterm.
+	[ -n "${_t:-}" ] || TERM_IN=linux
+fi
+
 if [ $# -gt 0 ]; then
 	chroot "$TARGET" "$SHELL_IN" -lc "$*"
 	exit $?
@@ -125,7 +152,7 @@ printf '\033[38;5;178m::\033[0m entering %s (exit or ctrl-d to leave)\n' "$TARGE
 _del=$(printf '\177')
 env -i \
 	HOME=/root \
-	TERM="${TERM:-linux}" \
+	TERM="$TERM_IN" \
 	PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
 	SCRAPLINUX_CHROOT=1 \
 	chroot "$TARGET" /bin/sh -c 'stty sane erase '"$_del"' 2>/dev/null; exec '"$SHELL_IN"' -l'

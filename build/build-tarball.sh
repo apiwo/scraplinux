@@ -377,6 +377,10 @@ install -Dm644 "$SRCTREE/skel/etc/scraplinux/svc.lib" "$S/etc/scraplinux/svc.lib
 install -Dm644 "$SRCTREE/skel/etc/scraplinux/rc.lib" "$S/etc/scraplinux/rc.lib"
 
 install -Dm755 "$SRCTREE/skel/usr/bin/scraplinux-chroot" "$S/usr/bin/scraplinux-chroot"
+# wifi-connect: rc.d/wifi has always reconnected from what this saves, but
+# the command that does the saving was never actually shipped.
+install -Dm755 "$SRCTREE/skel/usr/bin/wifi-connect" "$S/usr/bin/wifi-connect"
+mkdir -p "$S/var/spool/cron/crontabs"
 
 # Both belong here for the same reason scraplinux-chroot does: neither is
 # part of any real package payload (scraplinux-base is a meta package with

@@ -2,6 +2,12 @@
 NAME=crond
 CMD=/usr/bin/crond
 ARGS="-f -l 8"
+# busybox crond chdir()s into its spool directory on startup and exits if it
+# is not there - "crond[692]: can't change directory to
+# '/var/spool/cron/crontabs': No such file or directory" on every single boot
+# of a fresh install, because nothing ever created it.
+PRESTART='mkdir -p /var/spool/cron/crontabs 2>/dev/null || :'
+
 BACKGROUND=yes
 
 . /etc/scraplinux/svc.lib

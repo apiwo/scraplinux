@@ -20,6 +20,8 @@ case " $(cat /proc/cmdline 2>/dev/null) " in
 *" quiet "*|*" scraplinux.splash "*) QUIET=1 ;;
 esac
 
+boot_header
+
 # No banner. It printed the release out of /etc/scraplinux-release above the
 # boot, which is a version string nobody needs at the top of every boot and
 # which was wrong for a long time anyway - the installer stamped every machine
@@ -27,6 +29,7 @@ esac
 # when it is actually being asked.
 
 # --------------------------------------------------------------- pseudo filesystems
+runlevel 1 "hardware and filesystems"
 begin "Mounting pseudo-filesystems"
 mountpoint -q /proc || mount -t proc     -o nosuid,noexec,nodev proc  /proc
 mountpoint -q /sys  || mount -t sysfs    -o nosuid,noexec,nodev sys   /sys
@@ -328,6 +331,7 @@ fi
 good
 
 # ------------------------------------------------------------------------- system
+runlevel 2 "system identity and state"
 begin "Setting up hostname"
 # Not "A && B || C": if /etc/hostname exists but "hostname -F" itself fails
 # for any reason (an empty file, a trailing-whitespace quirk), that pattern
@@ -460,6 +464,7 @@ dmesg >/var/log/dmesg-early.log 2>/dev/null || :
 # left out of the second loop that blocks on completion, and a detached
 # watcher reports how each one actually went into the boot log once it
 # finishes, asynchronously, after the prompt is already up.
+runlevel 3 "services"
 _svc_deferred=" network wifi "
 if [ -d /etc/scraplinux/services ]; then
 	mkdir -p /run/scraplinux/svc-out

@@ -1,0 +1,178 @@
+#!/bin/sh
+# wifi-connect - scan, pick a network, associate, get a lease, remember it.
+#
+#   wifi-connect                 scan and choose from a list
+#   wifi-connect <ssid>          connect to one by name (prompts for the key)
+#   wifi-connect <ssid> <psk>    non-interactive
+#   wifi-connect --status        what the radio is doing right now
+#   wifi-connect --forget        drop the saved network
+#
+# rc.d/wifi has referenced this command since it was written - it reconnects
+# on boot from whatever this saves into /etc/scraplinux/network.conf - but the
+# command itself was never actually shipped, so there was no way to save a
+# network in the first place and the boot-time reconnect had nothing to read.
+# This is that missing half.
+# shellcheck shell=sh disable=SC2039
+
+set -u
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+CONF_LIB=/etc/scraplinux/conf.lib
+NET_CONF=/etc/scraplinux/network.conf
+CTRL_DIR=/run/wpa_supplicant
+
+[ -f "$CONF_LIB" ] || { echo "wifi-connect: $CONF_LIB is missing" >&2; exit 1; }
+# shellcheck disable=SC1090
+. "$CONF_LIB"
+
+R=$(printf '\033[0m'); B=$(printf '\033[1m')
+W=$(printf '\033[1;37m'); G=$(printf '\033[1;32m'); E=$(printf '\033[1;31m'); D=$(printf '\033[2m')
+say()  { printf '%s::%s %s\n' "$W" "$R" "$*"; }
+ok()   { printf '%s::%s %s\n' "$G" "$R" "$*"; }
+die()  { printf '%s!!%s %s\n' "$E" "$R" "$*" >&2; exit 1; }
+
+[ "$(id -u)" = 0 ] || die "must be run as root."
+
+conf_escape() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
+
+# The first interface with a wireless/ directory under it. iface can be pinned
+# in network.conf for a machine with more than one radio.
+find_iface() {
+	_i=$(conf_get1 "$NET_CONF" wifi.iface 2>/dev/null)
+	[ -n "${_i:-}" ] && [ -d "/sys/class/net/$_i" ] && { printf '%s' "$_i"; return; }
+	for d in /sys/class/net/*; do
+		[ -d "$d/wireless" ] && { printf '%s' "${d##*/}"; return; }
+	done
+}
+
+# A soft-blocked radio still creates its netdev, so without this a scan just
+# silently returns nothing and looks like "no networks here".
+unblock_rfkill() {
+	for k in /sys/class/rfkill/rfkill*; do
+		[ -d "$k" ] || continue
+		[ "$(cat "$k/type" 2>/dev/null)" = wlan ] || continue
+		[ "$(cat "$k/soft" 2>/dev/null)" = 1 ] || continue
+		echo 0 >"$k/soft" 2>/dev/null || :
+	done
+}
+
+IFACE=$(find_iface)
+
+case "${1:-}" in
+--status|-s)
+	[ -n "$IFACE" ] || die "no wireless interface found - is the driver loaded?"
+	printf '  %sinterface%s  %s\n' "$D" "$R" "$IFACE"
+	printf '  %sstate%s      %s\n' "$D" "$R" "$(cat "/sys/class/net/$IFACE/operstate" 2>/dev/null || echo unknown)"
+	_ss=$(iw dev "$IFACE" link 2>/dev/null | sed -n 's/^[[:space:]]*SSID: //p')
+	printf '  %sssid%s       %s\n' "$D" "$R" "${_ss:-(not associated)}"
+	_ip=$(ip -4 addr show "$IFACE" 2>/dev/null | sed -n 's/.*inet \([0-9.]*\).*/\1/p')
+	printf '  %saddress%s    %s\n' "$D" "$R" "${_ip:-(none)}"
+	exit 0 ;;
+--forget|-f)
+	conf_set1 "$NET_CONF" wifi.ssid "" 2>/dev/null || :
+	conf_set1 "$NET_CONF" wifi.psk  "" 2>/dev/null || :
+	ok "saved network cleared."
+	exit 0 ;;
+-h|--help)
+	sed -n '2,12p' "$0" | sed 's/^# \?//'
+	exit 0 ;;
+esac
+
+[ -n "$IFACE" ] || die "no wireless interface found - is the driver loaded?"
+unblock_rfkill
+ip link set "$IFACE" up 2>/dev/null || :
+
+SSID=${1:-}
+PSK=${2:-}
+
+if [ -z "$SSID" ]; then
+	say "scanning on $IFACE ..."
+	# Sorted by signal, deduplicated: one line per network, strongest first.
+	SCAN=$(iw dev "$IFACE" scan 2>/dev/null | awk '
+		/^BSS /            { sig=""; ssid="" }
+		/signal:/          { sig=$2 }
+		/^[[:space:]]*SSID: / { $1=""; sub(/^ /,""); ssid=$0
+		                     if (ssid != "" && !(ssid in seen) ) { seen[ssid]=sig; }
+		                     else if (ssid != "" && sig+0 > seen[ssid]+0) seen[ssid]=sig }
+		END { for (s in seen) printf "%s\t%s\n", seen[s], s }' | sort -rn)
+	[ -n "$SCAN" ] || die "no networks found."
+	printf '\n'
+	i=0
+	printf '%s' "$SCAN" | while IFS="$(printf '\t')" read -r sig name; do
+		i=$((i+1)); printf '  %s%2d%s  %-32s %s%s dBm%s\n' "$B" "$i" "$R" "$name" "$D" "$sig" "$R"
+	done
+	printf '\n  number (or ssid): '
+	read -r pick
+	[ -n "$pick" ] || die "nothing chosen."
+	case "$pick" in
+	''|*[!0-9]*) SSID=$pick ;;
+	*)           SSID=$(printf '%s' "$SCAN" | sed -n "${pick}p" | cut -f2-) ;;
+	esac
+	[ -n "$SSID" ] || die "no such entry."
+fi
+
+if [ -z "$PSK" ]; then
+	printf '  passphrase for %s (empty for an open network): ' "$SSID"
+	stty -echo 2>/dev/null; read -r PSK; stty echo 2>/dev/null; printf '\n'
+fi
+
+CONF="/etc/wpa_supplicant-$IFACE.conf"
+: >"$CONF"; chmod 600 "$CONF"
+mkdir -p "$CTRL_DIR" 2>/dev/null || :
+{
+	printf 'ctrl_interface=%s\n' "$CTRL_DIR"
+	printf 'ctrl_interface_group=0\n'
+	printf 'update_config=1\n'
+	printf 'network={\n'
+	printf '\tssid="%s"\n' "$(conf_escape "$SSID")"
+	if [ -n "$PSK" ]; then
+		printf '\tpsk="%s"\n' "$(conf_escape "$PSK")"
+	else
+		printf '\tkey_mgmt=NONE\n'
+	fi
+	printf '}\n'
+} >"$CONF"
+
+# A leftover supplicant from an earlier attempt fighting a fresh one over the
+# same nl80211 device makes both fail. Match the full command line, never a
+# bare process name.
+pkill -f "wpa_supplicant.*-i *$IFACE" 2>/dev/null || :
+sleep 1
+
+say "associating with $SSID ..."
+wpa_supplicant -B -i "$IFACE" -c "$CONF" >/dev/null 2>&1 \
+	|| die "wpa_supplicant would not start."
+
+n=0
+while [ "$n" -lt 20 ]; do
+	_now=$(iw dev "$IFACE" link 2>/dev/null | sed -n 's/^[[:space:]]*SSID: //p')
+	[ -n "$_now" ] && break
+	sleep 1; n=$((n+1))
+done
+[ -n "${_now:-}" ] || die "could not associate - wrong passphrase, or out of range."
+
+say "requesting an address ..."
+pkill -f "udhcpc.*-i *$IFACE" 2>/dev/null || :
+udhcpc -b -i "$IFACE" -q >/dev/null 2>&1 || dhcpcd "$IFACE" >/dev/null 2>&1 || :
+
+n=0
+while [ "$n" -lt 15 ]; do
+	IP=$(ip -4 addr show "$IFACE" 2>/dev/null | sed -n 's/.*inet \([0-9.]*\).*/\1/p')
+	[ -n "$IP" ] && break
+	sleep 1; n=$((n+1))
+done
+
+# Saved only once it actually worked, so rc.d/wifi never replays a network
+# that has never associated even once.
+conf_set1 "$NET_CONF" wifi.ssid  "$SSID"  2>/dev/null || :
+conf_set1 "$NET_CONF" wifi.psk   "$PSK"   2>/dev/null || :
+conf_set1 "$NET_CONF" wifi.iface "$IFACE" 2>/dev/null || :
+chmod 600 "$NET_CONF" 2>/dev/null || :
+: >"/etc/scraplinux/services/wifi" 2>/dev/null || :
+
+if [ -n "${IP:-}" ]; then
+	ok "connected to $SSID as $IP - saved, and it will reconnect on boot."
+else
+	ok "associated with $SSID, but no address yet - saved anyway."
+	printf '  %stry: udhcpc -i %s%s\n' "$D" "$IFACE" "$R"
+fi

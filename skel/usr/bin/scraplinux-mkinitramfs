@@ -126,7 +126,7 @@ mount -t proc proc /proc
 mount -t sysfs sys /sys
 mount -t devtmpfs dev /dev 2>/dev/null || mount -t tmpfs dev /dev
 
-R=\$(printf '\033[0m'); TEAL=\$(printf '\033[38;5;178m'); RED=\$(printf '\033[38;5;203m')
+R=\$(printf '\033[0m'); TEAL=\$(printf '\033[1;37m'); RED=\$(printf '\033[1;31m')
 say()  { printf '%s::%s %s\n' "\$TEAL" "\$R" "\$*"; }
 oops() {
 	printf '\n%s!!%s %s\n\n' "\$RED" "\$R" "\$*"
