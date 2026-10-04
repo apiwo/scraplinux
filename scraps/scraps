@@ -1012,6 +1012,18 @@ cmd_ins() {
 		_done_n=$((_done_n+1))
 		[ -n "$_done_first" ] || _done_first=$p
 	done
+	# Companions worth knowing about, gathered from what was actually
+	# installed. Anything already present is dropped, so this only ever names
+	# things that are genuinely not on the system yet.
+	_recs=""
+	for p in $requested; do
+		is_installed "$p" || continue
+		[ -f "$SCRAPS_DB/local/$p/PKGINFO" ] || continue
+		for _r in $(sed -n 's/^recommend = //p' "$SCRAPS_DB/local/$p/PKGINFO"); do
+			is_installed "$_r" && continue
+			case " $_recs " in *" $_r "*) ;; *) _recs="$_recs $_r" ;; esac
+		done
+	done
 	if [ "$_done_n" -gt 1 ]; then
 		ui_done "$_done_n packages" "$ndeps" "$TX"
 	elif [ "$_done_n" = 1 ]; then
@@ -1019,6 +1031,7 @@ cmd_ins() {
 	fi
 	[ "$SCRAPS_STYLE" = scraplinux ] && \
 		printf '  %stransaction %s - undo it with: scraps rollback%s\n' "$A_GREY" "$TX" "$C_R"
+	ui_recommends "$_recs"
 	:
 }
 

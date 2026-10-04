@@ -671,6 +671,19 @@ ui_met() {
 	esac
 }
 
+# Recommendations for everything just installed, printed once, at the end.
+# Deliberately not installed: a hard dependency is what a program needs to run,
+# a recommendation is a companion someone may or may not want. dwm needs its X
+# libraries; it does not need a terminal and a menu chosen for them.
+ui_recommends() {
+	[ -n "${1:-}" ] || return 0
+	printf '\n  %srecommended with what you just installed%s\n' "$A_GREY" "$C_R"
+	for _r in $1; do
+		printf '    %s%s%s\n' "$A_TEAL" "$_r" "$C_R"
+	done
+	printf '  %sinstall any of them with: scraps add <name>%s\n' "$A_GREY" "$C_R"
+}
+
 # $1 name  $2 dependency count  $3 transaction id
 ui_done() {
 	case "$SCRAPS_STYLE" in

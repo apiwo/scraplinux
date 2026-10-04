@@ -224,7 +224,16 @@ unpack_pkg() {
 # for its own password checks against /etc/shadow. s6/66's own explicit set
 # happened to need them too and masked this for the s66 flavor only - def
 # and openrc built "clean" every time except for silently missing both.
-BASE_EXPLICIT="glibc toybox busybox zsh doas e2fsprogs util-linux dosfstools onetrueawk xz libarchive eudev iw wpa_supplicant ca-certificates curl bmake byacc mandoc gmake libxcrypt pam"
+# llvm and pkgconf are the toolchain, and they belong in the stage tarball for
+# the same reason a Gentoo stage3 ships gcc and binutils: this is a
+# source-based distribution, so a fresh install that cannot compile is not a
+# usable install. Measured on the previous tarball: make and the headers were
+# there, but cc, ld, as, ar and pkg-config were all missing, so `scraps add -s`
+# could not build a single package on a new machine. llvm carries clang, lld
+# and the llvm-* binutils, which is the whole toolchain here since ScrapLinux
+# has no gcc. It costs about 157 MB of download and 1.1 GB installed, which is
+# the same order as a stage3 and is the price of the thing working at all.
+BASE_EXPLICIT="glibc toybox busybox zsh doas e2fsprogs util-linux dosfstools onetrueawk xz libarchive eudev iw wpa_supplicant ca-certificates curl bmake byacc mandoc gmake libxcrypt pam llvm pkgconf"
 BASE_SET=$(pkg_deps $BASE_EXPLICIT)
 # e2fsprogs depends on util-linux-libs, which BASE_EXPLICIT's own util-linux
 # already replaces (same libmount/libblkid/libuuid, see its recipe) - this
@@ -380,6 +389,23 @@ install -Dm755 "$SRCTREE/skel/usr/bin/scraplinux-chroot" "$S/usr/bin/scraplinux-
 # wifi-connect: rc.d/wifi has always reconnected from what this saves, but
 # the command that does the saving was never actually shipped.
 install -Dm755 "$SRCTREE/skel/usr/bin/wifi-connect" "$S/usr/bin/wifi-connect"
+
+# Binutils names, pointed at their LLVM equivalents. llvm ships these only as
+# llvm-ar, llvm-ranlib and so on, but autotools, cmake and plain Makefiles all
+# invoke the unprefixed names, so a source build on a fresh install failed on
+# a missing `ar` even with clang and lld sitting right there. Measured on the
+# tarball before this: cc, clang, ld and pkg-config present; ar, ranlib,
+# strip and nm absent.
+#
+# `as` is deliberately not in this list. llvm-as assembles LLVM IR and is not
+# a drop-in for GNU as, so pointing `as` at it would turn a missing-tool error
+# into a confusing wrong-tool one. Clang's integrated assembler handles .s
+# files through `clang -c`, which is what builds here actually use.
+for _bu in ar ranlib strip nm objcopy objdump readelf strings size addr2line; do
+	[ -e "$S/usr/bin/llvm-$_bu" ] && ln -sf "llvm-$_bu" "$S/usr/bin/$_bu"
+done
+[ -e "$S/usr/bin/llvm-cxxfilt" ] && ln -sf llvm-cxxfilt "$S/usr/bin/c++filt"
+ok "binutils names linked to their llvm-* equivalents"
 mkdir -p "$S/var/spool/cron/crontabs"
 
 # Both belong here for the same reason scraplinux-chroot does: neither is

@@ -426,6 +426,8 @@ fi
 # --------------------------------------------------------------- load the recipe
 name=""; version=""; release=1; desc=""; url=""; license="unknown"
 arch="${SCRAPS_ARCH:-x86_64}"; depend=""; makedepend=""; source=""; sha256=""
+# Companions, not dependencies: printed after an install, never installed.
+recommend=""
 options=""; provides=""; conflicts=""; replaces=""; backup=""; kind=""
 
 # shellcheck disable=SC1090
@@ -678,6 +680,11 @@ EOF
 for d in $depend;    do printf 'depend = %s\n' "$d" >>"$pkgdir/.PKGINFO"; done
 for d in $makedepend;do printf 'makedepend = %s\n' "$d" >>"$pkgdir/.PKGINFO"; done
 for d in $provides;  do printf 'provides = %s\n' "$d" >>"$pkgdir/.PKGINFO"; done
+# A recommendation is a suggestion and nothing else. It is recorded so scraps
+# can mention it once, after the install, and is never resolved or pulled in:
+# installing dwm must not drag in a terminal and a menu the way a hard
+# dependency would.
+for d in $recommend;  do printf 'recommend = %s\n' "$d" >>"$pkgdir/.PKGINFO"; done
 for d in $conflicts; do printf 'conflicts = %s\n' "$d" >>"$pkgdir/.PKGINFO"; done
 for d in $replaces;  do printf 'replaces = %s\n' "$d" >>"$pkgdir/.PKGINFO"; done
 for d in $backup;    do printf 'backup = %s\n' "$d" >>"$pkgdir/.PKGINFO"; done
