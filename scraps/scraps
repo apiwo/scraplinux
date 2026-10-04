@@ -682,8 +682,9 @@ install_one() {
 			[ -n "$_to_o" ] || continue
 			_to_m="$SCRAPS_DB/local/$_to_o/FILES"
 			[ -f "$_to_m" ] || continue
-			grep -vxF "$_to_f" "$_to_m" >"$_to_m.new" 2>/dev/null && \
-				mv -f "$_to_m.new" "$_to_m"
+			# grep -v exits 1 when it drops the last line
+			{ grep -vxF "$_to_f" "$_to_m" || :; } >"$_to_m.new"
+			mv -f "$_to_m.new" "$_to_m"
 			info "$_to_f: now owned by $name, was $_to_o"
 		done <"$tmp.takeover"
 	fi
