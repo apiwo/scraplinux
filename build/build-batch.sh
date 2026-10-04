@@ -49,11 +49,16 @@ find_recipe() {
 	return 1
 }
 
-have_binary() {
-	for f in "$B/repo/$1/x86_64/"*.spz; do
-		[ -f "$f" ] || continue
-		n=$(basename "$f" | sed 's/-[^-]*-[0-9]*\.[^.]*\.spz$//')
-		[ "$n" = "$2" ] && return 0
+# the exact name-version-release a recipe declares, any arch
+recipe_nvr() { # name recipe
+	_rv=$(sed -n 's/^version=//p' "$2" | head -1 | tr -d '"')
+	_rr=$(sed -n 's/^release=//p' "$2" | head -1 | tr -d '"')
+	printf '%s-%s-%s' "$1" "$_rv" "${_rr:-1}"
+}
+
+have_binary() { # repo name recipe
+	for f in "$B/repo/$1/x86_64/$(recipe_nvr "$2" "$3")".*.spz; do
+		[ -f "$f" ] && return 0
 	done
 	return 1
 }
@@ -163,7 +168,7 @@ for pkg in $TARGETS; do
 	# for wayland, so wayland was reported "already built" and skipped on
 	# every run - while nothing in any repository provided it and every
 	# package that depended on it stayed uninstallable.
-	if have_binary "$repo" "$pkg"; then
+	if have_binary "$repo" "$pkg" "$recipe"; then
 		printf '  %-22s %-9s %s\n' "$pkg" "have" "already built"
 		continue
 	fi
@@ -171,9 +176,14 @@ for pkg in $TARGETS; do
 	seed_sysroot "$recipe"
 	seed_libcxx || :
 	if sh "$TREE/scraps/scraps-build" "$recipe" >"$L/$pkg.log" 2>&1; then
-		f=$(ls -t "$SCRAPS_BUILDROOT/out/$pkg"-*.spz 2>/dev/null | head -1)
+		f=$(ls "$SCRAPS_BUILDROOT/out/$(recipe_nvr "$pkg" "$recipe")".*.spz 2>/dev/null | head -1)
 		if [ -n "$f" ]; then
 			mkdir -p "$B/repo/$repo/x86_64"
+			# drop superseded builds of this exact name
+			for o in "$B/repo/$repo/x86_64/"*.spz; do
+				[ -f "$o" ] && [ "$(basename "$o")" != "$(basename "$f")" ] || continue
+				[ "$(basename "$o" | sed 's/-[^-]*-[0-9]*\.[^.]*\.spz$//')" = "$pkg" ] && rm -f "$o"
+			done
 			cp -f "$f" "$B/repo/$repo/x86_64/"
 			printf '  %-22s %-9s %s\n' "$pkg" "ok" "$(du -h "$f" | cut -f1) -> $repo"
 			built=$((built+1))
