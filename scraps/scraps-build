@@ -248,6 +248,8 @@ if [ -d "$SCRAPS_SYSROOT/usr" ]; then
 	# Imath that way, colliding with the imath package it already depends on.
 	export CMAKE_PREFIX_PATH="$SCRAPS_SYSROOT/usr${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
 	export ACLOCAL_PATH="$SCRAPS_SYSROOT/usr/share/aclocal${ACLOCAL_PATH:+:$ACLOCAL_PATH}"
+	# make is bmake on scraplinux, its sys.mk lives in the sysroot here
+	[ -d "$SCRAPS_SYSROOT/usr/share/mk" ] && export MAKESYSPATH="$SCRAPS_SYSROOT/usr/share/mk"
 	_HOST_PATH=$PATH
 	# usr/local/bin too: meson (and anything else installed there instead of
 	# usr/bin) was invisible here, so it fell through to the host's own copy,
@@ -612,8 +614,20 @@ cd "$srcdir"
 # it reaches curl, which then loads the sysroot's libressl against the host's
 # openssl.cnf and dies on "unknown module name: providers" - every download
 # failed with nothing to say why.
+# glibc stays out: host programs on the sysroot's libc die in the host's loader
 if [ -d "$SCRAPS_SYSROOT/usr/lib" ]; then
-	export LD_LIBRARY_PATH="$SCRAPS_SYSROOT/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+	_ldp="$SCRAPS_SYSROOT/.ldpath"
+	rm -rf "$_ldp"; mkdir -p "$_ldp"
+	for _l in "$SCRAPS_SYSROOT"/usr/lib/*.so*; do
+		[ -e "$_l" ] || continue
+		case "${_l##*/}" in
+		ld-linux*|libc.so*|libm.so*|libmvec.so*|libpthread.so*|libdl.so*|librt.so*|\
+		libresolv.so*|libutil.so*|libanl.so*|libnss_*|libthread_db.so*|\
+		libBrokenLocale.so*|libc_malloc_debug.so*|libmemusage.so|libpcprofile.so) continue ;;
+		esac
+		ln -s "$_l" "$_ldp/"
+	done
+	export LD_LIBRARY_PATH="$_ldp${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 fi
 
 if command -v build >/dev/null 2>&1; then
