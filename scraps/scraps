@@ -511,22 +511,13 @@ install_one() {
 	while read -r f; do
 		[ -n "$f" ] || continue
 		[ -e "$SCRAPS_ROOT$f" ] || continue
-		owner=$(grep -rlx "$f" "$SCRAPS_DB"/local/*/FILES 2>/dev/null | head -1) || :
+		# a package may always rewrite what it already owns
+		grep -qxF "$f" "$SCRAPS_DB/local/$name/FILES" 2>/dev/null && continue
+		owner=$(grep -lxF "$f" "$SCRAPS_DB"/local/*/FILES 2>/dev/null | head -1) || :
 		if [ -n "$owner" ]; then
 			o=$(basename "$(dirname "$owner")")
-			[ "$o" = "$name" ] && continue
-			# Identical content is not a conflict worth refusing over. Two
-			# packages shipping the same file byte-for-byte - libressl and
-			# ca-certificates both installing /etc/ssl/cert.pem, which
-			# stopped any transaction containing ca-certificates - leaves
-			# nothing to disagree about: hand the path to the incoming
-			# package and take it off the old owner's manifest, so exactly
-			# one package still owns it and removing the other does not take
-			# the file with it.
-			if same_file "$tmp$f" "$SCRAPS_ROOT$f"; then
-				printf '%s\t%s\n' "$o" "$f" >>"$tmp.takeover"
-				continue
-			fi
+			# identical content is shared, both keep it listed
+			same_file "$tmp$f" "$SCRAPS_ROOT$f" && continue
 			# An incoming package that says it replaces the current owner is
 			# allowed to take the path. This is what a multi-call binary needs:
 			# toybox and busybox ship fallback applets - bunzip2, xxd, chrt -
@@ -667,6 +658,9 @@ install_one() {
 			[ -n "$_st_f" ] || continue
 			grep -qxF "$_st_f" "$db/FILES" 2>/dev/null && continue
 			[ -e "$SCRAPS_ROOT$_st_f" ] || [ -L "$SCRAPS_ROOT$_st_f" ] || continue
+			# still shipped by another package
+			grep -lxF "$_st_f" "$SCRAPS_DB"/local/*/FILES 2>/dev/null \
+				| grep -qvxF "$db/FILES" && continue
 			# A file the old version itself marked backup= does not get
 			# deleted just because this release stopped shipping it -
 			# dropping something from a recipe is not the same thing as
@@ -1116,13 +1110,20 @@ remove_files() {
 	name=$1
 	db="$SCRAPS_DB/local/$name"
 	[ -f "$db/FILES" ] || return 0
+	# paths another installed package also lists stay on disk
+	_rf_keep="$SCRAPS_CACHE/.keep.$$"
+	for _rf_m in "$SCRAPS_DB"/local/*/FILES; do
+		[ "$_rf_m" = "$db/FILES" ] || cat "$_rf_m"
+	done 2>/dev/null | grep -xF -f "$db/FILES" >"$_rf_keep" 2>/dev/null || :
 	# Files first, then directories deepest-first so empties disappear.
 	while read -r f; do
 		[ -n "$f" ] || continue
 		[ -L "$SCRAPS_ROOT$f" ] || [ -f "$SCRAPS_ROOT$f" ] || continue
+		[ -s "$_rf_keep" ] && grep -qxF "$f" "$_rf_keep" && continue
 		tx_save "$f"
 		rm -f "$SCRAPS_ROOT$f"
 	done <"$db/FILES"
+	rm -f "$_rf_keep"
 	sed 's|/[^/]*$||' "$db/FILES" | sort -ru | while read -r d; do
 		[ -n "$d" ] || continue
 		rmdir "$SCRAPS_ROOT$d" 2>/dev/null || :
