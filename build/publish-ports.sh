@@ -2,20 +2,13 @@
 # publish-ports.sh - copy the ports tree into the ports-scraplinux checkout and
 # regenerate its directory listings.
 #
-#   build/publish-ports.sh [checkout]   default /home/apiwo/scraplinux-build/src-extra/scraplinux-ports
+#   build/publish-ports.sh [checkout]   default: the checkout holding the recipes
 #
 # Recipes only, and every recipe: this host is the one place a source build
 # ever fetches from (scraps's SCRAPS_PORTS), and the binary mirror carries no
 # recipes at all. The layout it serves is ALL/<repo>/<name>/recipe, which is
 # what scraps's ports_repo_of() looks a package up in ports.idx to build.
 #
-# Written for a ports tree that lived inside this repo and got pushed out to
-# a separate checkout; the ports tree has since become its own
-# independently-cloned-and-pushed repo (scraplinux-ports) with no second
-# copy anywhere, so SRC and SITE below usually resolve to the same
-# checkout - this still runs, it is just a same-directory no-op sync rather
-# than the two-tree publish step the comment above describes. Left as-is
-# rather than redesigned; not on the critical path for building packages.
 # shellcheck shell=sh disable=SC2039
 
 set -eu
@@ -23,7 +16,7 @@ set -eu
 B=${SCRAPLINUX_BUILD:-/home/apiwo/scraplinux-build}
 TREE=${SCRAPLINUX_TREE:-/home/apiwo/scraplinux}
 SRC=${SCRAPLINUX_PORTS:-/home/apiwo/scraplinux-build/arctic-build/src-extra/arctic-linux-ports/ALL}
-SITE=${1:-$B/src-extra/scraplinux-ports}
+SITE=${1:-$(dirname "$SRC")}
 
 REPOS="main extra base kernels profile nonfree alt-nonfree multilib"
 
@@ -36,9 +29,12 @@ step "indexing the recipes"
 sh "$TREE/scraps/scraps-repo" ports "$SRC"
 
 step "syncing the ports tree"
-[ "$SRC/ports.idx" -ef "$SITE/ALL/ports.idx" ] || cp -f "$SRC/ports.idx" "$SITE/ALL/ports.idx"
 rm -f "$SITE/ALL/manifest.tsv" "$SITE/ALL/gen-ports.py"
-for r in $REPOS; do
+# publishing the checkout in place, nothing to copy
+[ "$SRC" -ef "$SITE/ALL" ] && REPOS_SYNC="" || REPOS_SYNC=$REPOS
+[ -z "$REPOS_SYNC" ] && note "source is the published checkout, nothing to copy"
+[ -n "$REPOS_SYNC" ] && cp -f "$SRC/ports.idx" "$SITE/ALL/ports.idx"
+for r in $REPOS_SYNC; do
 	src="$SRC/$r"
 	dst="$SITE/ALL/$r"
 	if [ ! -d "$src" ]; then
