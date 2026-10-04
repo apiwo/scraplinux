@@ -3,7 +3,7 @@
 # POSIX sh only. Must run under busybox ash with no GNU utilities present.
 # shellcheck shell=sh disable=SC2039
 
-SCRAPS_VERSION="1.5.0"
+SCRAPS_VERSION="1.5.1"
 SCRAPS_FORMAT="2"
 
 : "${SCRAPS_ROOT:=/}"
@@ -29,7 +29,7 @@ SCRAPS_FORMAT="2"
 # host with its own layout (ALL/<repo>/<name>/recipe), reached only through
 # this setting. Keeping the two apart is what stops "what can be installed"
 # and "what can be compiled" from being the same list.
-: "${SCRAPS_PORTS:=https://ports-scraplinux.apiwow.net/ALL}"
+: "${SCRAPS_PORTS:=https://raw.githubusercontent.com/apiwo/scraplinux-ports/main/ALL}"
 
 # How an install reports itself. The mechanics are identical in all three -
 # same resolver, same fetch, same progress driven by real byte counts - only
