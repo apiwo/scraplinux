@@ -17,10 +17,21 @@ set -u
 
 B=${SCRAPLINUX_BUILD:-/home/apiwo/scraplinux-build}
 TREE=${SCRAPLINUX_TREE:-/home/apiwo/scraplinux}
-REPO=$B/repo
+# SCRAPLINUX_VERIFY_REPO points this at the published tree (the pkgs
+# checkout people actually install from) instead of the local build
+# output - the two drift, and only the published one is what matters.
+ARCH=x86_64
+REPO=${SCRAPLINUX_VERIFY_REPO:-$B/repo}
+# Every repository, not just main and kernels. This used to hardcode those
+# two in both the repo config and the package loop, so nothing in base or
+# extra - the whole X11 and Wayland stack, mesa, wlroots, every compositor
+# and terminal - was ever installed and checked here at all. That is how
+# mesa shipped only libEGL_mesa.so.0 while declaring no dependency on the
+# libglvnd that actually provides libEGL.so.1, and every wlroots
+# compositor failed to start on a clean install.
+REPOS=$(for d in "$REPO"/*/; do [ -d "$d$ARCH" ] && basename "$d"; done)
 ROOT=$B/verify-root
 LOGS=$B/logs/verify
-ARCH=x86_64
 SCRAPS="$TREE/scraps/scraps"
 
 mkdir -p "$LOGS"
@@ -36,7 +47,7 @@ fresh_root() {
 	rm -rf "$ROOT"
 	mkdir -p "$ROOT/etc/scraps/repos.d" "$ROOT/var/lib/scraps/sync" \
 	         "$ROOT/var/log" "$ROOT/usr/lib" "$ROOT/usr/bin"
-	for r in main kernels; do
+	for r in $REPOS; do
 		[ -d "$REPO/$r" ] || continue
 		cat >"$ROOT/etc/scraps/repos.d/$r.repo" <<EOF
 name = $r
@@ -61,7 +72,7 @@ run_scraps() {
 printf '\n  %-24s %-9s %-7s %-7s %s\n' PACKAGE INSTALL FILES LIBS REMOVE
 printf '  %s\n' "----------------------------------------------------------------"
 
-for f in "$REPO"/main/$ARCH/*.spz "$REPO"/kernels/$ARCH/*.spz; do
+for f in $(for r in $REPOS; do ls "$REPO/$r/$ARCH"/*.spz 2>/dev/null; done); do
 	[ -f "$f" ] || continue
 	name=$(basename "$f" | sed 's/-[0-9][^-]*-[0-9]*\.'"$ARCH"'\.spz$//')
 	if [ -n "$want" ]; then

@@ -230,6 +230,18 @@ if [ -d "$SCRAPS_SYSROOT/usr" ]; then
 	# bug. PKG_CONFIG_SYSROOT_DIR is pkg-config's own mechanism for this: it
 	# prefixes any path variable a .pc file defines with this directory.
 	export PKG_CONFIG_SYSROOT_DIR="$SCRAPS_SYSROOT"
+	# PKG_CONFIG_PATH only *prepends* - pkg-config still falls through to its
+	# own compiled-in default directories afterwards, which inside the sandbox
+	# are the host's (/usr/lib64/pkgconfig on this build machine). A package
+	# missing from the sysroot was then "found" anyway from the host's .pc,
+	# prefixed with the sysroot above, and the compiler got include paths that
+	# did not exist: wlroots configured lcms2 and libdisplay-info as present
+	# and then failed on lcms2.h. PKG_CONFIG_LIBDIR replaces the default list
+	# outright. Distribution builds only - outside the sandbox the sysroot's
+	# pkgconfig directories are deliberately symlinks to the real system's.
+	if [ "${SCRAPLINUX_SANDBOX:-0}" = "1" ]; then
+		export PKG_CONFIG_LIBDIR="$SCRAPS_SYSROOT/usr/lib/pkgconfig:$SCRAPS_SYSROOT/usr/share/pkgconfig"
+	fi
 	# cmake does not read PKG_CONFIG_PATH for find_package, so without this a
 	# cmake build cannot see anything ScrapLinux has built and either fails or -
 	# worse, and quietly - vendors its own copy. openexr shipped a second

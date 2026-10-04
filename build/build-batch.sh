@@ -58,6 +58,72 @@ have_binary() {
 	return 1
 }
 
+# The build sysroot only ever held what this buildroot had itself compiled -
+# scraps-build extracts each finished package into it and nothing else. A
+# recipe depending on something published by an earlier pipeline (lcms2,
+# libdisplay-info, hwdata, ...) found no headers there, and pkg-config then
+# quietly fell through to the *host's* own .pc files, prefixed them with the
+# sysroot, and handed the compiler include paths that did not exist. That is
+# how wlroots got configured with dependencies it could not compile against,
+# and - when hwdata was one of them - silently dropped its whole DRM backend.
+#
+# Seed the sysroot with the recipe's full dependency closure from real
+# binaries before building: this repo's own output first, then the published
+# package tree. The same .pc rewrite scraps-build applies to its own output is
+# applied here, so seeded and freshly built packages look identical.
+PKGS=${SCRAPLINUX_PKGS:-$B/arctic-build/src-extra/arctic-linux-pkgs/ALL}
+SYSROOT=$SCRAPS_BUILDROOT/sysroot
+SEEDSKIP=" glibc glibc-32 linux-headers llvm clang lld compiler-rt libcxx libunwind busybox toybox "
+
+pkg_file() { # name -> path of its .spz, per INDEX (exact name match)
+	for _i in "$B"/repo/*/x86_64/INDEX "$PKGS"/*/x86_64/INDEX; do
+		[ -f "$_i" ] || continue
+		_e=$(awk -F'\t' -v n="$1" '$1==n{print $2"-"$3; exit}' "$_i")
+		[ -n "$_e" ] || continue
+		_f="$(dirname "$_i")/$1-$_e.x86_64.spz"
+		[ -f "$_f" ] && { printf '%s' "$_f"; return 0; }
+	done
+	return 1
+}
+
+pkg_deps() { # name -> its declared runtime deps, per INDEX
+	for _i in "$B"/repo/*/x86_64/INDEX "$PKGS"/*/x86_64/INDEX; do
+		[ -f "$_i" ] || continue
+		_d=$(awk -F'\t' -v n="$1" '$1==n{print $8; exit}' "$_i")
+		[ -n "$_d" ] && { printf '%s' "$_d" | tr ' ' '\n' | grep -v '^-$'; return 0; }
+	done
+}
+
+seed_sysroot() { # recipe
+	_want=$(sed -n 's/^\(make\)\{0,1\}depend="\(.*\)"$/\2/p' "$1" | tr ' ' '\n')
+	_seen=" " _todo=$_want
+	while [ -n "$_todo" ]; do
+		_next=""
+		for _p in $_todo; do
+			case "$_seen" in *" $_p "*) continue ;; esac
+			_seen="$_seen$_p "
+			_next="$_next $(pkg_deps "$_p")"
+		done
+		_todo=$_next
+	done
+	mkdir -p "$SYSROOT/.seeded"
+	for _p in $_seen; do
+		case "$SEEDSKIP" in *" $_p "*) continue ;; esac
+		[ -e "$SYSROOT/.seeded/$_p" ] && continue
+		_f=$(pkg_file "$_p") || continue
+		tar -xf "$_f" -C "$SYSROOT" --keep-directory-symlink \
+			--exclude=.PKGINFO --exclude=.FILES --exclude=.INSTALL 2>/dev/null || continue
+		: >"$SYSROOT/.seeded/$_p"
+	done
+	for _pc in "$SYSROOT"/usr/lib/pkgconfig/*.pc "$SYSROOT"/usr/share/pkgconfig/*.pc; do
+		[ -f "$_pc" ] || continue
+		sed -i \
+			-e "s|^\([a-zA-Z_][a-zA-Z0-9_]*\)=/usr$|\1=$SYSROOT/usr|" \
+			-e "s|^\([a-zA-Z_][a-zA-Z0-9_]*\)=/usr/|\1=$SYSROOT/usr/|" \
+			"$_pc"
+	done
+}
+
 built=0; failed=0; skipped=0
 FAILED_LIST=""
 
@@ -84,6 +150,7 @@ for pkg in $TARGETS; do
 		continue
 	fi
 
+	seed_sysroot "$recipe"
 	if sh "$TREE/scraps/scraps-build" "$recipe" >"$L/$pkg.log" 2>&1; then
 		f=$(ls -t "$SCRAPS_BUILDROOT/out/$pkg"-*.spz 2>/dev/null | head -1)
 		if [ -n "$f" ]; then
