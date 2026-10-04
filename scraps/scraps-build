@@ -270,7 +270,8 @@ if [ -d "$SCRAPS_SYSROOT/usr" ]; then
 	# libc++ headers instead of in front of them.
 	CFLAGS="--sysroot=$SCRAPS_SYSROOT $CFLAGS"
 	CXXFLAGS="--sysroot=$SCRAPS_SYSROOT $CXXFLAGS"
-	LDFLAGS="-L$SCRAPS_SYSROOT/usr/lib -Wl,-rpath-link,$SCRAPS_SYSROOT/usr/lib $LDFLAGS"
+	# links that skip CFLAGS still need it, or libc.so's /usr/lib paths hit the host
+	LDFLAGS="--sysroot=$SCRAPS_SYSROOT -L$SCRAPS_SYSROOT/usr/lib -Wl,-rpath-link,$SCRAPS_SYSROOT/usr/lib $LDFLAGS"
 	# Same missing-sysroot-entry problem as usr/include and
 	# usr/lib/pkgconfig above, at link time instead of compile time:
 	# --sysroot redirects ld's own default library search the same way it
