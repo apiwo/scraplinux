@@ -50,12 +50,16 @@ for r in $RECIPES; do
 	#    backslash-newline first, so the comment starts mid-command and eats
 	#    everything to the end of the joined line - options, arguments, the
 	#    lot. Silent, and the build usually still succeeds.
-	if awk '
-		prev ~ /\\$/ && $0 ~ /^[ \t]*#/ { print NR; found = 1 }
-		{ prev = $0 }
-		END { exit !found }
-	' "$r" >/dev/null 2>&1; then
-		lines=$(awk 'prev ~ /\\$/ && $0 ~ /^[ \t]*#/ { printf "%s ", NR } { prev = $0 }' "$r")
+	# inside single quotes a leading # is text, not a comment
+	lines=$(awk '
+		!q && prev ~ /\\$/ && $0 ~ /^[ \t]*#/ { printf "%s ", NR }
+		{
+			l = $0
+			if (!q) { if (l ~ /^[ \t]*#/) l = ""; else sub(/[ \t]#.*$/, "", l) }
+			n = gsub(/\047/, "\047", l); if (n % 2) q = !q; prev = $0
+		}
+	' "$r")
+	if [ -n "$lines" ]; then
 		bad "$rel" "comment inside a continued command (line(s): $lines) - it swallows the rest of the command"
 	fi
 
@@ -86,13 +90,6 @@ for r in $RECIPES; do
 		bad "$rel" "has source= but no sha256="
 	fi
 
-	# 7. A generated recipe with hand edits in it and no recipe.local beside
-	#    it is a change waiting to be reverted by the next gen-ports run.
-	if grep -q 'Generated from manifest.tsv' "$r" && [ ! -f "$dir/recipe.local" ]; then
-		if grep -qE '^replaces=|^provides=' "$r" || grep -q 'rm -rf "\$pkgdir' "$r"; then
-			bad "$rel" "hand-edited but has no recipe.local - gen-ports.py will revert it"
-		fi
-	fi
 done
 
 printf '\n%s recipe(s) checked, %s problem(s)\n' "$checked" "$fail"

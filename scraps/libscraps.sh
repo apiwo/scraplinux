@@ -1042,18 +1042,13 @@ idx_lookup() {
 
 # ----------------------------------------------------------------- ports tree
 
-# The ports manifest, cached. Columns are
-# "repo name version buildsystem license deps makedeps url source desc".
-# Refetched when it is missing; kept otherwise, so a source build does not
-# need the network twice.
-ports_manifest() {
-	_pm_f="$SCRAPS_CACHE/ports/manifest.tsv"
+# the ports index, generated from the recipes by scraps-repo ports
+ports_index() {
+	_pm_f="$SCRAPS_CACHE/ports/ports.idx"
 	if [ ! -s "$_pm_f" ]; then
 		mkdir -p "$SCRAPS_CACHE/ports"
-		dlq "$SCRAPS_PORTS/manifest.tsv" "$_pm_f" || return 1
-		# A missing file on a static host is answered with the site's own
-		# HTML rather than a 404, so "the download worked" is not enough -
-		# check it actually looks like the manifest before caching it.
+		dlq "$SCRAPS_PORTS/ports.idx" "$_pm_f" || return 1
+		# static hosts answer a missing file with html
 		if ! grep -q '^[a-z-]*	[a-zA-Z0-9]' "$_pm_f" 2>/dev/null; then
 			rm -f "$_pm_f"; return 1
 		fi
@@ -1065,7 +1060,7 @@ ports_manifest() {
 # recipe at all. This is what tells "we never heard of it" apart from "we
 # have the recipe but nobody built a binary".
 ports_repo_of() {
-	_pr_m=$(ports_manifest) || return 1
+	_pr_m=$(ports_index) || return 1
 	_pr_r=$(awk -F'\t' -v p="$1" '$1!~/^#/ && $2==p {print $1; exit}' "$_pr_m")
 	[ -n "$_pr_r" ] || return 1
 	safe_component "$_pr_r" || return 1

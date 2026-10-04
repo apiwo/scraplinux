@@ -7,7 +7,7 @@
 # Recipes only, and every recipe: this host is the one place a source build
 # ever fetches from (scraps's SCRAPS_PORTS), and the binary mirror carries no
 # recipes at all. The layout it serves is ALL/<repo>/<name>/recipe, which is
-# what scraps's ports_repo_of() looks a package up in manifest.tsv to build.
+# what scraps's ports_repo_of() looks a package up in ports.idx to build.
 #
 # Written for a ports tree that lived inside this repo and got pushed out to
 # a separate checkout; the ports tree has since become its own
@@ -32,13 +32,12 @@ REPOS="main extra base kernels profile nonfree alt-nonfree multilib"
 step() { printf '\n:: %s\n' "$*"; }
 note() { printf '   %s\n' "$*"; }
 
-step "regenerating recipes from the manifest"
-python3 "$SRC/gen-ports.py" >/dev/null
-note "$(grep -vc '^#' "$SRC/manifest.tsv") packages in the manifest"
+step "indexing the recipes"
+sh "$TREE/scraps/scraps-repo" ports "$SRC"
 
 step "syncing the ports tree"
-cp -f "$SRC/manifest.tsv" "$SITE/ALL/manifest.tsv"
-cp -f "$SRC/gen-ports.py" "$SITE/ALL/gen-ports.py"
+[ "$SRC/ports.idx" -ef "$SITE/ALL/ports.idx" ] || cp -f "$SRC/ports.idx" "$SITE/ALL/ports.idx"
+rm -f "$SITE/ALL/manifest.tsv" "$SITE/ALL/gen-ports.py"
 for r in $REPOS; do
 	src="$SRC/$r"
 	dst="$SITE/ALL/$r"

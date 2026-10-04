@@ -3,10 +3,8 @@
 #
 #   scraps-mkrepo binary <dir> <name> [arch]   an ALL/<name>/<arch>/ tree,
 #                                               ready for `scraps-repo add`
-#   scraps-mkrepo source <dir> <name>          an ALL/<name>/ tree laid out
-#                                               the way scraps-ports's
-#                                               manifest.tsv expects a repo
-#                                               name's recipes to live
+#   scraps-mkrepo source <dir> <name>          an ALL/<name>/ tree of
+#                                               <pkg>/recipe directories
 #
 # Either way this only creates the skeleton and a starter .repo file to
 # hand out - it does not host anything itself. Serve <dir> over plain
@@ -90,18 +88,9 @@ cmd_source() {
 
 	d="$dir/ALL/$name"
 	mkdir -p "$d"
-	if [ ! -f "$dir/manifest.tsv" ]; then
-		{
-			printf '# name\tversion\tbuild\tlicense\tdepend\tmakedepend\thome\tsource\tdesc\n'
-			printf '# one line per port. See scraplinux-ports/manifest.tsv for the real\n'
-			printf '# format this is generated from - gen-ports.py turns this into the\n'
-			printf '# recipe/ directory a `scraps add -s` build actually reads.\n'
-		} >"$dir/manifest.tsv"
-	fi
-
 	ok "source repo skeleton at $d"
-	msg "add a line per port to $dir/manifest.tsv, then run gen-ports.py"
-	msg "against it to generate $d/<pkg>/recipe files"
+	msg "add one $d/<pkg>/recipe per package, then index them with"
+	msg "scraps-repo ports $dir/ALL"
 	repo_snippet "$name" "https://your-host/ALL/$name"
 	printf '\n%s::%s this is a ports (recipe) repo, not a binary one - point\n' "$A_TEAL" "$C_R"
 	printf '  %sSCRAPS_PORTS%s at it, not repos.d - see the packaging docs.\n' "$C_B" "$C_R"

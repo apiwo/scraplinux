@@ -6,6 +6,7 @@
 #   scraps-repo gen  <dir> [arch]   write <dir>/<arch>/INDEX
 #   scraps-repo add  <dir> <pkg>... file packages into the repo and reindex
 #   scraps-repo show <dir>          summarise a repo
+#   scraps-repo ports <dir>         write <dir>/ports.idx from the recipes
 #
 # The INDEX is a tab separated table, one package per line:
 #   name  version  release  arch  dlsize  isize  sha256  deps  desc
@@ -145,16 +146,45 @@ show() {
 	printf '\n'
 }
 
+ports() {
+	_po_d=${1:?usage: scraps-repo ports <dir>}
+	[ -d "$_po_d" ] || die "no such directory: $_po_d"
+	# one awk pass, values are plain literals so nothing gets executed
+	awk '
+	function emit() {
+		if (f == "") return
+		n = split(f, p, "/"); dir = p[n-1]; repo = p[n-2]
+		if (v["name"] != dir) { print f ": name=" v["name"] " does not match its directory" > "/dev/stderr"; bad = 1 }
+		if (v["name"] in seen) { print v["name"] " is defined twice" > "/dev/stderr"; bad = 1 }
+		seen[v["name"]] = 1
+		printf "%s\t%s\t%s\t%s\t%s\n", repo, v["name"], v["version"], v["release"], v["desc"]
+		delete v
+	}
+	BEGIN { print "# generated from the recipes by scraps-repo ports, never edit"
+	        print "# repo\tname\tversion\trelease\tdesc" }
+	FNR == 1 { emit(); f = FILENAME }
+	/^(name|version|release|desc)=/ {
+		k = substr($0, 1, index($0, "=") - 1)
+		if (!(k in v)) { x = substr($0, index($0, "=") + 1); gsub(/^"|"$/, "", x); v[k] = x }
+	}
+	END { emit(); exit bad }
+	' "$_po_d"/*/*/recipe >"$_po_d/ports.idx.tmp" || { rm -f "$_po_d/ports.idx.tmp"; die "ports index not written"; }
+	mv -f "$_po_d/ports.idx.tmp" "$_po_d/ports.idx"
+	ok "$(grep -vc '^#' "$_po_d/ports.idx") recipe(s) indexed -> $_po_d/ports.idx"
+}
+
 case "${1:-}" in
 gen|index)  shift; gen "$@" ;;
 add|file)   shift; add "$@" ;;
 show|list)  shift; show "$@" ;;
+ports)      shift; ports "$@" ;;
 *) cat <<EOF
 scraps-repo $SCRAPS_VERSION - ScrapLinux repository indexer
 
   scraps-repo gen  <dir> [arch]      regenerate <dir>/<arch>/INDEX
   scraps-repo add  <dir> <pkg>...    file .spz packages in and reindex
   scraps-repo show <dir>             summarise a repository
+  scraps-repo ports <dir>            write <dir>/ports.idx from the recipes
 EOF
  ;;
 esac

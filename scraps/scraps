@@ -1512,8 +1512,8 @@ cmd_fetch() {
 	# missing or stale, in the middle of a build.
 	if [ "$which" = "all" ] || [ "$which" = "ports" ]; then
 		printf '  %s->%s %-14s %sfetching...%s' "$A_ICE$C_B" "$C_R" "ports" "$A_GREY" "$C_R"
-		rm -f "$SCRAPS_CACHE/ports/manifest.tsv"
-		if pm=$(ports_manifest); then
+		rm -f "$SCRAPS_CACHE/ports/ports.idx" "$SCRAPS_CACHE/ports/manifest.tsv"
+		if pm=$(ports_index); then
 			pc=$(grep -vc '^#' "$pm" 2>/dev/null | tr -d ' ')
 			printf '\r  %s->%s %-14s %sok%s  %s recipes  %ssource builds: scraps add -s <pkg>%s\n' \
 				"$A_ICE$C_B" "$C_R" "ports" "$A_MINT" "$C_R" "${pc:-0}" "$A_GREY" "$C_R"
