@@ -124,6 +124,24 @@ seed_sysroot() { # recipe
 	done
 }
 
+# c++ compiles against the target's libc++, the host only supplies clang
+seed_libcxx() {
+	[ -e "$SYSROOT/.seeded/libcxx" ] && return 0
+	_f=$(pkg_file llvm) || _f=$(ls "$B"/.bigstage/x86_64/llvm-*.spz 2>/dev/null | tail -1)
+	[ -f "$_f" ] || { echo "build-batch: no llvm package to take libc++ from" >&2; return 1; }
+	mkdir -p "$SYSROOT/.seeded"
+	tar -xf "$_f" -C "$SYSROOT" --keep-directory-symlink --wildcards \
+		'./usr/include/c++/v1/*' './usr/include/x86_64-unknown-linux-gnu/*' \
+		'./usr/lib/x86_64-unknown-linux-gnu/libc++*' \
+		'./usr/lib/x86_64-unknown-linux-gnu/libunwind*' || return 1
+	# the host clang looks under its own triple
+	for _d in include lib; do
+		[ -e "$SYSROOT/usr/$_d/x86_64-pc-linux-gnu" ] || \
+			ln -s x86_64-unknown-linux-gnu "$SYSROOT/usr/$_d/x86_64-pc-linux-gnu"
+	done
+	: >"$SYSROOT/.seeded/libcxx"
+}
+
 built=0; failed=0; skipped=0
 FAILED_LIST=""
 
@@ -151,6 +169,7 @@ for pkg in $TARGETS; do
 	fi
 
 	seed_sysroot "$recipe"
+	seed_libcxx || :
 	if sh "$TREE/scraps/scraps-build" "$recipe" >"$L/$pkg.log" 2>&1; then
 		f=$(ls -t "$SCRAPS_BUILDROOT/out/$pkg"-*.spz 2>/dev/null | head -1)
 		if [ -n "$f" ]; then
