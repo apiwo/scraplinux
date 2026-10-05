@@ -13,8 +13,10 @@ while read -r dev mnt type opts dump pass; do
 	*) real=$dev ;;
 	esac
 	grep -qs "^$real " /proc/mounts && continue
-	fsck -t "$type" -a $force "$real"
+	# quiet unless it found something
+	out=$(fsck -t "$type" -a $force "$real" </dev/null 2>&1)
 	rc=$?
+	[ "$rc" -eq 0 ] || printf '%s\n' "$out"
 	[ "$rc" -gt "$worst" ] && worst=$rc
 done </etc/fstab
 rm -f /forcefsck
