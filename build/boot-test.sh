@@ -7,6 +7,8 @@
 #   build/boot-test.sh --runs 10             the ten consecutive boots test
 #   build/boot-test.sh --rebuild             reinstall the disk from the tarball
 #   build/boot-test.sh --flavor wayland      a different tarball flavor
+#   build/boot-test.sh --local "dinit scraplinux-base"
+#                                            install those from the build repo, not the mirror
 #
 # Every run writes a full serial log, so a panic is captured in full rather
 # than scrolled off a framebuffer. The disk is installed once and then booted
@@ -29,6 +31,7 @@ FIRMWARE=uefi
 RUNS=1
 TIMEOUT=120
 REBUILD=0
+LOCAL=""
 
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -37,6 +40,7 @@ while [ $# -gt 0 ]; do
 	--runs)     RUNS=$2; shift 2 ;;
 	--timeout)  TIMEOUT=$2; shift 2 ;;
 	--rebuild)  REBUILD=1; shift ;;
+	--local)    LOCAL=$2; REBUILD=1; shift 2 ;;
 	-h|--help)  sed -n '2,16p' "$0" | sed 's/^# \?//'; exit 0 ;;
 	*) echo "boot-test.sh: unknown argument '$1'" >&2; exit 2 ;;
 	esac
@@ -109,10 +113,27 @@ install_disk() {
 
 	sh "$TREE/scraps/scraps-strap" "$MNT" >/dev/null 2>&1 \
 		|| { echo "   scraps-strap failed" >&2; cleanup_nbd; return 1; }
+	# unpublished builds win over the mirror for this one install
+	_lr=$MNT/var/tmp/boottest-repo
+	: >"$WORK/install.log"
+	if [ -n "$LOCAL" ]; then
+		mkdir -p "$_lr/x86_64"
+		for _p in $LOCAL; do
+			_f=$(ls "$B"/repo/*/x86_64/"$_p"-[0-9]*.spz 2>/dev/null | head -1)
+			[ -n "$_f" ] || { echo "   --local: no build of $_p in $B/repo" >&2; cleanup_nbd; return 1; }
+			cp -f "$_f" "$_lr/x86_64/"
+		done
+		sh "$TREE/scraps/scraps-repo" gen "$_lr" x86_64 >/dev/null
+		printf 'name = 0boottest\nurl = file:///var/tmp/boottest-repo\nenabled = yes\nsig = off\n' \
+			>"$MNT/etc/scraps/repos.d/0boottest.repo"
+		sh "$TREE/skel/usr/bin/scraplinux-chroot" "$MNT" scraps fetch all >>"$WORK/install.log" 2>&1
+		echo "   local: $LOCAL"
+	fi
 	sh "$TREE/skel/usr/bin/scraplinux-chroot" "$MNT" \
 		scraps add -y scraplinux-base ScrapLinux-base-kernel linux-firmware limine \
-		>"$WORK/install.log" 2>&1 \
+		>>"$WORK/install.log" 2>&1 \
 		|| { echo "   scraps add failed, see $WORK/install.log" >&2; cleanup_nbd; return 1; }
+	rm -rf "$_lr" "$MNT/etc/scraps/repos.d/0boottest.repo" "$MNT/var/lib/scraps/sync/0boottest.idx"
 
 	KIMG=$(cd "$MNT/boot" && ls vmlinuz-* 2>/dev/null | head -1)
 	IIMG=$(cd "$MNT/boot" && ls initramfs-*.img 2>/dev/null | head -1)
@@ -215,9 +236,11 @@ boot_once() {
 	# only, so a 0.25 step made every comparison an error and the loop exited
 	# immediately, failing a boot that had not even started.
 	_ticks=0
+	_t_init=""
 	_maxticks=$(( TIMEOUT * 4 ))
 	while [ "$_ticks" -lt "$_maxticks" ]; do
 		kill -0 "$_pid" 2>/dev/null || break
+		[ -z "$_t_init" ] && grep -q "Run /init as init process" "$_log" 2>/dev/null && _t_init=$(date +%s.%N)
 		if grep -qE "login:|Welcome to SDDM|sddm-greeter" "$_log" 2>/dev/null; then
 			_ok=1; break
 		fi
@@ -237,13 +260,13 @@ boot_once() {
 	# guessed at.
 	_handoff=$(sed 's/\x1b\[[0-9;]*m//g' "$_log" 2>/dev/null \
 		| sed -n 's/^\[ *\([0-9.]*\)\] Run \/init as init process.*/\1/p' | head -1)
-	_initdone=$(sed 's/\x1b\[[0-9;]*m//g' "$_log" 2>/dev/null \
-		| sed -n 's/.*Init done *\([0-9.]*\)s.*/\1/p' | head -1)
+	# host clock, so to within one 0.25 s poll
+	_tologin=$(awk -v a="$_t_init" -v b="$_end" 'BEGIN{ if (a == "") print "?"; else printf "%.2f", b-a }')
 	_panic=$(grep -cE "Kernel panic|Attempted to kill init" "$_log" 2>/dev/null)
 
 	if [ "$_ok" = 1 ]; then
-		printf '  run %-3s %-6s PASS  wall %ss  kernel-handoff %ss  rc.boot %ss\n' \
-			"$_run" "$FIRMWARE" "$_wall" "${_handoff:-?}" "${_initdone:-?}"
+		printf '  run %-3s %-6s PASS  wall %ss  kernel-handoff %ss  init-to-login %ss\n' \
+			"$_run" "$FIRMWARE" "$_wall" "${_handoff:-?}" "$_tologin"
 	else
 		printf '  run %-3s %-6s FAIL  wall %ss  panics %s  log %s\n' \
 			"$_run" "$FIRMWARE" "$_wall" "${_panic:-0}" "$_log"
