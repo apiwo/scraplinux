@@ -1,249 +1,94 @@
 #!/bin/sh
-# service - start, stop and enable ScrapLinux services
+# service - see and control services, a front end to dinitctl
 #
-#   service list                 show every service, its state and its init
-#   service status <name>        is it installed, enabled, running?
+#   service                          every service, whether it starts at boot, its state
+#   service status <name>
 #   service start|stop|restart <name>
-#   service enable|disable <name>
-#
-# A service is a script in /etc/rc.d taking start/stop/status. Enabling one
-# creates a marker in /etc/scraplinux/services, which rc.boot reads in order.
-#
-# Exit codes for 'status', so scripts can tell the cases apart:
-#   0  running        3  installed but stopped
-#   1  no such service in /etc/rc.d
-#   4  the service script is there but the program it runs is not installed
-#
-# On a system running dinit, OpenRC or runit instead of busybox init, this
-# hands the verbs to that init's own tool rather than driving /etc/rc.d
-# behind its back - the state it would report otherwise is not the state the
-# running init is actually in.
-# shellcheck shell=sh disable=SC2039
-
+#   service enable|disable <name>    start at boot or not, applied right away too
 set -u
-PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-# Tested before sourcing, not with "|| fallback": "." is a special builtin,
-# so a shell that cannot open the file exits on the spot and the fallback
-# after || never runs - which made this tool die without printing anything
-# at all on a system missing rc.lib (or inside a chroot that has not got one
-# yet), rather than degrading to plain output.
-if [ -r /etc/scraplinux/rc.lib ]; then
-	. /etc/scraplinux/rc.lib
+PATH=/usr/bin
+D=/etc/dinit.d
+
+if [ -t 1 ]; then
+	R=$(printf '\033[0m') B=$(printf '\033[1m') OK=$(printf '\033[32m') DIM=$(printf '\033[90m') WARN=$(printf '\033[33m')
 else
-	_R= ; _B= ; _MINT= ; _RED= ; _GREY= ; _SNOW= ; _AMB= ; _TEAL=
-	begin() { printf '  :: %s' "$*"; }
-	good()  { printf ' [ ok ]\n'; }
-	bad()   { printf ' [failed] %s\n' "${*:-}"; }
+	R= B= OK= DIM= WARN=
 fi
 
-RCD=/etc/rc.d
-ENA=/etc/scraplinux/services
+die() { echo "service: $*" >&2; exit 1; }
+need_root() { [ "$(id -u)" = 0 ] || die "must be run as root"; }
+exists() { [ -f "$D/$1" ]; }
 
-need_root() { [ "$(id -u)" = "0" ] || { echo "Must be run as root." >&2; exit 1; }; }
+# dinit is not running in a chroot or an image being built
+online() { dinitctl list >/dev/null 2>&1; }
 
-# A name is a single path component, always. Every subcommand builds a path
-# out of it - "$RCD/$n", "$ENA/$n" - and disable's rm -f in particular would
-# otherwise take "../../etc/passwd" and delete it as root.
-valid_name() {
-	case "$1" in
-	""|.|..) return 1 ;;
-	*/*|*' '*) return 1 ;;
-	esac
-	return 0
+# the program a service runs, empty for scripted ones
+program() {
+	grep -q '^type *= *process' "$D/$1" 2>/dev/null || return 0
+	sed -n 's/^command *= *\([^ ]*\).*/\1/p' "$D/$1" | head -1
 }
+installed() { _p=$(program "$1"); [ -z "$_p" ] || [ -x "$_p" ]; }
 
-exists() { [ -f "$RCD/$1" ]; }
-enabled() { [ -e "$ENA/$1" ]; }
-
-# What the service script actually runs. Read out of the script rather than
-# sourced: sourcing it to find one variable also runs whatever else is in it.
-svc_cmd() {
-	sed -n 's/^[ 	]*CMD=//p' "$RCD/$1" 2>/dev/null | head -1 | tr -d '"'"'"''
-}
-
-# Is the program behind the service on this system at all? An rc.d script
-# ships with the base system whether or not the daemon it starts was ever
-# installed - /etc/rc.d/sddm exists on every ScrapLinux install, sddm itself does
-# not - so "the script is executable" says nothing about whether the service
-# can run. Checking $CMD is what tells "installed but stopped" apart from
-# "not installed", which used to come out as a flat, wrong "stopped".
-installed() {
-	_ic=$(svc_cmd "$1")
-	[ -n "$_ic" ] || return 0     # no CMD line: nothing to check against
-	[ -x "$_ic" ]
-}
-
-running() {
-	installed "$1" || return 1
-	if [ -x "$RCD/$1" ] && "$RCD/$1" status >/dev/null 2>&1; then return 0; fi
-	# Then a pidfile. Deliberately no name-based lookup: comm is the script's
-	# own name for an interpreted service script, so matching on it always hits.
-	[ -f "/run/$1.pid" ] && kill -0 "$(cat "/run/$1.pid")" 2>/dev/null
-}
-
-# Which init this system uses.
-#
-# /etc/scraplinux/init - written by the installer and rewritten by
-# scraplinux-init-setup - comes first, and pid 1 is only consulted when that file
-# is absent. It is the other way round from what you would expect, for one
-# reason: inside scraplinux-chroot (or any chroot) /proc/1 is the *host's* init,
-# not this system's, so trusting it there makes every answer wrong in the one
-# situation where someone is most likely to be repairing services by hand.
-# SCRAPLINUX_INIT overrides both.
-init_kind() {
-	if [ -n "${SCRAPLINUX_INIT:-}" ]; then printf '%s\n' "$SCRAPLINUX_INIT"; return; fi
-	if [ -s /etc/scraplinux/init ]; then head -1 /etc/scraplinux/init; return; fi
-	_ik=$(readlink /proc/1/exe 2>/dev/null)
-	case "${_ik##*/}" in
-	dinit)            echo dinit ;;
-	openrc-init|rc)   echo openrc ;;
-	runit|runit-init) echo runit ;;
-	*)                echo busybox ;;
-	esac
-}
-
-# Hand a verb to the running init's own tool. Anything this does not know how
-# to express there is reported as such instead of being silently ignored.
-delegate() {
-	_dv=$1 _dn=$2
-	case "$INIT" in
-	dinit)
-		case "$_dv" in
-		start)   exec dinitctl start "$_dn" ;;
-		stop)    exec dinitctl stop "$_dn" ;;
-		restart) exec dinitctl restart "$_dn" ;;
-		status)  exec dinitctl status "$_dn" ;;
-		enable)  exec dinitctl enable "$_dn" ;;
-		disable) exec dinitctl disable "$_dn" ;;
-		list)    exec dinitctl list ;;
-		esac ;;
-	openrc)
-		case "$_dv" in
-		start|stop|restart|status) exec rc-service "$_dn" "$_dv" ;;
-		enable)  exec rc-update add "$_dn" default ;;
-		disable) exec rc-update del "$_dn" default ;;
-		list)    exec rc-status --all ;;
-		esac ;;
-	nitro)
-		case "$_dv" in
-		start)   exec nitroctl start "$_dn" ;;
-		stop)    exec nitroctl stop "$_dn" ;;
-		restart) exec nitroctl restart "$_dn" ;;
-		status)  exec nitroctl status "$_dn" ;;
-		# nitro decides what to start from the service directory itself: a
-		# "down" file means do not bring this up at boot. There is no enable
-		# command to call - the file is the state.
-		enable)  rm -f "/etc/nitro/$_dn/down" && nitroctl rescan && \
-		         printf '  %s%s%s will start at boot\n' "$_SNOW" "$_dn" "$_R"; exit $? ;;
-		disable) : >"/etc/nitro/$_dn/down" && nitroctl rescan && \
-		         printf '  %s%s%s will no longer start at boot\n' "$_SNOW" "$_dn" "$_R"; exit $? ;;
-		list)    exec nitroctl list ;;
-		esac ;;
-	runit)
-		case "$_dv" in
-		start)   exec sv up "$_dn" ;;
-		stop)    exec sv down "$_dn" ;;
-		restart) exec sv restart "$_dn" ;;
-		status)  exec sv status "$_dn" ;;
-		enable)  ln -sf "/etc/sv/$_dn" "/var/service/$_dn" && \
-		         printf '  %s%s%s will start at boot\n' "$_SNOW" "$_dn" "$_R"; exit $? ;;
-		disable) rm -f "/var/service/$_dn" && \
-		         printf '  %s%s%s will no longer start at boot\n' "$_SNOW" "$_dn" "$_R"; exit $? ;;
-		list)    exec sv status /var/service/* ;;
-		esac ;;
-	esac
-	echo "service: $INIT has no equivalent of '$_dv'" >&2
-	exit 1
-}
-
-INIT=$(init_kind)
-VERB=${1:-list}
-[ "$INIT" = busybox ] || delegate "$VERB" "${2:-}"
-
-case "$VERB" in
-list|ls)
-	printf '\n  %s%-18s %-10s %s%s\n' "$_B" "SERVICE" "ENABLED" "STATE" "$_R"
-	for f in "$RCD"/*; do
-		[ -f "$f" ] || continue
-		n=$(basename "$f")
-		if enabled "$n"; then e="${_MINT}yes${_R}"; else e="${_GREY}no${_R} "; fi
-		if ! installed "$n"; then s="${_GREY}not installed${_R}"
-		elif running "$n";    then s="${_MINT}running${_R}"
-		else                       s="${_GREY}stopped${_R}"; fi
-		printf '  %s%-18s%s %-19s %s\n' "$_SNOW" "$n" "$_R" "$e" "$s"
+# boot plumbing is everything system pulls in, it is not for enabling by hand
+core() {
+	_seen=" boot recovery single getty " _todo=system
+	while [ -n "$_todo" ]; do
+		_next=""
+		for _c in $_todo; do
+			case "$_seen" in *" $_c "*) continue ;; esac
+			_seen="$_seen$_c "
+			_next="$_next $(sed -n 's/^\(depends-on\|waits-for\) *: *//p' "$D/$_c" 2>/dev/null)"
+		done
+		_todo=$_next
 	done
-	printf '\n  %sservices marked "not installed" have a start script but the\n' "$_GREY"
-	printf '  program behind it is not on this system%s\n\n' "$_R" ;;
+	echo "$_seen"
+}
+
+list() {
+	_core=$(core)
+	printf '\n  %s%-16s %-9s %s%s\n' "$B" SERVICE BOOT STATE "$R"
+	for f in "$D"/*; do
+		[ -f "$f" ] || continue
+		n=${f##*/}
+		case "$_core" in *" $n "*) continue ;; esac
+		case "$n" in *-prepare|*-keygen) continue ;; esac
+		if [ -e "$D/boot.d/$n" ]; then e="${OK}yes      ${R}"; else e="${DIM}no       ${R}"; fi
+		if ! installed "$n"; then s="${DIM}not installed${R}"
+		elif [ "$(id -u)" != 0 ]; then s="${DIM}?${R}"
+		elif dinitctl is-started "$n" >/dev/null 2>&1; then s="${OK}running${R}"
+		elif dinitctl is-failed "$n" >/dev/null 2>&1; then s="${WARN}failed${R}"
+		else s="${DIM}stopped${R}"; fi
+		printf '  %-16s %s %s\n' "$n" "$e" "$s"
+	done
+	echo
+}
+
+verb=${1:-list}
+[ "$verb" = list ] || [ "$verb" = ls ] && { list; exit 0; }
+n=${2:-}
+[ -n "$n" ] || die "usage: service $verb <name>"
+case "$n" in */*|.*) die "invalid service name: $n" ;; esac
+exists "$n" || die "no such service: $n"
+
+case "$verb" in
 status)
-	n=${2:?usage: service status <name>}
-	valid_name "$n" || { echo "invalid service name: $n" >&2; exit 1; }
-	exists "$n" || { echo "no such service: $n" >&2; exit 1; }
-	if ! installed "$n"; then
-		printf '  %s%s%s is %snot installed%s - %s is missing\n' \
-			"$_SNOW" "$n" "$_R" "$_AMB" "$_R" "$(svc_cmd "$n")"
-		printf '  %sinstall it with: scraps add %s%s\n' "$_GREY" "$n" "$_R"
-		exit 4
-	fi
-	if running "$n"; then
-		printf '  %s%s%s is %srunning%s%s\n' "$_SNOW" "$n" "$_R" "$_MINT" "$_R" \
-			"$(enabled "$n" && printf ' (enabled)' || printf ' (not enabled at boot)')"
+	installed "$n" || { echo "$n is not installed, $(program "$n") is missing"; exit 4; }
+	exec dinitctl status "$n" ;;
+start|stop|restart)
+	need_root
+	installed "$n" || die "$n is not installed, $(program "$n") is missing"
+	exec dinitctl "$verb" "$n" ;;
+enable|disable)
+	need_root
+	if online; then dinitctl "$verb" "$n" >/dev/null || exit 1
+	else dinitctl --offline "$verb" "$n" >/dev/null || exit 1; fi
+	if [ "$verb" = enable ]; then
+		echo "$n will start at boot"
+		installed "$n" || echo "  ${WARN}$(program "$n") is not installed yet${R}"
 	else
-		printf '  %s%s%s is %sstopped%s%s\n' "$_SNOW" "$n" "$_R" "$_GREY" "$_R" \
-			"$(enabled "$n" && printf ' (enabled)' || printf ' (not enabled at boot)')"
-		exit 3
+		echo "$n will no longer start at boot"
 	fi ;;
-start)
-	need_root
-	n=${2:?usage: service start <name>}
-	valid_name "$n" || { echo "invalid service name: $n" >&2; exit 1; }
-	exists "$n" || { echo "no such service: $n" >&2; exit 1; }
-	installed "$n" || {
-		echo "$n is not installed: $(svc_cmd "$n") is missing" >&2; exit 4; }
-	begin "starting $n"; "$RCD/$n" start >/dev/null 2>&1 && good || { bad; exit 1; } ;;
-stop)
-	need_root
-	n=${2:?usage: service stop <name>}
-	valid_name "$n" || { echo "invalid service name: $n" >&2; exit 1; }
-	exists "$n" || { echo "no such service: $n" >&2; exit 1; }
-	begin "stopping $n"; "$RCD/$n" stop >/dev/null 2>&1 && good || { bad; exit 1; } ;;
-restart)
-	need_root
-	n=${2:?usage: service restart <name>}
-	valid_name "$n" || { echo "invalid service name: $n" >&2; exit 1; }
-	exists "$n" || { echo "no such service: $n" >&2; exit 1; }
-	installed "$n" || {
-		echo "$n is not installed: $(svc_cmd "$n") is missing" >&2; exit 4; }
-	begin "restarting $n"
-	"$RCD/$n" stop >/dev/null 2>&1
-	sleep 1
-	"$RCD/$n" start >/dev/null 2>&1 && good || { bad; exit 1; } ;;
-enable)
-	need_root
-	n=${2:?usage: service enable <name>}
-	valid_name "$n" || { echo "invalid service name: $n" >&2; exit 1; }
-	exists "$n" || { echo "no such service: $n" >&2; exit 1; }
-	mkdir -p "$ENA"; : >"$ENA/$n"
-	if installed "$n"; then
-		printf '  %s%s%s will start at boot\n' "$_SNOW" "$n" "$_R"
-	else
-		# Enabling something that is not installed yet is legitimate - the
-		# installer does exactly that while the target is still being built -
-		# but it must not look like it will work as things stand.
-		printf '  %s%s%s is enabled, but %s is not installed yet\n' \
-			"$_SNOW" "$n" "$_R" "$(svc_cmd "$n")"
-	fi ;;
-disable)
-	need_root
-	n=${2:?usage: service disable <name>}
-	# Unlike every other subcommand here, disable never checked the name at
-	# all - one with a "/" in it (or "..") reached rm -f "$ENA/$n" as-is, so
-	# "service disable ../../etc/passwd" would delete an arbitrary file as
-	# root instead of failing with "no such service".
-	valid_name "$n" || { echo "invalid service name: $n" >&2; exit 1; }
-	exists "$n" || { echo "no such service: $n" >&2; exit 1; }
-	rm -f "$ENA/$n"
-	printf '  %s%s%s will no longer start at boot\n' "$_SNOW" "$n" "$_R" ;;
 *)
-	sed -n '2,17p' "$0" | sed 's/^# \?//'
-	exit 1 ;;
+	sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'
+	exit 2 ;;
 esac
