@@ -654,6 +654,11 @@ set -x; package; set +x
 export PATH
 unset LD_LIBRARY_PATH
 
+# a sysroot path in the payload comes from a rewritten .pc variable and never works installed
+if [ -n "${SCRAPS_SYSROOT:-}" ] && [ -e "$pkgdir$SCRAPS_SYSROOT" ]; then
+	die "package() installed files under the build sysroot path $SCRAPS_SYSROOT, pass the real directory to configure"
+fi
+
 # --------------------------------------------------------------- tidy the payload
 msg2 "post-processing"
 case " $options " in
