@@ -7,6 +7,7 @@
 #   build/boot-test.sh --runs 10             the ten consecutive boots test
 #   build/boot-test.sh --rebuild             reinstall the disk from the tarball
 #   build/boot-test.sh --flavor wayland      a different tarball flavor
+#   build/boot-test.sh --selftest            check pid 1, dinitctl and services, then power off
 #   build/boot-test.sh --local "dinit scraplinux-base"
 #                                            install those from the build repo, not the mirror
 #
@@ -32,6 +33,7 @@ RUNS=1
 TIMEOUT=120
 REBUILD=0
 LOCAL=""
+SELFTEST=0
 
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -41,6 +43,7 @@ while [ $# -gt 0 ]; do
 	--timeout)  TIMEOUT=$2; shift 2 ;;
 	--rebuild)  REBUILD=1; shift ;;
 	--local)    LOCAL=$2; REBUILD=1; shift 2 ;;
+	--selftest) SELFTEST=1; REBUILD=1; shift ;;
 	-h|--help)  sed -n '2,16p' "$0" | sed 's/^# \?//'; exit 0 ;;
 	*) echo "boot-test.sh: unknown argument '$1'" >&2; exit 2 ;;
 	esac
@@ -134,6 +137,7 @@ install_disk() {
 		>>"$WORK/install.log" 2>&1 \
 		|| { echo "   scraps add failed, see $WORK/install.log" >&2; cleanup_nbd; return 1; }
 	rm -rf "$_lr" "$MNT/etc/scraps/repos.d/0boottest.repo" "$MNT/var/lib/scraps/sync/0boottest.idx"
+	[ "$SELFTEST" = 1 ] && plant_selftest
 
 	KIMG=$(cd "$MNT/boot" && ls vmlinuz-* 2>/dev/null | head -1)
 	IIMG=$(cd "$MNT/boot" && ls initramfs-*.img 2>/dev/null | head -1)
@@ -206,6 +210,30 @@ install_disk() {
 	return 0
 }
 
+# a boot service that reports over serial and then powers the machine off
+plant_selftest() {
+	cat >"$MNT/usr/lib/scraplinux/boottest-selftest" <<-'EOF'
+		#!/bin/sh
+		PATH=/usr/bin
+		{
+		echo "selftest: begin"
+		dinitctl list >/dev/null 2>&1 && echo "selftest: dinitctl ok" || echo "selftest: FAIL dinitctl"
+		for s in early-fs udevd udev-settle local-fs system tty1; do
+			dinitctl is-started "$s" >/dev/null 2>&1 || echo "selftest: FAIL $s not started"
+		done
+		p1=$(readlink /proc/1/exe)
+		[ "$p1" = /usr/bin/dinit ] && echo "selftest: pid1 dinit" || echo "selftest: FAIL pid1 is $p1"
+		touch /var/tmp/.selftest && rm -f /var/tmp/.selftest && echo "selftest: root rw" || echo "selftest: FAIL root ro"
+		echo "selftest: poweroff"
+		} >/dev/ttyS0 2>&1
+		setsid sh -c 'sleep 1; poweroff' >/dev/null 2>&1 &
+	EOF
+	chmod 755 "$MNT/usr/lib/scraplinux/boottest-selftest"
+	printf 'type = scripted\ncommand = /usr/lib/scraplinux/boottest-selftest\nrestart = false\ndepends-on: system\nwaits-for: tty1\n' \
+		>"$MNT/etc/dinit.d/boottest-selftest"
+	ln -sf ../boottest-selftest "$MNT/etc/dinit.d/boot.d/boottest-selftest"
+}
+
 boot_once() {
 	_run=$1
 	_log=$WORK/serial-$FIRMWARE-$_run.log
@@ -241,7 +269,7 @@ boot_once() {
 	while [ "$_ticks" -lt "$_maxticks" ]; do
 		kill -0 "$_pid" 2>/dev/null || break
 		[ -z "$_t_init" ] && grep -q "Run /init as init process" "$_log" 2>/dev/null && _t_init=$(date +%s.%N)
-		if grep -qE "login:|Welcome to SDDM|sddm-greeter" "$_log" 2>/dev/null; then
+		if [ "$SELFTEST" = 0 ] && grep -qE "login:|Welcome to SDDM|sddm-greeter" "$_log" 2>/dev/null; then
 			_ok=1; break
 		fi
 		if grep -qE "Kernel panic|Attempted to kill init|end Kernel panic" "$_log" 2>/dev/null; then
@@ -251,6 +279,14 @@ boot_once() {
 		_ticks=$(( _ticks + 1 ))
 	done
 	_end=$(date +%s.%N)
+	if [ "$SELFTEST" = 1 ]; then
+		_ok=0
+		if ! kill -0 "$_pid" 2>/dev/null && grep -q "selftest: poweroff" "$_log" && \
+		   ! grep -q "selftest: FAIL" "$_log" && grep -q "reboot: Power down" "$_log"; then
+			_ok=1
+		fi
+		grep "selftest: FAIL" "$_log" 2>/dev/null | sed 's/^/    /'
+	fi
 	kill -9 "$_pid" 2>/dev/null
 	wait "$_pid" 2>/dev/null
 
