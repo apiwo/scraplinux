@@ -1,0 +1,10 @@
+#!/bin/sh
+PATH=/usr/bin
+for f in /etc/modules-load.d/*.conf /usr/lib/modules-load.d/*.conf; do
+	[ -f "$f" ] || continue
+	while read -r m _; do
+		case "$m" in ''|\#*|\;*) continue ;; esac
+		modprobe -q "$m" || echo "modules: could not load $m"
+	done <"$f"
+done
+exit 0

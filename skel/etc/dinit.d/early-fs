@@ -1,0 +1,4 @@
+type = scripted
+command = /usr/lib/scraplinux/dinit/early-fs
+restart = false
+options = starts-rwfs

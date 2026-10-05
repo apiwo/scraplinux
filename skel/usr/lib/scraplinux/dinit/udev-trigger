@@ -1,0 +1,9 @@
+#!/bin/sh
+PATH=/usr/bin
+# rebuild the hwdb only when a source is newer than it
+bin=/etc/udev/hwdb.bin
+if [ ! -e "$bin" ] || [ -n "$(find /etc/udev/hwdb.d /usr/lib/udev/hwdb.d -newer "$bin" 2>/dev/null | head -1)" ]; then
+	udevadm hwdb --update
+fi
+udevadm trigger --action=add --type=subsystems
+udevadm trigger --action=add --type=devices

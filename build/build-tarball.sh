@@ -8,14 +8,7 @@
 #                             directly (dwl, labwc, tinywl, wio, niri - pick
 #                             one at the SDDM login screen)
 #
-# Every flavor uses scinit (skel/sbin/scinit) as pid 1 - ScrapLinux's own
-# init and service manager, a single POSIX sh file. s6/66, OpenRC and
-# busybox init are gone from every tarball this script produces; scinit
-# reuses /etc/rc.d/*, svc.lib and /etc/scraplinux/services/* completely
-# unchanged (they already worked, and needed no init-specific translation
-# step the way s6/66/OpenRC each did) and adds what none of the rc.d
-# scripts can do for themselves: being pid 1, respawning getty forever,
-# reaping zombies, and handling shutdown.
+# dinit is pid 1 and scraplinux-base owns /usr/bin/init and the service set.
 #
 # No ISO, no guided installer - see the main site's install guide.
 # Bundled raw: glibc, toybox, busybox, zsh, doas, e2fsprogs, util-linux,
@@ -28,22 +21,19 @@
 set -eu
 
 FLAVOR=${1:-base}
-# Old flavor names that used to each mean a different init: every one of
-# them is the same base flavor now, since the init is always scinit
-# regardless of which of these was asked for.
+# old names for per-init flavors, all the same base flavor now
 case "$FLAVOR" in def|s66|busybox|openrc) FLAVOR=base ;; esac
 B=${SCRAPLINUX_BUILD:-/home/apiwo/scraplinux-build}
 SRCTREE=${SCRAPLINUX_TREE:-/home/apiwo/scraplinux}
 REPO=$B/repo
+# local builds first, then the published tree
+PKGS=${SCRAPLINUX_PKGS:-$B/arctic-build/src-extra/arctic-linux-pkgs/ALL}
 WORK=$B/tarball/$FLAVOR
 SCRATCH=$B/tarball/.scratch-$FLAVOR
 OUT=$B/tarball-out
 ARCH=x86_64
 
-# scinit is the only init any flavor ever wires up now - FLAVOR only
-# distinguishes what else is bundled on top of it (a desktop session, for
-# i3wl/wayland), never which init.
-INITKIND=scinit
+# a flavor only changes what is bundled on top, never the init
 case "$FLAVOR" in
 base)    TARNAME="scraplinux-base-tarball.tar.xz" ;;
 i3wl)    TARNAME="scraplinux-i3wl-tarball.tar.xz" ;;
@@ -108,7 +98,7 @@ pkg_deps() {
 		for _pd_p in $_pd_todo; do
 			case " $_pd_seen " in *" $_pd_p "*) continue ;; esac
 			_pd_seen="$_pd_seen $_pd_p"
-			for _pd_i in "$REPO"/*/"$ARCH"/INDEX; do
+			for _pd_i in "$REPO"/*/"$ARCH"/INDEX "$PKGS"/*/"$ARCH"/INDEX; do
 				[ -f "$_pd_i" ] || continue
 				_pd_d=$(awk -F'\t' -v n="$_pd_p" '$1==n{print $8; exit}' "$_pd_i")
 				[ -n "$_pd_d" ] && break
@@ -138,7 +128,7 @@ unpack_pkg() {
 	# which one is actually current.
 	_up_n=$1 _up_reason=${2:-dep}
 	_up_pkg=""
-	for _up_i in "$REPO"/*/"$ARCH"/INDEX; do
+	for _up_i in "$REPO"/*/"$ARCH"/INDEX "$PKGS"/*/"$ARCH"/INDEX; do
 		[ -f "$_up_i" ] || continue
 		_up_e=$(awk -F'\t' -v n="$_up_n" '$1==n{print $2"-"$3; exit}' "$_up_i")
 		[ -n "$_up_e" ] || continue
@@ -233,7 +223,7 @@ unpack_pkg() {
 # and the llvm-* binutils, which is the whole toolchain here since ScrapLinux
 # has no gcc. It costs about 157 MB of download and 1.1 GB installed, which is
 # the same order as a stage3 and is the price of the thing working at all.
-BASE_EXPLICIT="glibc toybox busybox zsh doas e2fsprogs util-linux dosfstools onetrueawk xz libarchive eudev iw wpa_supplicant ca-certificates curl bmake byacc mandoc gmake libxcrypt pam llvm pkgconf"
+BASE_EXPLICIT="glibc toybox busybox zsh doas e2fsprogs util-linux dosfstools onetrueawk xz libarchive eudev iwd dhcpcd ca-certificates curl bmake byacc mandoc gmake libxcrypt pam llvm pkgconf dinit"
 BASE_SET=$(pkg_deps $BASE_EXPLICIT)
 # e2fsprogs depends on util-linux-libs, which BASE_EXPLICIT's own util-linux
 # already replaces (same libmount/libblkid/libuuid, see its recipe) - this
@@ -250,48 +240,19 @@ printf '   %s requested, %s with dependencies\n' \
 	"$(printf '%s\n' $BASE_EXPLICIT | wc -l | tr -d ' ')" \
 	"$(printf '%s\n' $BASE_SET | wc -l | tr -d ' ')"
 mkdir -p "$S/var/lib/scraps/local"
+missing=""
 for p in $BASE_SET; do
 	reason=dep
 	case " $BASE_EXPLICIT " in *" $p "*) reason=explicit ;; esac
-	unpack_pkg "$p" "$reason" && ok "$p"
+	if unpack_pkg "$p" "$reason"; then ok "$p"; else missing="$missing $p"; fi
 done
+# a base system with a hole in it is not a tarball worth writing
+[ -z "$missing" ] || { echo "build-tarball: base packages missing:$missing" >&2; exit 1; }
 
-# Enable eudev at boot the same way rc.boot's own device-manager check
-# expects (existence in /etc/scraplinux/services/udev, content unchecked) -
-# without this the marker is absent and rc.boot falls back to mdev even
-# with eudev's binary sitting right there unused.
-mkdir -p "$S/etc/scraplinux/services"
-: >"$S/etc/scraplinux/services/udev"
-# rc.boot looks for the marker named "udev"; scraplinux-init-setup looks for
-# one named after the rc.d script, which is "udevd". Only the first was ever
-# written, so every non-busybox flavor generated its service files with udevd
-# treated as disabled - the daemon was staged and then never enabled.
-: >"$S/etc/scraplinux/services/udevd"
-# Coldplug. rc.boot does its own `udevadm trigger` inline, so this was
-# always covered when rc.boot ran the whole boot - it is also staged as a
-# real rc.d service, unchanged, since scinit's own boot sequence still
-# runs rc.boot to start everything in /etc/scraplinux/services.
-: >"$S/etc/scraplinux/services/udev-trigger"
-ok "eudev enabled at boot (+ coldplug)"
-
-# getty belongs under respawn, not services: rc.boot's service loop starts
-# each enabled service once and moves on, backgrounding or waiting briefly
-# for it to self-daemonize - a real login prompt is a foreground process
-# that runs until someone logs out and has to come back the instant it
-# does, forever, which is what scinit's own respawn loop (not rc.boot) is
-# for. Enabling getty here in services instead would make rc.boot's own
-# `wait` on it block forever, since `/etc/rc.d/getty start` never returns
-# on its own - this is not hypothetical, it is exactly the class of bug
-# tonight's from-scratch QEMU boot testing found under 66's own translation
-# of this same rc.d script.
-mkdir -p "$S/etc/scraplinux/respawn"
-: >"$S/etc/scraplinux/respawn/getty"
-: >"$S/etc/scraplinux/respawn/getty-serial"
-ok "getty enabled to respawn forever (not a one-shot service)"
 
 if [ "$FLAVOR" = i3wl ]; then
 	step "adding i3wl (dwl fork: i3-style binary-tree tiling, tray, bar)"
-	# A scinit system with a session on top, not a separate init: this only
+	# a session on top of the base system, this only
 	# adds the compositor and whatever it links against. i3wl installs its
 	# compositor as /usr/bin/i3wl-bin with a dbus-run-session wrapper at
 	# /usr/bin/i3wl, and drops a wayland-sessions entry, so a display
@@ -332,31 +293,15 @@ if [ "$FLAVOR" = wayland ]; then
 		case " labwc-dms tinywl-dms wio-dms niri-dms " in *" $p "*) reason=explicit ;; esac
 		unpack_pkg "$p" "$reason" && ok "$p"
 	done
-	# sddm's own package ships the binary, not a boot-time service - wire
-	# it up the same way lightdm's rc.d script does, and mark it enabled
-	# the same way rc.boot's own service loop expects (existence in
-	# /etc/scraplinux/services/, content unchecked - see rc.boot's `for s in
-	# /etc/scraplinux/services/*` loop, `[ -e "$s" ]` is the entire test).
-	install -Dm755 "$SRCTREE/skel/etc/rc.d/sddm" "$S/etc/rc.d/sddm"
-	# start-stop-daemon --background (which rc.d/sddm's svc_main uses)
-	# redirects the daemonized child's stdout/stderr to /dev/null before it
-	# ever runs - discarding any crash message sddm prints before it gets
-	# far enough to open its own /var/log/sddm.log. This wrapper sits in
-	# front of it so that output lands in /var/log/sddm-raw.log instead of
-	# vanishing, which is the difference between an empty log and an actual
-	# reason the next time sddm dies before writing anything itself.
-	install -Dm755 "$SRCTREE/skel/usr/bin/sddm-logwrap" "$S/usr/bin/sddm-logwrap"
-	mkdir -p "$S/etc/scraplinux/services"
-	: >"$S/etc/scraplinux/services/sddm"
+	# the sddm service comes with scraplinux-base, the link waits for it
+	mkdir -p "$S/etc/dinit.d/boot.d"
+	ln -sf ../sddm "$S/etc/dinit.d/boot.d/sddm"
 	ok "sddm enabled at boot, session picker offers dwl/labwc/tinywl/wio/niri"
 fi
 
 # ---------------------------------------------------------------- 2. scraps
 step "installing scraps itself"
-# Not through the package it just unpacked into var/lib/scraps/local - scraps
-# ships pre-installed and ready, the same direct-from-source convention
-# build/pkg-tools.sh already uses for it, so the tarball never needs a
-# bootstrap step just to get a package manager.
+# installed straight from the source tree so the tarball needs no bootstrap step
 mkdir -p "$S/usr/bin" "$S/usr/lib/scraps" "$S/etc/scraps/repos.d"
 install -Dm755 "$SRCTREE/scraps/scraps"       "$S/usr/bin/scraps"
 install -Dm755 "$SRCTREE/scraps/scraps-build" "$S/usr/bin/scraps-build"
@@ -370,24 +315,8 @@ mkdir -p "$S/var/lib/scraps/local" "$S/var/lib/scraps/sync" "$S/var/lib/scraps/h
 	"$S/var/cache/scraps/build"
 mkdir -p "$S/etc/scraplinux"
 install -Dm644 "$SRCTREE/skel/etc/scraplinux/conf.lib" "$S/etc/scraplinux/conf.lib"
-# svc.lib: every rc.d service script (lightdm, dbus, crond, sddm, ...)
-# sources this for start/stop/status - without it here, none of them
-# have worked in any tarball flavor at all, pre-existing and unrelated
-# to any one flavor.
-install -Dm644 "$SRCTREE/skel/etc/scraplinux/svc.lib" "$S/etc/scraplinux/svc.lib"
-# rc.lib: rc.boot's begin/good/bad/rc_done output helpers, including the
-# fallback that fires when it is missing - which was silently true of
-# every tarball built here, since this file lived only in the published
-# scraplinux-base package (still Arctic-branded, /run/arctic paths, plain
-# 256-colour SGR the bare Linux console does not reliably render) and
-# never in this source tree at all. Installed straight from skel/ now,
-# not left to whatever a `scraps add scraplinux-base` happens to still
-# be shipping.
-install -Dm644 "$SRCTREE/skel/etc/scraplinux/rc.lib" "$S/etc/scraplinux/rc.lib"
 
 install -Dm755 "$SRCTREE/skel/usr/bin/scraplinux-chroot" "$S/usr/bin/scraplinux-chroot"
-# wifi-connect: rc.d/wifi has always reconnected from what this saves, but
-# the command that does the saving was never actually shipped.
 install -Dm755 "$SRCTREE/skel/usr/bin/wifi-connect" "$S/usr/bin/wifi-connect"
 
 # Binutils names, pointed at their LLVM equivalents. llvm ships these only as
@@ -408,16 +337,8 @@ done
 ok "binutils names linked to their llvm-* equivalents"
 mkdir -p "$S/var/spool/cron/crontabs"
 
-# Both belong here for the same reason scraplinux-chroot does: neither is
-# part of any real package payload (scraplinux-base is a meta package with
-# no files of its own), yet a kernel install's own post-install hook calls
-# scraplinux-mkinitramfs directly, and scraplinux-init-setup is what a real
-# installer runs once to wire /etc/rc.d into whatever init this flavor
-# uses. Without them physically here, a from-tarball install has no way to
-# ever get a working initramfs or service tree, regardless of which
-# package versions later land in a repo.
+# a kernel install's hook calls it, so it has to be here before scraplinux-base
 install -Dm755 "$SRCTREE/skel/usr/bin/scraplinux-mkinitramfs" "$S/usr/bin/scraplinux-mkinitramfs"
-install -Dm755 "$SRCTREE/skel/usr/bin/scraplinux-init-setup" "$S/usr/bin/scraplinux-init-setup"
 
 # Minimal accounts and NSS config - not part of scraplinux-base, because
 # nothing glibc-based works at all without them, chroot included: with
@@ -461,22 +382,11 @@ mkdir -p "$S/root"
 ok "scraps, scraps-strap, scraplinux-chroot in place"
 
 # ---------------------------------------------------------------- 3. init
-step "wiring up init ($INITKIND, flavor $FLAVOR)"
-# scinit is a single POSIX sh file, not a package - install it straight
-# from the source tree the same way scraps/scraplinux-chroot are above, and
-# point /sbin/init at it directly. The kernel execs whatever /sbin/init is
-# with no arguments; scinit itself tells its own pid-1 mode apart from a
-# later CLI invocation by checking "$$" = 1, so a plain symlink is enough,
-# no wrapper script needed the way 66 boot used to require.
-mkdir -p "$S/sbin" "$S/etc/scraplinux"
-install -Dm755 "$SRCTREE/skel/sbin/scinit" "$S/sbin/scinit"
-ln -sf scinit "$S/sbin/init"
-# scraplinux-power's init_kind() reads this file first, before ever trying
-# to guess from /proc/1/exe - which would be unreliable for any shell-script
-# init anyway, since the kernel actually execs $(readlink /bin/sh) with the
-# script as an argument, not a binary named "scinit".
-printf 'scinit\n' >"$S/etc/scraplinux/init"
-ok "scinit wired as /sbin/init - boot-test before trusting this"
+step "init (flavor $FLAVOR)"
+# scraplinux-base brings /usr/bin/init and the service set
+mkdir -p "$S/etc/scraplinux"
+printf 'dinit\n' >"$S/etc/scraplinux/init"
+ok "dinit is the init, wired by scraplinux-base"
 
 # ------------------------------------------------------- 4. shared libraries
 # Same ELF-driven closure the ISO builder used: read what is actually
@@ -565,7 +475,7 @@ LIBC=glibc
 LIBC_VERSION=2.44
 TOOLCHAIN=llvm
 USERLAND=bsd
-INIT=$INITKIND
+INIT=dinit
 SHELL=zsh
 PACKAGE_MANAGER=scraps
 HOME_URL="https://github.com/apiwo/scraplinux"

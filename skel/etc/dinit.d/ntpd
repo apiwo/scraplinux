@@ -1,0 +1,5 @@
+type = process
+command = /usr/bin/ntpd -n -p pool.ntp.org
+restart = true
+depends-on: system
+after: dhcpcd

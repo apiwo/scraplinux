@@ -1,0 +1,4 @@
+type = scripted
+command = /usr/bin/udevadm settle --timeout=10
+restart = false
+depends-on: udev-trigger

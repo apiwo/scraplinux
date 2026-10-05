@@ -1,0 +1,5 @@
+type = process
+command = /usr/bin/sddm
+logfile = /var/log/sddm-console.log
+restart = true
+depends-on: dbus

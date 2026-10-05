@@ -1,0 +1,28 @@
+#!/bin/sh
+PATH=/usr/bin
+# check fstab entries with a pass number that are not mounted yet
+force=
+[ -f /forcefsck ] && force=-f
+grep -qw forcefsck /proc/cmdline && force=-f
+worst=0
+while read -r dev mnt type opts dump pass; do
+	case "$dev" in ''|\#*) continue ;; esac
+	[ "${pass:-0}" -gt 0 ] 2>/dev/null || continue
+	case "$dev" in
+	UUID=*|LABEL=*|PARTUUID=*|PARTLABEL=*) real=$(findfs "$dev" 2>/dev/null) || real=$dev ;;
+	*) real=$dev ;;
+	esac
+	grep -qs "^$real " /proc/mounts && continue
+	# quiet unless it found something
+	out=$(fsck -t "$type" -a $force "$real" </dev/null 2>&1)
+	rc=$?
+	[ "$rc" -eq 0 ] || printf '%s\n' "$out"
+	[ "$rc" -gt "$worst" ] && worst=$rc
+done </etc/fstab
+rm -f /forcefsck
+# 4 and above means errors left uncorrected
+if [ "$worst" -ge 4 ]; then
+	echo "fsck: errors need attention, starting a repair shell (exit to continue booting)"
+	sulogin
+fi
+exit 0

@@ -1,8 +1,0 @@
-#!/bin/sh
-NAME=syslogd
-CMD=/usr/bin/syslogd
-ARGS="-n -O /var/log/messages"
-BACKGROUND=yes
-
-. /etc/scraplinux/svc.lib
-svc_main "$@"

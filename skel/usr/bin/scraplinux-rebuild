@@ -5,8 +5,8 @@
 #   scraplinux-rebuild --dry-run   show what would change, do nothing
 #
 # Reads identity.conf, services.conf, users.conf (additive only) and
-# hardware.conf; network.conf is applied by rc.d/wifi at boot, this only
-# restarts it live if what's declared has changed. pkgs.conf is never
+# hardware.conf. network.conf's wifi network becomes an iwd profile, which
+# iwd connects to on its own. pkgs.conf is never
 # reconciled - it's a mirror scraps itself keeps in step with `scraps add`/
 # `scraps rem`, not something applied to the machine. See conf.lib.
 #
@@ -71,11 +71,25 @@ explicit_pkgs_versioned() {
 	done | sort
 }
 
+# the login gettys are part of the base system, not declared services
 enabled_services() {
-	for f in /etc/scraplinux/services/*; do
-		[ -e "$f" ] || continue
+	for f in /etc/dinit.d/boot.d/*; do
+		[ -e "$f" ] || [ -L "$f" ] || continue
+		case "${f##*/}" in tty1|serial-getty) continue ;; esac
 		basename "$f"
 	done
+}
+
+# names from before dinit, network and wifi are dhcpcd and iwd now
+svc_rename() {
+	for _s in "$@"; do
+		case "$_s" in
+		network) echo dhcpcd ;;
+		wifi) echo iwd; echo dhcpcd ;;
+		udev|udevd|udev-trigger|getty|getty-serial) ;;
+		*) echo "$_s" ;;
+		esac
+	done | awk '!seen[$0]++'
 }
 
 in_list() {
@@ -149,7 +163,7 @@ fi
 
 # services.conf: same reasoning - an empty declared list would mean
 # "disable everything currently enabled" if reconciled against directly.
-svc_declared=$(conf_get "$D/services.conf" services.enabled)
+svc_declared=$(svc_rename $(conf_get "$D/services.conf" services.enabled))
 if [ -f "$D/services.conf" ] && [ -z "$(printf '%s' "$svc_declared" | tr -d '[:space:]')" ]; then
 	note "services.conf has nothing declared yet - seeding it from what is already enabled"
 	printf '%s\n' "$cur_svcs" | conf_set "$D/services.conf" services.enabled
@@ -185,22 +199,20 @@ for u in $users_declared; do
 done
 
 # ------------------------------------------------------------------ networking
-# network.conf is applied by rc.d/wifi at boot, not here. The only thing
-# worth doing on a rebuild is noticing that what's declared no longer
-# matches what wpa_supplicant is actually running with, and restarting the
-# service live rather than waiting for the next boot.
+# iwd watches /var/lib/iwd and connects to a profile as soon as it appears
+iwd_profile() { # ssid -> profile path, named the way iwd.network(5) says
+	if printf '%s' "$1" | grep -qx '[A-Za-z0-9 _-]*'; then _ip_n=$1
+	else _ip_n="=$(printf '%s' "$1" | od -An -tx1 | tr -d ' \n')"; fi
+	printf '/var/lib/iwd/%s.%s' "$_ip_n" "$2"
+}
 wifi_change=""
 net_ssid=$(conf_get1 "$D/network.conf" wifi.ssid)
 if [ -n "$net_ssid" ]; then
-	net_iface=$(conf_get1 "$D/network.conf" wifi.iface)
-	cur_ssid=""
-	for c in /etc/wpa_supplicant-*.conf; do
-		[ -f "$c" ] || continue
-		[ -n "$net_iface" ] && [ "$c" != "/etc/wpa_supplicant-$net_iface.conf" ] && continue
-		cur_ssid=$(awk -F'"' '/^[[:space:]]*ssid=/{print $2; exit}' "$c" 2>/dev/null)
-		[ -n "$cur_ssid" ] && break
-	done
-	[ "$cur_ssid" != "$net_ssid" ] && wifi_change="$net_ssid"
+	net_psk=$(conf_get1 "$D/network.conf" wifi.psk)
+	if [ -n "$net_psk" ]; then wifi_file=$(iwd_profile "$net_ssid" psk)
+	else wifi_file=$(iwd_profile "$net_ssid" open); fi
+	if [ -f "$wifi_file" ] && { [ -z "$net_psk" ] || grep -qxF "Passphrase=$net_psk" "$wifi_file"; }; then :
+	else wifi_change=$net_ssid; fi
 fi
 
 # ---------------------------------------------------------------------- hardware
@@ -424,9 +436,13 @@ for u in $users_to_create; do
 	fi
 done
 
-if [ -n "$wifi_change" ] && service status wifi >/dev/null 2>&1; then
-	service restart wifi >/dev/null 2>&1 || \
-		printf '  %swifi service did not restart - network.conf is saved, apply it by hand%s\n' "$AMB" "$R" >&2
+if [ -n "$wifi_change" ]; then
+	mkdir -p /var/lib/iwd && chmod 700 /var/lib/iwd
+	if [ -n "$net_psk" ]; then
+		(umask 077; printf '[Security]\nPassphrase=%s\n' "$net_psk" >"$wifi_file")
+	else
+		(umask 077; : >"$wifi_file")
+	fi
 fi
 
 if [ -n "$hw_to_install" ]; then
@@ -468,15 +484,6 @@ if [ "$rc" = 0 ]; then
 	fi
 	command -v scraplinux-boot-generations >/dev/null 2>&1 && \
 		scraplinux-boot-generations >/dev/null 2>&1 || :
-
-	if [ -n "$svc_enable$svc_disable" ] && [ -f /etc/scraplinux/init ]; then
-		myinit=$(cat /etc/scraplinux/init 2>/dev/null)
-		if [ -n "$myinit" ] && [ "$myinit" != busybox ] && \
-		   command -v scraplinux-init-setup >/dev/null 2>&1; then
-			scraplinux-init-setup "$myinit" >/dev/null 2>&1 && \
-				note "$myinit service definitions regenerated"
-		fi
-	fi
 
 	{
 		printf '# ScrapLinux - package lock\n'

@@ -1,0 +1,6 @@
+#!/bin/sh
+PATH=/usr/bin
+mount -o remount,rw /
+# one bad fstab line must not keep the system from booting
+mount -a -t nosquashfs,noproc,nosysfs,nodevtmpfs || echo "local-fs: some fstab entries did not mount"
+exit 0

@@ -1,0 +1,4 @@
+type = scripted
+command = /usr/lib/scraplinux/dinit/dbus-prepare
+restart = false
+depends-on: system

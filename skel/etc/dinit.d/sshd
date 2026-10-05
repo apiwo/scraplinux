@@ -1,0 +1,6 @@
+type = process
+command = /usr/sbin/sshd -D
+restart = true
+depends-on: system
+depends-on: sshd-keygen
+after: dhcpcd

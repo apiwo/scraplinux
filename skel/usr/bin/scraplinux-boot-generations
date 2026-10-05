@@ -13,7 +13,7 @@
 #   ...
 #
 # Booting a generation entry passes scraplinux.generation=N on the kernel command
-# line. /etc/rc.boot sees it and reconciles the system to that generation
+# line. The generation service sees it and reconciles the system to that generation
 # before anything else starts, so choosing it from the menu is the same as
 # having run `scraplinux-generation switch N` beforehand.
 #

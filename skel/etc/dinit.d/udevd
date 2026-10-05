@@ -1,0 +1,5 @@
+type = process
+command = /usr/bin/udevd
+restart = true
+smooth-recovery = true
+depends-on: early-fs

@@ -1,0 +1,4 @@
+type = process
+command = /usr/lib/scraplinux/dinit/kernel-log
+restart = true
+depends-on: local-fs

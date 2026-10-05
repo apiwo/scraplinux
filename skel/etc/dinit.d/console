@@ -1,0 +1,5 @@
+type = scripted
+command = /usr/lib/scraplinux/dinit/console
+restart = false
+depends-on: early-fs
+waits-for: udev-settle

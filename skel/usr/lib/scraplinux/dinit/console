@@ -1,0 +1,16 @@
+#!/bin/sh
+PATH=/usr/bin
+[ -f /etc/vconsole.conf ] && . /etc/vconsole.conf
+if [ -n "${KEYMAP:-}" ] && [ -f "/usr/share/keymaps/$KEYMAP.bmap" ]; then
+	loadkmap <"/usr/share/keymaps/$KEYMAP.bmap"
+fi
+if [ -n "${FONT:-}" ]; then
+	for e in .psfu.gz .psf.gz .psfu .psf ""; do
+		[ -f "/usr/share/consolefonts/$FONT$e" ] && { setfont "/usr/share/consolefonts/$FONT$e"; break; }
+	done
+fi
+# no screen blanking or powerdown
+for t in /dev/tty1 /dev/tty2 /dev/tty3 /dev/tty4; do
+	[ -w "$t" ] && printf '\033[9;0]\033[14;0]' >"$t"
+done
+exit 0

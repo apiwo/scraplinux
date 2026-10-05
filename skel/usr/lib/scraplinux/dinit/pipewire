@@ -1,0 +1,5 @@
+#!/bin/sh
+PATH=/usr/bin
+# pipewire itself runs per user, this only prepares the system side
+modprobe -q snd-seq
+install -d -m 0755 /run/pipewire

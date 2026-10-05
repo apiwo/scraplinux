@@ -60,7 +60,7 @@ explicit_pkgs_versioned() {
 }
 
 enabled_services() {
-	for f in /etc/scraplinux/services/*; do
+	for f in /etc/dinit.d/boot.d/*; do
 		[ -e "$f" ] || continue
 		basename "$f"
 	done | sort

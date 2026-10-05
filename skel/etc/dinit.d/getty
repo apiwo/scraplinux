@@ -1,0 +1,6 @@
+# getty@ttyS0 and the like, started by serial-getty
+type = process
+command = /usr/bin/getty -L 115200 $1 vt100
+restart = true
+smooth-recovery = true
+depends-on: system

@@ -1,0 +1,9 @@
+type = scripted
+command = /usr/lib/scraplinux/dinit/nftables start
+stop-command = /usr/lib/scraplinux/dinit/nftables stop
+restart = false
+depends-on: early-fs
+waits-for: modules
+before: iwd
+before: dhcpcd
+before: sshd

@@ -1,0 +1,8 @@
+type = scripted
+command = /usr/lib/scraplinux/dinit/fsck
+restart = false
+start-timeout = 0
+options = starts-on-console
+depends-on: early-fs
+waits-for: udev-settle
+waits-for: hwclock

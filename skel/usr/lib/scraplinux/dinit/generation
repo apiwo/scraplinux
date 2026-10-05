@@ -1,0 +1,11 @@
+#!/bin/sh
+PATH=/usr/bin
+for a in $(cat /proc/cmdline); do
+	case "$a" in scraplinux.generation=*) g=${a#*=} ;; esac
+done
+[ -n "${g:-}" ] && [ -d "/var/lib/scraplinux/generations/$g" ] || exit 0
+[ "$g" = "$(cat /var/lib/scraplinux/generations/current 2>/dev/null)" ] && exit 0
+echo "switching to generation $g"
+scraplinux-generation switch "$g" >/var/log/scraplinux-generation-boot.log 2>&1 || \
+	echo "generation $g failed, see /var/log/scraplinux-generation-boot.log"
+exit 0

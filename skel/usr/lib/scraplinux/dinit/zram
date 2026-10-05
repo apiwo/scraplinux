@@ -1,0 +1,17 @@
+#!/bin/sh
+PATH=/usr/bin
+[ -f /etc/scraplinux/zram.conf ] && . /etc/scraplinux/zram.conf
+size=${ZRAM_SIZE:-50%}
+case "$size" in
+*%) size=$(awk -v p="${size%\%}" '/^MemTotal:/{printf "%.0f", $2*1024*p/100}' /proc/meminfo) ;;
+esac
+case "$1" in
+start)
+	[ -b /dev/zram0 ] || modprobe zram num_devices=1 || exit 1
+	echo "${ZRAM_ALGO:-zstd}" >/sys/block/zram0/comp_algorithm
+	echo "$size" >/sys/block/zram0/disksize || exit 1
+	mkswap /dev/zram0 >/dev/null && swapon -p 100 /dev/zram0 ;;
+stop)
+	swapoff /dev/zram0 2>/dev/null
+	echo 1 >/sys/block/zram0/reset ;;
+esac

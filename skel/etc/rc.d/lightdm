@@ -1,8 +1,0 @@
-#!/bin/sh
-NAME=lightdm
-CMD=/usr/bin/lightdm
-ARGS=""
-BACKGROUND=yes
-
-. /etc/scraplinux/svc.lib
-svc_main "$@"

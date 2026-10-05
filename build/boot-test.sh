@@ -7,6 +7,9 @@
 #   build/boot-test.sh --runs 10             the ten consecutive boots test
 #   build/boot-test.sh --rebuild             reinstall the disk from the tarball
 #   build/boot-test.sh --flavor wayland      a different tarball flavor
+#   build/boot-test.sh --selftest            check pid 1, dinitctl and services, then power off
+#   build/boot-test.sh --local "dinit scraplinux-base"
+#                                            install those from the build repo, not the mirror
 #
 # Every run writes a full serial log, so a panic is captured in full rather
 # than scrolled off a framebuffer. The disk is installed once and then booted
@@ -29,6 +32,8 @@ FIRMWARE=uefi
 RUNS=1
 TIMEOUT=120
 REBUILD=0
+LOCAL=""
+SELFTEST=0
 
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -37,6 +42,8 @@ while [ $# -gt 0 ]; do
 	--runs)     RUNS=$2; shift 2 ;;
 	--timeout)  TIMEOUT=$2; shift 2 ;;
 	--rebuild)  REBUILD=1; shift ;;
+	--local)    LOCAL=$2; REBUILD=1; shift 2 ;;
+	--selftest) SELFTEST=1; REBUILD=1; shift ;;
 	-h|--help)  sed -n '2,16p' "$0" | sed 's/^# \?//'; exit 0 ;;
 	*) echo "boot-test.sh: unknown argument '$1'" >&2; exit 2 ;;
 	esac
@@ -109,10 +116,28 @@ install_disk() {
 
 	sh "$TREE/scraps/scraps-strap" "$MNT" >/dev/null 2>&1 \
 		|| { echo "   scraps-strap failed" >&2; cleanup_nbd; return 1; }
+	# unpublished builds win over the mirror for this one install
+	_lr=$MNT/var/tmp/boottest-repo
+	: >"$WORK/install.log"
+	if [ -n "$LOCAL" ]; then
+		mkdir -p "$_lr/x86_64"
+		for _p in $LOCAL; do
+			_f=$(ls "$B"/repo/*/x86_64/"$_p"-[0-9]*.spz 2>/dev/null | head -1)
+			[ -n "$_f" ] || { echo "   --local: no build of $_p in $B/repo" >&2; cleanup_nbd; return 1; }
+			cp -f "$_f" "$_lr/x86_64/"
+		done
+		sh "$TREE/scraps/scraps-repo" gen "$_lr" x86_64 >/dev/null
+		printf 'name = 0boottest\nurl = file:///var/tmp/boottest-repo\nenabled = yes\nsig = off\n' \
+			>"$MNT/etc/scraps/repos.d/0boottest.repo"
+		sh "$TREE/skel/usr/bin/scraplinux-chroot" "$MNT" scraps fetch all >>"$WORK/install.log" 2>&1
+		echo "   local: $LOCAL"
+	fi
 	sh "$TREE/skel/usr/bin/scraplinux-chroot" "$MNT" \
 		scraps add -y scraplinux-base ScrapLinux-base-kernel linux-firmware limine \
-		>"$WORK/install.log" 2>&1 \
+		>>"$WORK/install.log" 2>&1 \
 		|| { echo "   scraps add failed, see $WORK/install.log" >&2; cleanup_nbd; return 1; }
+	rm -rf "$_lr" "$MNT/etc/scraps/repos.d/0boottest.repo" "$MNT/var/lib/scraps/sync/0boottest.idx"
+	[ "$SELFTEST" = 1 ] && plant_selftest
 
 	KIMG=$(cd "$MNT/boot" && ls vmlinuz-* 2>/dev/null | head -1)
 	IIMG=$(cd "$MNT/boot" && ls initramfs-*.img 2>/dev/null | head -1)
@@ -185,6 +210,30 @@ install_disk() {
 	return 0
 }
 
+# a boot service that reports over serial and then powers the machine off
+plant_selftest() {
+	cat >"$MNT/usr/lib/scraplinux/boottest-selftest" <<-'EOF'
+		#!/bin/sh
+		PATH=/usr/bin
+		{
+		echo "selftest: begin"
+		dinitctl list >/dev/null 2>&1 && echo "selftest: dinitctl ok" || echo "selftest: FAIL dinitctl"
+		for s in early-fs udevd udev-settle local-fs system tty1; do
+			dinitctl is-started "$s" >/dev/null 2>&1 || echo "selftest: FAIL $s not started"
+		done
+		p1=$(readlink /proc/1/exe)
+		[ "$p1" = /usr/bin/dinit ] && echo "selftest: pid1 dinit" || echo "selftest: FAIL pid1 is $p1"
+		touch /var/tmp/.selftest && rm -f /var/tmp/.selftest && echo "selftest: root rw" || echo "selftest: FAIL root ro"
+		echo "selftest: poweroff"
+		} >/dev/ttyS0 2>&1
+		setsid sh -c 'sleep 1; poweroff' >/dev/null 2>&1 &
+	EOF
+	chmod 755 "$MNT/usr/lib/scraplinux/boottest-selftest"
+	printf 'type = scripted\ncommand = /usr/lib/scraplinux/boottest-selftest\nrestart = false\ndepends-on: system\nwaits-for: tty1\n' \
+		>"$MNT/etc/dinit.d/boottest-selftest"
+	ln -sf ../boottest-selftest "$MNT/etc/dinit.d/boot.d/boottest-selftest"
+}
+
 boot_once() {
 	_run=$1
 	_log=$WORK/serial-$FIRMWARE-$_run.log
@@ -215,10 +264,12 @@ boot_once() {
 	# only, so a 0.25 step made every comparison an error and the loop exited
 	# immediately, failing a boot that had not even started.
 	_ticks=0
+	_t_init=""
 	_maxticks=$(( TIMEOUT * 4 ))
 	while [ "$_ticks" -lt "$_maxticks" ]; do
 		kill -0 "$_pid" 2>/dev/null || break
-		if grep -qE "login:|Welcome to SDDM|sddm-greeter" "$_log" 2>/dev/null; then
+		[ -z "$_t_init" ] && grep -q "Run /init as init process" "$_log" 2>/dev/null && _t_init=$(date +%s.%N)
+		if [ "$SELFTEST" = 0 ] && grep -qE "login:|Welcome to SDDM|sddm-greeter" "$_log" 2>/dev/null; then
 			_ok=1; break
 		fi
 		if grep -qE "Kernel panic|Attempted to kill init|end Kernel panic" "$_log" 2>/dev/null; then
@@ -228,22 +279,30 @@ boot_once() {
 		_ticks=$(( _ticks + 1 ))
 	done
 	_end=$(date +%s.%N)
+	if [ "$SELFTEST" = 1 ]; then
+		_ok=0
+		if ! kill -0 "$_pid" 2>/dev/null && grep -q "selftest: poweroff" "$_log" && \
+		   ! grep -q "selftest: FAIL" "$_log" && grep -q "reboot: Power down" "$_log"; then
+			_ok=1
+		fi
+		grep "selftest: FAIL" "$_log" 2>/dev/null | sed 's/^/    /'
+	fi
 	kill -9 "$_pid" 2>/dev/null
 	wait "$_pid" 2>/dev/null
 
 	_wall=$(awk -v a="$_start" -v b="$_end" 'BEGIN{printf "%.2f", b-a}')
-	# The kernel's own clock for the handoff, and rc.lib's own total, so a slow
+	# The kernel's own clock for the handoff, and init to login below, so a slow
 	# boot can be attributed to firmware, kernel or userspace rather than
 	# guessed at.
 	_handoff=$(sed 's/\x1b\[[0-9;]*m//g' "$_log" 2>/dev/null \
 		| sed -n 's/^\[ *\([0-9.]*\)\] Run \/init as init process.*/\1/p' | head -1)
-	_initdone=$(sed 's/\x1b\[[0-9;]*m//g' "$_log" 2>/dev/null \
-		| sed -n 's/.*Init done *\([0-9.]*\)s.*/\1/p' | head -1)
+	# host clock, so to within one 0.25 s poll
+	_tologin=$(awk -v a="$_t_init" -v b="$_end" 'BEGIN{ if (a == "") print "?"; else printf "%.2f", b-a }')
 	_panic=$(grep -cE "Kernel panic|Attempted to kill init" "$_log" 2>/dev/null)
 
 	if [ "$_ok" = 1 ]; then
-		printf '  run %-3s %-6s PASS  wall %ss  kernel-handoff %ss  rc.boot %ss\n' \
-			"$_run" "$FIRMWARE" "$_wall" "${_handoff:-?}" "${_initdone:-?}"
+		printf '  run %-3s %-6s PASS  wall %ss  kernel-handoff %ss  init-to-login %ss\n' \
+			"$_run" "$FIRMWARE" "$_wall" "${_handoff:-?}" "$_tologin"
 	else
 		printf '  run %-3s %-6s FAIL  wall %ss  panics %s  log %s\n' \
 			"$_run" "$FIRMWARE" "$_wall" "${_panic:-0}" "$_log"
