@@ -1,8 +1,0 @@
-#!/bin/sh
-NAME=greetd
-CMD=/usr/bin/greetd
-ARGS=""
-BACKGROUND=yes
-
-. /etc/scraplinux/svc.lib
-svc_main "$@"

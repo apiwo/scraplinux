@@ -1,0 +1,6 @@
+type = scripted
+command = /usr/lib/scraplinux/dinit/zram start
+stop-command = /usr/lib/scraplinux/dinit/zram stop
+restart = false
+depends-on: early-fs
+waits-for: modules

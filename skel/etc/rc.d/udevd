@@ -1,8 +1,0 @@
-#!/bin/sh
-NAME=udevd
-CMD=/usr/bin/udevd
-ARGS="--daemon"
-BACKGROUND=no
-
-. /etc/scraplinux/svc.lib
-svc_main "$@"

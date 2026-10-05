@@ -1,0 +1,8 @@
+#!/bin/sh
+PATH=/usr/bin
+# synced line by line so a hard freeze still leaves the last kernel messages on disk
+dmesg >/var/log/dmesg-late.log
+dmesg -w -T | while IFS= read -r line; do
+	printf '%s\n' "$line" >>/var/log/dmesg-live.log
+	sync
+done

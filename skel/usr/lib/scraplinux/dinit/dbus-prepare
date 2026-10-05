@@ -1,0 +1,4 @@
+#!/bin/sh
+PATH=/usr/bin
+mkdir -p /run/dbus
+dbus-uuidgen --ensure

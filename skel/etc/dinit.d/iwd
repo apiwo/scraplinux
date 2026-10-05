@@ -1,0 +1,4 @@
+type = process
+command = /usr/lib/iwd/iwd
+restart = true
+depends-on: dbus

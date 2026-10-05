@@ -1,0 +1,4 @@
+type = process
+command = /usr/bin/syslogd -n -O /var/log/messages
+restart = true
+depends-on: system

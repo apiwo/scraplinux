@@ -1,8 +1,0 @@
-#!/bin/sh
-NAME=sddm
-CMD=/usr/bin/sddm-logwrap
-ARGS=""
-BACKGROUND=yes
-
-. /etc/scraplinux/svc.lib
-svc_main "$@"

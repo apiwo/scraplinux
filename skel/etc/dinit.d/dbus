@@ -1,0 +1,6 @@
+# fd 3 is the readiness pipe, dbus writes its address there once it listens
+type = process
+command = /usr/bin/dbus-daemon --system --nofork --nopidfile --print-address=3
+ready-notification = pipefd:3
+restart = true
+depends-on: dbus-prepare

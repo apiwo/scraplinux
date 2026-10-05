@@ -1,0 +1,4 @@
+type = scripted
+command = /usr/bin/fstrim -a
+restart = false
+depends-on: system

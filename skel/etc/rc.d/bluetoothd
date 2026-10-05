@@ -1,8 +1,0 @@
-#!/bin/sh
-NAME=bluetoothd
-CMD=/usr/bin/bluetoothd
-ARGS=""
-BACKGROUND=yes
-
-. /etc/scraplinux/svc.lib
-svc_main "$@"
