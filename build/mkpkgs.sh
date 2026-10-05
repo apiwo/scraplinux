@@ -255,7 +255,8 @@ cp -a "$SRCTREE/skel/etc" "$pd/etc"
 # absent from every real install while still being on the ISO.
 cp -a "$SRCTREE/skel/usr/." "$pd/usr/"
 rm -rf "$pd/etc/scraps"   # scraps owns those files
-chmod +x "$pd/etc/rc.boot" "$pd/etc/rc.shutdown" "$pd/etc/rc.d"/* "$pd/usr/bin"/*
+chmod +x "$pd/usr/bin"/* "$pd/usr/lib/scraplinux/dinit"/*
+ln -sf dinit "$pd/usr/bin/init"
 # git only tracks the executable bit, not full permission modes, so a fresh
 # checkout of skel/etc/shadow comes out at whatever the umask gives regular
 # files (typically 644) regardless of what it's chmod'd to on disk right now.
@@ -267,7 +268,7 @@ for d in ascii limine plasma wallpaper icons sddm misc; do
 done
 emit "$pd" scraplinux-base 1.0.0 main \
 	"ScrapLinux base configuration, init scripts and branding" "BSD-2-Clause" \
-	"https://github.com/apiwo/scraplinux" "busybox toybox zsh doas scraps libxcrypt"
+	"https://github.com/apiwo/scraplinux" "busybox toybox zsh doas scraps libxcrypt dinit eudev"
 
 # --------------------------------------------- the tools that make it installable
 step "packaging util-linux (cfdisk, sfdisk, wipefs, lsblk)"

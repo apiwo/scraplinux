@@ -291,7 +291,7 @@ boot_once() {
 	wait "$_pid" 2>/dev/null
 
 	_wall=$(awk -v a="$_start" -v b="$_end" 'BEGIN{printf "%.2f", b-a}')
-	# The kernel's own clock for the handoff, and rc.lib's own total, so a slow
+	# The kernel's own clock for the handoff, and init to login below, so a slow
 	# boot can be attributed to firmware, kernel or userspace rather than
 	# guessed at.
 	_handoff=$(sed 's/\x1b\[[0-9;]*m//g' "$_log" 2>/dev/null \

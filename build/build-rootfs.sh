@@ -51,7 +51,7 @@ step "creating the filesystem skeleton"
 for d in usr/bin usr/lib usr/include usr/share usr/local etc dev proc sys run \
 	tmp var home root boot opt srv mnt media \
 	var/log var/cache var/lib var/tmp var/empty \
-	etc/scraps/repos.d etc/rc.d etc/scraplinux/services etc/skel \
+	etc/scraps/repos.d etc/dinit.d/boot.d etc/skel \
 	var/lib/scraps/local var/lib/scraps/sync var/lib/scraplinux var/cache/scraps/pkg
 do
 	mkdir -p "$R/$d"

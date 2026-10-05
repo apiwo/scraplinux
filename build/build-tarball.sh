@@ -223,7 +223,7 @@ unpack_pkg() {
 # and the llvm-* binutils, which is the whole toolchain here since ScrapLinux
 # has no gcc. It costs about 157 MB of download and 1.1 GB installed, which is
 # the same order as a stage3 and is the price of the thing working at all.
-BASE_EXPLICIT="glibc toybox busybox zsh doas e2fsprogs util-linux dosfstools onetrueawk xz libarchive eudev iw wpa_supplicant ca-certificates curl bmake byacc mandoc gmake libxcrypt pam llvm pkgconf dinit"
+BASE_EXPLICIT="glibc toybox busybox zsh doas e2fsprogs util-linux dosfstools onetrueawk xz libarchive eudev iwd dhcpcd ca-certificates curl bmake byacc mandoc gmake libxcrypt pam llvm pkgconf dinit"
 BASE_SET=$(pkg_deps $BASE_EXPLICIT)
 # e2fsprogs depends on util-linux-libs, which BASE_EXPLICIT's own util-linux
 # already replaces (same libmount/libblkid/libuuid, see its recipe) - this
@@ -293,31 +293,15 @@ if [ "$FLAVOR" = wayland ]; then
 		case " labwc-dms tinywl-dms wio-dms niri-dms " in *" $p "*) reason=explicit ;; esac
 		unpack_pkg "$p" "$reason" && ok "$p"
 	done
-	# sddm's own package ships the binary, not a boot-time service - wire
-	# it up the same way lightdm's rc.d script does, and mark it enabled
-	# the same way rc.boot's own service loop expects (existence in
-	# /etc/scraplinux/services/, content unchecked - see rc.boot's `for s in
-	# /etc/scraplinux/services/*` loop, `[ -e "$s" ]` is the entire test).
-	install -Dm755 "$SRCTREE/skel/etc/rc.d/sddm" "$S/etc/rc.d/sddm"
-	# start-stop-daemon --background (which rc.d/sddm's svc_main uses)
-	# redirects the daemonized child's stdout/stderr to /dev/null before it
-	# ever runs - discarding any crash message sddm prints before it gets
-	# far enough to open its own /var/log/sddm.log. This wrapper sits in
-	# front of it so that output lands in /var/log/sddm-raw.log instead of
-	# vanishing, which is the difference between an empty log and an actual
-	# reason the next time sddm dies before writing anything itself.
-	install -Dm755 "$SRCTREE/skel/usr/bin/sddm-logwrap" "$S/usr/bin/sddm-logwrap"
-	mkdir -p "$S/etc/scraplinux/services"
-	: >"$S/etc/scraplinux/services/sddm"
+	# the sddm service comes with scraplinux-base, the link waits for it
+	mkdir -p "$S/etc/dinit.d/boot.d"
+	ln -sf ../sddm "$S/etc/dinit.d/boot.d/sddm"
 	ok "sddm enabled at boot, session picker offers dwl/labwc/tinywl/wio/niri"
 fi
 
 # ---------------------------------------------------------------- 2. scraps
 step "installing scraps itself"
-# Not through the package it just unpacked into var/lib/scraps/local - scraps
-# ships pre-installed and ready, the same direct-from-source convention
-# build/pkg-tools.sh already uses for it, so the tarball never needs a
-# bootstrap step just to get a package manager.
+# installed straight from the source tree so the tarball needs no bootstrap step
 mkdir -p "$S/usr/bin" "$S/usr/lib/scraps" "$S/etc/scraps/repos.d"
 install -Dm755 "$SRCTREE/scraps/scraps"       "$S/usr/bin/scraps"
 install -Dm755 "$SRCTREE/scraps/scraps-build" "$S/usr/bin/scraps-build"
@@ -331,24 +315,8 @@ mkdir -p "$S/var/lib/scraps/local" "$S/var/lib/scraps/sync" "$S/var/lib/scraps/h
 	"$S/var/cache/scraps/build"
 mkdir -p "$S/etc/scraplinux"
 install -Dm644 "$SRCTREE/skel/etc/scraplinux/conf.lib" "$S/etc/scraplinux/conf.lib"
-# svc.lib: every rc.d service script (lightdm, dbus, crond, sddm, ...)
-# sources this for start/stop/status - without it here, none of them
-# have worked in any tarball flavor at all, pre-existing and unrelated
-# to any one flavor.
-install -Dm644 "$SRCTREE/skel/etc/scraplinux/svc.lib" "$S/etc/scraplinux/svc.lib"
-# rc.lib: rc.boot's begin/good/bad/rc_done output helpers, including the
-# fallback that fires when it is missing - which was silently true of
-# every tarball built here, since this file lived only in the published
-# scraplinux-base package (still Arctic-branded, /run/arctic paths, plain
-# 256-colour SGR the bare Linux console does not reliably render) and
-# never in this source tree at all. Installed straight from skel/ now,
-# not left to whatever a `scraps add scraplinux-base` happens to still
-# be shipping.
-install -Dm644 "$SRCTREE/skel/etc/scraplinux/rc.lib" "$S/etc/scraplinux/rc.lib"
 
 install -Dm755 "$SRCTREE/skel/usr/bin/scraplinux-chroot" "$S/usr/bin/scraplinux-chroot"
-# wifi-connect: rc.d/wifi has always reconnected from what this saves, but
-# the command that does the saving was never actually shipped.
 install -Dm755 "$SRCTREE/skel/usr/bin/wifi-connect" "$S/usr/bin/wifi-connect"
 
 # Binutils names, pointed at their LLVM equivalents. llvm ships these only as
@@ -369,16 +337,8 @@ done
 ok "binutils names linked to their llvm-* equivalents"
 mkdir -p "$S/var/spool/cron/crontabs"
 
-# Both belong here for the same reason scraplinux-chroot does: neither is
-# part of any real package payload (scraplinux-base is a meta package with
-# no files of its own), yet a kernel install's own post-install hook calls
-# scraplinux-mkinitramfs directly, and scraplinux-init-setup is what a real
-# installer runs once to wire /etc/rc.d into whatever init this flavor
-# uses. Without them physically here, a from-tarball install has no way to
-# ever get a working initramfs or service tree, regardless of which
-# package versions later land in a repo.
+# a kernel install's hook calls it, so it has to be here before scraplinux-base
 install -Dm755 "$SRCTREE/skel/usr/bin/scraplinux-mkinitramfs" "$S/usr/bin/scraplinux-mkinitramfs"
-install -Dm755 "$SRCTREE/skel/usr/bin/scraplinux-init-setup" "$S/usr/bin/scraplinux-init-setup"
 
 # Minimal accounts and NSS config - not part of scraplinux-base, because
 # nothing glibc-based works at all without them, chroot included: with
