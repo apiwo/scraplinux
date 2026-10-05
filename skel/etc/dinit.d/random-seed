@@ -1,0 +1,5 @@
+type = scripted
+command = /usr/lib/scraplinux/dinit/random-seed start
+stop-command = /usr/lib/scraplinux/dinit/random-seed stop
+restart = false
+depends-on: local-fs

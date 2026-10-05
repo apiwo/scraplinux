@@ -1,0 +1,6 @@
+#!/bin/sh
+PATH=/usr/bin
+find /tmp -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null
+: >/var/run/utmp 2>/dev/null
+dmesg >/var/log/dmesg-early.log 2>/dev/null
+exit 0

@@ -1,0 +1,7 @@
+type = scripted
+command = /usr/lib/scraplinux/dinit/local-fs
+restart = false
+options = starts-rwfs
+depends-on: early-fs
+waits-for: fsck
+waits-for: udev-settle

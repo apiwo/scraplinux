@@ -1,0 +1,11 @@
+#!/bin/sh
+PATH=/usr/bin
+# a getty on every serial console the kernel was given
+for a in $(cat /proc/cmdline); do
+	case "$a" in
+	console=ttyS*|console=ttyAMA*|console=hvc*)
+		t=${a#console=}; t=${t%%,*}
+		dinitctl --quiet start --no-wait "getty@$t" ;;
+	esac
+done
+exit 0

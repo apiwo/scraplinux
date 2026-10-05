@@ -1,0 +1,6 @@
+type = scripted
+command = /usr/lib/scraplinux/dinit/hwclock start
+stop-command = /usr/lib/scraplinux/dinit/hwclock stop
+restart = false
+depends-on: early-fs
+waits-for: udev-settle

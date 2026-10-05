@@ -1,0 +1,16 @@
+# everything a login needs, started in parallel where it can be
+type = internal
+depends-on: early-fs
+depends-on: local-fs
+waits-for: udevd
+waits-for: udev-settle
+waits-for: modules
+waits-for: hwclock
+waits-for: swap
+waits-for: hostname
+waits-for: sysctl
+waits-for: console
+waits-for: random-seed
+waits-for: cleanup
+waits-for: loopback
+waits-for: generation

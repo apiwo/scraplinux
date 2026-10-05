@@ -1,0 +1,5 @@
+type = scripted
+command = /usr/bin/sysctl -q -p /etc/sysctl.conf
+restart = false
+depends-on: early-fs
+waits-for: modules

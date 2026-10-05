@@ -1,0 +1,4 @@
+type = scripted
+command = /usr/lib/scraplinux/dinit/udev-trigger
+restart = false
+depends-on: udevd

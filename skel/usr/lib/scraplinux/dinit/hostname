@@ -1,0 +1,4 @@
+#!/bin/sh
+PATH=/usr/bin
+h=$(cat /etc/hostname 2>/dev/null)
+hostname "${h:-scraplinux}"

@@ -1,0 +1,12 @@
+#!/bin/sh
+PATH=/usr/bin
+mountpoint -q /proc || mount -t proc -o nosuid,noexec,nodev proc /proc
+mountpoint -q /sys || mount -t sysfs -o nosuid,noexec,nodev sys /sys
+mountpoint -q /dev || mount -t devtmpfs -o nosuid,mode=755 dev /dev
+mountpoint -q /run || mount -t tmpfs -o nosuid,nodev,mode=755 run /run
+mkdir -p /dev/pts /dev/shm /run/lock /run/udev
+mountpoint -q /dev/pts || mount -t devpts -o nosuid,noexec,gid=5,mode=620 devpts /dev/pts
+mountpoint -q /dev/shm || mount -t tmpfs -o nosuid,nodev,mode=1777 shm /dev/shm
+[ -d /sys/kernel/security ] && mount -t securityfs securityfs /sys/kernel/security 2>/dev/null
+[ -d /sys/firmware/efi/efivars ] && mount -t efivarfs efivarfs /sys/firmware/efi/efivars 2>/dev/null
+exit 0

@@ -1,0 +1,5 @@
+type = process
+command = /usr/bin/sh
+restart = false
+chain-to = boot
+options = shares-console

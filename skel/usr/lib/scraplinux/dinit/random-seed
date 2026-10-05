@@ -1,0 +1,9 @@
+#!/bin/sh
+PATH=/usr/bin
+seed=/var/lib/scraplinux/random-seed
+if [ "$1" = start ] && [ -f "$seed" ]; then
+	cat "$seed" >/dev/urandom
+fi
+# saved again right away so a crash never reuses the same seed
+mkdir -p /var/lib/scraplinux
+(umask 077; dd if=/dev/urandom of="$seed" bs=512 count=1 2>/dev/null)

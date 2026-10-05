@@ -1,0 +1,7 @@
+#!/bin/sh
+PATH=/usr/bin
+[ -e /dev/rtc0 ] || exit 0
+case "$1" in
+start) hwclock --hctosys --utc ;;
+stop) hwclock --systohc --utc ;;
+esac
