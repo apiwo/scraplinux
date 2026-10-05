@@ -26,6 +26,8 @@ case "$FLAVOR" in def|s66|busybox|openrc) FLAVOR=base ;; esac
 B=${SCRAPLINUX_BUILD:-/home/apiwo/scraplinux-build}
 SRCTREE=${SCRAPLINUX_TREE:-/home/apiwo/scraplinux}
 REPO=$B/repo
+# local builds first, then the published tree
+PKGS=${SCRAPLINUX_PKGS:-$B/arctic-build/src-extra/arctic-linux-pkgs/ALL}
 WORK=$B/tarball/$FLAVOR
 SCRATCH=$B/tarball/.scratch-$FLAVOR
 OUT=$B/tarball-out
@@ -96,7 +98,7 @@ pkg_deps() {
 		for _pd_p in $_pd_todo; do
 			case " $_pd_seen " in *" $_pd_p "*) continue ;; esac
 			_pd_seen="$_pd_seen $_pd_p"
-			for _pd_i in "$REPO"/*/"$ARCH"/INDEX; do
+			for _pd_i in "$REPO"/*/"$ARCH"/INDEX "$PKGS"/*/"$ARCH"/INDEX; do
 				[ -f "$_pd_i" ] || continue
 				_pd_d=$(awk -F'\t' -v n="$_pd_p" '$1==n{print $8; exit}' "$_pd_i")
 				[ -n "$_pd_d" ] && break
@@ -126,7 +128,7 @@ unpack_pkg() {
 	# which one is actually current.
 	_up_n=$1 _up_reason=${2:-dep}
 	_up_pkg=""
-	for _up_i in "$REPO"/*/"$ARCH"/INDEX; do
+	for _up_i in "$REPO"/*/"$ARCH"/INDEX "$PKGS"/*/"$ARCH"/INDEX; do
 		[ -f "$_up_i" ] || continue
 		_up_e=$(awk -F'\t' -v n="$_up_n" '$1==n{print $2"-"$3; exit}' "$_up_i")
 		[ -n "$_up_e" ] || continue
@@ -238,11 +240,14 @@ printf '   %s requested, %s with dependencies\n' \
 	"$(printf '%s\n' $BASE_EXPLICIT | wc -l | tr -d ' ')" \
 	"$(printf '%s\n' $BASE_SET | wc -l | tr -d ' ')"
 mkdir -p "$S/var/lib/scraps/local"
+missing=""
 for p in $BASE_SET; do
 	reason=dep
 	case " $BASE_EXPLICIT " in *" $p "*) reason=explicit ;; esac
-	unpack_pkg "$p" "$reason" && ok "$p"
+	if unpack_pkg "$p" "$reason"; then ok "$p"; else missing="$missing $p"; fi
 done
+# a base system with a hole in it is not a tarball worth writing
+[ -z "$missing" ] || { echo "build-tarball: base packages missing:$missing" >&2; exit 1; }
 
 
 if [ "$FLAVOR" = i3wl ]; then
