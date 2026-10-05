@@ -510,7 +510,8 @@ install_one() {
 	: >"$tmp.takeover"
 	while read -r f; do
 		[ -n "$f" ] || continue
-		[ -e "$SCRAPS_ROOT$f" ] || continue
+		# -e follows links, a dangling one still has an owner
+		[ -e "$SCRAPS_ROOT$f" ] || [ -L "$SCRAPS_ROOT$f" ] || continue
 		# a package may always rewrite what it already owns
 		grep -qxF "$f" "$SCRAPS_DB/local/$name/FILES" 2>/dev/null && continue
 		owner=$(grep -lxF "$f" "$SCRAPS_DB"/local/*/FILES 2>/dev/null | head -1) || :
