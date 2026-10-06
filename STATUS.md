@@ -4,13 +4,23 @@ Running tracker for the stabilisation work. Updated after every phase.
 The long historical engineering log lives in `docs/STATUS.md` and is separate
 from this file.
 
-Current phase: 3, init. The recipe collapse is done and dinit is next.
-Decisions taken: dinit as the only init, iwd and dhcpcd for WiFi.
+Current phase: 3, init. Done and released as 2026.10.06: dinit is the only
+init, iwd and dhcpcd the network stack.
 
 ## Works, with evidence
 
-- Base console system boots to a login prompt under QEMU UEFI, 10 consecutive
-  runs, zero panics, 5.6 to 6.1 s wall including firmware. See `AUDIT.md`.
+- dinit boots the base system to a login prompt under QEMU UEFI, 10 of 10 runs,
+  zero panics, about 3.3 s wall including firmware on an idle host (5.6 to 6.1 s
+  under scinit) and 1.27 to 1.52 s from kernel handoff to login. Measured per
+  service: udev settle 0.32 s and fsck of the ESP 0.4 s are the critical path.
+- `boot-test.sh --selftest` boots, confirms pid 1 is dinit, that dinitctl
+  reaches it, that the core services are started and root is writable, then
+  checks a clean power off. Passes.
+- Upgrade path proven: the published scinit system, installed and booted, then
+  upgraded with its own scraps 1.5.1, boots under dinit 3 of 3 with its
+  enabled services carried over and scinit, rc.boot and rc.d removed. The
+  published s66 tarball plus `scraps add scraplinux-base` also boots under dinit.
+- A fresh install from the new tarball using only the live mirror boots.
 - `scraps` resolves a small package in 0.48 s, inside the 1 s target.
 - `build/boot-test.sh` builds a test disk, boots it headless, and reports
   pass or fail with a boot time and a full serial log per run.
@@ -20,12 +30,15 @@ Decisions taken: dinit as the only init, iwd and dhcpcd for WiFi.
 - Recipes are the only source of package facts. `scraps-repo ports` derives
   `ALL/ports.idx` from 680 recipes in 0.05 s, and refuses a recipe whose name
   does not match its directory or a package defined twice.
-- `build/check-recipes.sh` passes all 680 recipes.
-- scraps 1.5.1 and scraplinux-base 1.5.0-3 are published. An install of the
-  previous pair, upgraded by the old scraps 1.4.35 itself, keeps its password,
-  config edits, init link, busybox.conf, signing key and repo files.
-- `scraps add -s` resolves recipes from GitHub directly, 680 of them, including
-  ones the old manifest never listed.
+- `build/check-recipes.sh` passes all 666 recipes.
+- Published: dinit 0.19.4-2, scraplinux-base 1.6.0-2, scraps 1.5.2, iwd 3.12-2,
+  dhcpcd 10.5.2, ell 0.83-2, and dependency-corrected doas, st, dwm, dwl,
+  wlroots, wlroots0.19, hwdata, swayidle, xdg-desktop-portal-wlr, encodings and
+  font-misc-misc. Every one checked so each linked library has a declared
+  provider.
+- `scraps add -s` resolves recipes from GitHub directly, including ones the old
+  manifest never listed.
+- C++ recipes build in the sandbox, against ScrapLinux's own libc++.
 
 ## Broken, with evidence
 
@@ -47,10 +60,22 @@ Decisions taken: dinit as the only init, iwd and dhcpcd for WiFi.
   carry a newer release than their recipe (llvm, util-linux, pam, rust, ell
   0.83 against a 0.79 recipe, and others). Those binaries came from recipe
   states that are not in the tree.
-- Init ownership is unsafe. `/sbin` links to `usr/bin`, so the scinit link at
-  `/sbin/init` sits on busybox's own `/usr/bin/init`. Reinstalling busybox makes
-  busybox init PID 1, and a busybox without that applet would delete the link.
-  Resolved by dinit owning `/usr/bin/init` as a package.
+- busybox still ships init, halt, poweroff and reboot applet links. They are
+  harmless now, scraplinux-base and dinit own those paths, but busybox should
+  stop shipping them; that rebuild needs its own upgrade test.
+- scraps tracks ownership by path string, and `/usr/sbin` links to `/usr/bin`, so
+  a package listing `/usr/sbin/halt` (sysvinit did) and one listing
+  `/usr/bin/halt` own the same file without either knowing.
+- Five recipes do not build in the sandbox: libarchive (libb2), git, foot
+  (unknown -Werror option), sway (pcre link) and mesa (a meson dependency).
+- X11 has no font-alias package. icewm-3.7.4-1 ships 46 files under a build
+  path.
+- The 2026.10.06 release has no live ISO; the ISO pipeline still builds
+  wpa_supplicant (`build/build-usable.sh`).
+- The dependency check behind publishing treats a library with two providers
+  (libudev.so.1 from eudev and libudev-zero) as one, giving false positives.
+- A display manager and the tty1 getty both want the first VT; unverified.
+- 2026.09.01's release page linked checksum files that were never uploaded.
 - Upgrading scraps overwrites `/etc/scraps/repos.d/*.repo`, so a repo disabled
   by hand comes back.
 - `build/publish-pkgs.sh` mirrors the local build repo wholesale. Today a full
@@ -87,9 +112,26 @@ Decisions taken: dinit as the only init, iwd and dhcpcd for WiFi.
 | `check-recipes.sh` tracks single quotes | It flagged C preprocessor lines inside dwl's quoted sed script as shell comments. |
 | `publish-ports.sh` publishes the checkout in place | Its default target was gone and copying a file onto itself aborted the run. |
 
+## Changed in phase 3, init
+
+| Change | Why |
+| --- | --- |
+| dinit 0.19.4-2 package | The old one was an Arctic-era build in `/sbin` with no checksum. Now in `/usr/bin`, C++ runtime linked in so pid 1 needs only glibc. |
+| dinit service set replaces rc.boot | Serial boot steps became services with real dependencies, so independent ones run in parallel. |
+| Services for every rc.d daemon, plus seatd and elogind | Daemons run supervised; dbus signals readiness so its dependents wait for the bus. |
+| `service` drives dinitctl | Same commands, so the declarative config keeps working. |
+| iwd, dhcpcd, ell recipes; wifi-connect on iwctl | The decided network stack. iwd had a binary and no recipe; ell's binary had no headers. |
+| scraplinux-base 1.6.0 owns `/usr/bin/init` and migrates on upgrade | Enabled rc.d services become dinit enables; old init files and markers are removed. |
+| scinit, rc.boot, rc.d, svc.lib, rc.lib, inittab, init translator, scraplinux-power, sddm-logwrap removed | One init. dinit's logfile covers what sddm-logwrap did. |
+| 66, s6, execline, skalibs, oblibs, openrc, runit, sysvinit, initialization withdrawn | Nothing depended on them. |
+| scraps-build: glibc kept off LD_LIBRARY_PATH, `--sysroot` in LDFLAGS, MAKESYSPATH | Host tools crashed on the sysroot's glibc, LDFLAGS-only links reached the host's 32-bit libc, bmake had no sys.mk. Nine of fourteen rebuilt recipes had stopped building. |
+| scraps-build refuses payloads under the sysroot path | iwd, encodings and font-misc-misc installed into the build machine's paths. |
+| build-batch rebuilds on a release change and seeds libc++ | A bumped release never rebuilt; no C++ recipe could build. |
+| build-tarball fails on a missing base package | A tarball without busybox, and so without a shell, was written as a success. |
+| scraplinux-base 1.5.0-4, scraps 1.5.1-2 | 1.5.0-3 installed `/etc/shadow` world readable on roots without one. Upgrades fix the modes. |
+
 ## Next
 
-dinit 0.19.4 as the only init: package it, write a parallel service set to
-replace rc.boot, wire it as `/usr/bin/init`, boot-test it, then remove scinit,
-s6, 66, openrc, sysvinit and the busybox init applet. iwd and dhcpcd follow as
-background services.
+Phase 4 per the brief, or the X11 and Wayland dependency sweep the user asked
+for first: rebuild the five failing recipes, the graphics packages the audit
+flagged, font-alias, and verify an X11 and a Wayland session end to end.
