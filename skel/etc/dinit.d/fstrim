@@ -1,4 +1,4 @@
 type = scripted
-command = /usr/bin/fstrim -a
+command = /usr/lib/scraplinux/dinit/fstrim
 restart = false
 depends-on: system

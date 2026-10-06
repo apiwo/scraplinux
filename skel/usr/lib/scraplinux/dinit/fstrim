@@ -1,0 +1,7 @@
+#!/bin/sh
+PATH=/usr/bin
+# busybox fstrim has no -a, so every mounted block filesystem in turn
+awk '$1 ~ "^/dev/" { print $2 }' /proc/mounts | sort -u | while read -r m; do
+	busybox fstrim "$m" 2>/dev/null
+done
+exit 0
