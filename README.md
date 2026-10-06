@@ -23,8 +23,8 @@ Inside chroot: `passwd`, `adduser <name>`, `scraps add scraplinux-base`,
 config, and deploy it by hand (`limine bios-install /dev/sdX`, or copy the
 EFI binaries and register one with `efibootmgr`). Reboot.
 
-An OpenRC flavor of the tarball ships alongside the default (busybox
-init) one, with OpenRC already wired up as init instead.
+dinit is the init: services start in parallel and run supervised.
+`service` lists and enables them.
 
 Full walkthrough, including partitioning and encryption:
 **[scraplinux-docs.apiwow.net](https://scraplinux-docs.apiwow.net)**
@@ -38,7 +38,7 @@ to be one big config:
 
 ```
 pkgs.conf       mirrors what's explicitly installed - never hand-edited
-network.conf    wifi-connect writes this; rc.d/wifi reads it back at boot
+network.conf    a declared wifi network, written as an iwd profile by rebuild
 users.conf      declared accounts, additive only
 services.conf   the enabled service list
 hardware.conf   gpu, microcode, bootloader, boot timeout
